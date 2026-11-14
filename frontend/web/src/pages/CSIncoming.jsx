@@ -312,8 +312,9 @@ export default function CSIncoming() {
         assigneesResult.value.map((row) => ({
           id: Number(row.id ?? row.emp_id),
           name: row.name || `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.email,
-          status: row.is_active ? 'active' : 'inactive',
+          status: row.account_active === false ? 'inactive' : 'active',
           presence: row.presence || (row.is_active ? 'online' : 'offline'),
+          is_active: Boolean(row.is_active || row.account_active),
           department: row.department?.trim() || 'Unassigned',
           branch: row.branch || row.branch_name || 'Main',
           position_level: (row.position_level && !['senior', 'mid', 'junior'].includes(String(row.position_level).toLowerCase()))
@@ -468,10 +469,8 @@ export default function CSIncoming() {
   }, [csFilterOptions.statuses]);
 
   const departmentOptions = useMemo(() => {
-    const fromDeps = departments.map((d) => d.name || d);
-    const fromTickets = tickets.map((t) => t.department).filter(Boolean);
-    return ['All Departments', ...Array.from(new Set([...fromDeps, ...fromTickets])).sort()];
-  }, [departments, tickets]);
+    return ['All Departments', 'IT', 'Customer Service', 'Service'];
+  }, []);
 
   const hasActiveFilters = Boolean(
     search.trim() ||
@@ -518,17 +517,40 @@ export default function CSIncoming() {
 
   const paginated = filtered;
 
+  const isTicketAssigned = (t) => {
+    if (!t) return false;
+    // Tickets with an active reassignment request should open the CS triage decision card in summary view
+    if (t.reassignmentRequested) return true;
+    const rawStatus = String(t.status || '').toLowerCase().trim();
+    if (rawStatus === 'pending assignment' || rawStatus === 'open') return false;
+    if (Array.isArray(t.assigned_employees) && t.assigned_employees.length > 0) return true;
+    if (Array.isArray(t.assigned) && t.assigned.length > 0) return true;
+    if (t.assigned_to && String(t.assigned_to).toLowerCase() !== 'unassigned') return true;
+    if (t.assigned_employee && String(t.assigned_employee).toLowerCase() !== 'unassigned') return true;
+    if (t.assigned_to_name && String(t.assigned_to_name).toLowerCase() !== 'unassigned') return true;
+    return false;
+  };
+
   const handleRowAction = async (t) => {
-    const isSummary = t.status === 'Pending Assignment' || t.status === 'Resolved' || t.status === 'In Progress' || t.status === 'Pending' || t.status === 'Pending Evaluation' || t.status === 'On Hold' || t.status === 'Closed' || t.status === 'Reopened';
-    if (isSummary) {
+    const assigned = isTicketAssigned(t);
+    if (!assigned) {
       setModalLoading(true);
       try {
         const ticketId = t.ticket_ID || Number(String(t.id).replace(/\D/g, ''));
         const details = await getTicketDetails(ticketId);
-        setModal({ mode: 'summary', ticket: details });
+        setModal({
+          mode: 'assign',
+          ticket: {
+            ...t,
+            ...details,
+            description: details.description || t.description,
+            attachments: details.attachments || t.attachments || [],
+            proofAttachments: details.proofAttachments || [],
+          },
+        });
       } catch (err) {
-        console.warn('Failed to load full ticket details, fallback to list item:', err);
-        setModal({ mode: 'summary', ticket: t });
+        console.warn('Failed to load full ticket details for assign, fallback to list item:', err);
+        setModal({ mode: 'assign', ticket: t });
       } finally {
         setModalLoading(false);
       }
@@ -537,10 +559,10 @@ export default function CSIncoming() {
       try {
         const ticketId = t.ticket_ID || Number(String(t.id).replace(/\D/g, ''));
         const details = await getTicketDetails(ticketId);
-        setModal({ mode: 'assign', ticket: { ...t, ...details, description: details.description || t.description, attachments: details.attachments || t.attachments || [], proofAttachments: details.proofAttachments || [] } });
+        setModal({ mode: 'summary', ticket: details });
       } catch (err) {
-        console.warn('Failed to load full ticket details for assign, fallback to list item:', err);
-        setModal({ mode: 'assign', ticket: t });
+        console.warn('Failed to load full ticket details, fallback to list item:', err);
+        setModal({ mode: 'summary', ticket: t });
       } finally {
         setModalLoading(false);
       }

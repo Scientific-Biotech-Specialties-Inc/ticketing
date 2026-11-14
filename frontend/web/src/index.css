@@ -143,3 +143,58 @@ body, input, select, textarea, button {
 .animate-fadeSlideIn {
   animation: fadeSlideIn 0.35s ease-out;
 }
+
+/* ─── Print Stylesheet (Clean Data Extraction) ─────────────────────────── */
+@media print {
+  /* Hide application chrome, navigation, headers, sidebars, action bars, and non-printable elements */
+  header,
+  aside,
+  nav,
+  .print\:hidden,
+  [role="banner"],
+  [role="navigation"],
+  #sidebar,
+  .sidebar,
+  button,
+  .no-print {
+    display: none !important;
+  }
+
+  /* Reset main container layout to full width with zero offsets */
+  main,
+  div[class*="min-h-screen"],
+  div[class*="sm:ml-20"],
+  div[class*="pt-24"] {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    position: static !important;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #1E293B !important;
+    font-size: 11pt !important;
+  }
+
+  /* Ensure cards, charts, and tables look clean without unwanted box shadows */
+  .shadow-sm, .shadow-md, .shadow-lg, .shadow-2xl, .shadow-xs {
+    box-shadow: none !important;
+    border: 1px solid #CBD5E1 !important;
+  }
+
+  /* Prevent awkward page breaks inside cards, rows, or charts */
+  .break-inside-avoid,
+  .rounded-2xl,
+  .rounded-xl,
+  tr {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  /* Show print-only header elements */
+  .print\:block {
+    display: block !important;
+  }
+}

@@ -31,6 +31,7 @@ export default function DepartmentPerformanceView({
   selectedPeriod = 'Last 7 Days',
   dateFrom = null,
   dateTo = null,
+  onSelectEmployee = null,
 }) {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState('');
@@ -429,83 +430,132 @@ export default function DepartmentPerformanceView({
 
       {/* Department Team Drill-down Modal */}
       {selectedDeptDetail && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4 overscroll-none">
-          <div className="bg-card rounded-2xl border border-border shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto overscroll-contain p-6 space-y-4 font-sans animate-in fade-in-0 zoom-in-95">
-            <div className="flex items-center justify-between border-b border-border pb-3">
-              <div>
-                <h3 className="text-base font-bold text-slate-dark">{selectedDeptDetail.name} Team Drill-Down</h3>
-                <p className="text-xs text-slate-muted">Individual technician assignments and workload contribution.</p>
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[1.5px] flex items-center justify-center p-4 overscroll-none" onClick={() => setSelectedDeptDetail(null)}>
+          <div
+            className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-lg w-full max-h-[88vh] overflow-hidden flex flex-col font-sans animate-in fade-in-0 zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50/70">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#252578]/10 text-[#252578] flex items-center justify-center shrink-0">
+                  <Users className="w-5 h-5 text-[#252578]" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base font-bold text-slate-900">{selectedDeptDetail.name} Team Drill-Down</h3>
+                    <span className="text-[10px] font-bold text-[#252578] bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                      {selectedDeptDetail.employees.length} Staff
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">Technician active workload contribution &amp; SLA compliance.</p>
+                </div>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
+              <button
+                type="button"
                 onClick={() => setSelectedDeptDetail(null)}
-                className="h-8 w-8 p-0 rounded-full text-slate-muted"
+                className="w-8 h-8 rounded-full flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                aria-label="Close dialog"
               >
                 ✕
-              </Button>
+              </button>
             </div>
 
-            <div className="space-y-3 text-xs">
-              <div className="grid grid-cols-3 gap-2 bg-page p-3 rounded-xl border border-border text-center">
-                <div>
-                  <span className="text-slate-muted block text-[10px]">Total Handled</span>
-                  <strong className="text-slate-dark text-sm">{selectedDeptDetail.totalTicketsHandled}</strong>
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              {/* Executive KPI Cards */}
+              <div className="grid grid-cols-3 gap-2.5">
+                <div className="bg-slate-50 border border-slate-200/90 p-3 rounded-xl text-center">
+                  <span className="text-slate-500 block text-[10px] font-bold uppercase tracking-wider">Total Handled</span>
+                  <strong className="text-slate-900 text-base font-bold mt-0.5 block">{selectedDeptDetail.totalTicketsHandled}</strong>
+                  <span className="text-[10px] text-slate-400">tickets</span>
                 </div>
-                <div>
-                  <span className="text-slate-muted block text-[10px]">SLA Adherence</span>
-                  <strong className="text-emerald-600 text-sm">
+                <div className="bg-emerald-50/70 border border-emerald-200/90 p-3 rounded-xl text-center">
+                  <span className="text-emerald-700 block text-[10px] font-bold uppercase tracking-wider">SLA Adherence</span>
+                  <strong className="text-emerald-700 text-base font-bold mt-0.5 block">
                     {selectedDeptDetail.slaCompliance != null ? `${selectedDeptDetail.slaCompliance}%` : '—'}
                   </strong>
+                  <span className="text-[10px] text-emerald-600 font-medium">target ≥ 90%</span>
                 </div>
-                <div>
-                  <span className="text-slate-muted block text-[10px]">Overdue Breached</span>
-                  <strong className="text-rose-600 text-sm">{selectedDeptDetail.overdueCount}</strong>
+                <div className="bg-rose-50/70 border border-rose-200/90 p-3 rounded-xl text-center">
+                  <span className="text-rose-700 block text-[10px] font-bold uppercase tracking-wider">Overdue Breached</span>
+                  <strong className="text-rose-700 text-base font-bold mt-0.5 block">{selectedDeptDetail.overdueCount}</strong>
+                  <span className="text-[10px] text-rose-600 font-medium">breaches</span>
                 </div>
               </div>
 
+              {/* Staff Workload List */}
               <div>
-                <h4 className="text-xs font-semibold text-slate-dark mb-2">Open Tickets per Employee ({selectedDeptDetail.employees.length})</h4>
-                <div className="divide-y divide-border/60 border border-border rounded-xl overflow-hidden bg-surface">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    Technician Workload Breakdown ({selectedDeptDetail.employees.length})
+                  </h4>
+                  <span className="text-[11px] text-slate-500">Active Work Share</span>
+                </div>
+
+                <div className="divide-y divide-slate-100 border border-slate-200 rounded-xl overflow-hidden bg-white max-h-64 overflow-y-auto">
                   {selectedDeptDetail.employees.length === 0 && (
-                    <p className="p-3 text-slate-muted">No staff are registered in this department.</p>
-                  )}
-                  {selectedDeptDetail.employees.map((emp) => (
-                    <div key={emp.id} className="p-2.5 flex items-center justify-between hover:bg-slate-50/60">
-                      <div className="min-w-0 flex-1 pr-3">
-                        <p className="font-semibold text-slate-dark">{emp.name}</p>
-                        <div className="flex items-center gap-2 mt-1">
-                          <div className="h-1.5 flex-1 rounded-full bg-slate-100 overflow-hidden" aria-hidden="true">
-                            <div className="h-full bg-primary" style={{ width: `${Math.min(100, emp.share)}%` }} />
-                          </div>
-                          <span className="text-[11px] text-slate-muted shrink-0">
-                            {emp.activeTickets} open • {emp.share}%
-                          </span>
-                        </div>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setSelectedDeptDetail(null);
-                          navigate('/admin/employees');
-                        }}
-                        className="h-6 px-2 text-[11px] text-accent hover:bg-blue-50"
-                      >
-                        Performance Record →
-                      </Button>
+                    <div className="p-6 text-center text-slate-400 text-xs">
+                      No staff are registered in this department.
                     </div>
-                  ))}
+                  )}
+                  {selectedDeptDetail.employees.map((emp) => {
+                    const initials = (emp.name || '')
+                      .split(' ')
+                      .map((n) => n[0])
+                      .slice(0, 2)
+                      .join('')
+                      .toUpperCase() || 'EM';
+
+                    return (
+                      <div key={emp.id} className="p-3 flex items-center justify-between hover:bg-slate-50/80 transition-colors">
+                        <div className="min-w-0 flex-1 pr-3 flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-full bg-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center shrink-0">
+                            {initials}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p className="font-bold text-xs text-slate-900 truncate">{emp.name}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <div className="h-1.5 flex-1 rounded-full bg-slate-100 overflow-hidden" aria-hidden="true">
+                                <div className="h-full bg-[#252578] rounded-full transition-all" style={{ width: `${Math.min(100, emp.share)}%` }} />
+                              </div>
+                              <span className="text-[10px] text-slate-500 font-semibold shrink-0">
+                                {emp.activeTickets} open • {emp.share}%
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setSelectedDeptDetail(null);
+                            if (typeof onSelectEmployee === 'function') {
+                              onSelectEmployee(emp);
+                            } else {
+                              navigate('/admin/dashboard?tab=employees', { state: { tab: 'employees', selectedEmployee: emp } });
+                            }
+                          }}
+                          className="h-7 px-2.5 text-xs text-[#252578] hover:text-[#1d1d60] hover:bg-blue-50 font-semibold rounded-lg transition-colors cursor-pointer shrink-0"
+                        >
+                          Performance Record →
+                        </Button>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
 
-            <div className="flex justify-between items-center pt-2 border-t border-border">
-              <span className="text-[11px] text-slate-muted">Scoped to {branchName}</span>
+            {/* Footer */}
+            <div className="flex justify-between items-center px-6 py-3.5 border-t border-slate-200 bg-slate-50/80">
+              <span className="text-[11px] text-slate-500 font-medium">Scoped to {branchName}</span>
               <Button
+                type="button"
                 variant="default"
                 size="sm"
                 onClick={() => setSelectedDeptDetail(null)}
+                className="bg-[#252578] hover:bg-[#1d1d60] text-white text-xs font-semibold px-4 h-8 rounded-lg cursor-pointer shadow-xs"
               >
                 Close
               </Button>

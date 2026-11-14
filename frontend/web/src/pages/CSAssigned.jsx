@@ -266,8 +266,9 @@ export default function CSAssigned() {
           id: Number(row.id ?? row.emp_id),
           name: row.name || `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.email || `Employee #${row.id ?? row.emp_id}`,
           role: row.role || '',
-          status: row.is_active ? 'active' : 'inactive',
+          status: row.account_active === false ? 'inactive' : 'active',
           presence: row.presence || (row.is_active ? 'online' : 'offline'),
+          is_active: Boolean(row.is_active || row.account_active),
           department: row.department || 'Unassigned',
           position_level: (row.position_level && !['senior', 'mid', 'junior'].includes(String(row.position_level).toLowerCase()))
             ? row.position_level
@@ -353,10 +354,8 @@ export default function CSAssigned() {
   }, [csFilterOptions.statuses]);
 
   const departmentOptions = useMemo(() => {
-    const fromDeps = departments.map((d) => d.name || d);
-    const fromTickets = tickets.map((t) => t.department).filter(Boolean);
-    return ['All Departments', ...Array.from(new Set([...fromDeps, ...fromTickets])).sort()];
-  }, [departments, tickets]);
+    return ['All Departments', 'IT', 'Customer Service', 'Service'];
+  }, []);
 
   const slaOptions = ['All SLA Statuses', 'Breached', 'At Risk', 'On Track', 'Paused', 'No SLA Configured', 'SLA Unavailable'];
 
@@ -402,7 +401,20 @@ export default function CSAssigned() {
       return;
     }
 
-    const isSummary = t.reassignmentRequested || t.status === 'Pending Assignment' || t.status === 'Pending Evaluation' || t.status === 'Resolved' || t.status === 'In Progress' || t.status === 'Pending' || t.status === 'Closed' || t.status === 'Reopened' || t.status === 'On Hold';
+    const isTicketAssigned = (ticket) => {
+      if (!ticket) return false;
+      if (ticket.reassignmentRequested) return true;
+      const rawStatus = String(ticket.status || '').toLowerCase().trim();
+      if (rawStatus === 'pending assignment' || rawStatus === 'open') return false;
+      if (Array.isArray(ticket.assigned_employees) && ticket.assigned_employees.length > 0) return true;
+      if (Array.isArray(ticket.assigned) && ticket.assigned.length > 0) return true;
+      if (ticket.assigned_to && String(ticket.assigned_to).toLowerCase() !== 'unassigned') return true;
+      if (ticket.assigned_employee && String(ticket.assigned_employee).toLowerCase() !== 'unassigned') return true;
+      if (ticket.assigned_to_name && String(ticket.assigned_to_name).toLowerCase() !== 'unassigned') return true;
+      return false;
+    };
+
+    const isSummary = isTicketAssigned(t);
     if (isSummary) {
       // Instantly open the modal with existing ticket data from list so user never experiences latency
       setModal({ mode: 'summary', ticket: t, isLoadingDetails: true });

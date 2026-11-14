@@ -2,14 +2,44 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Home, User, Bell, PanelLeft, ChevronDown } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { getNotifications, markNotificationRead, markNotificationsRead, getTicketDetails, getAssignableEmployees, getDepartments, respondReassignment } from '@/services/ticketService';
+import { getNotifications, markNotificationRead, markNotificationsRead, getTicketDetails, getAssignableEmployees, getDepartments, respondReassignment, acceptTicket } from '@/services/ticketService';
 import useRealtimeRefresh from '@/hooks/useRealtimeRefresh';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import NotificationDropdown from '@/components/notifications/NotificationDropdown';
 import CustomerTicketDetailModal from '@/components/CustomerTicketDetailModal';
-import { TicketSummary } from '@/components/CSModals';
+import TicketDetailModal from '@/components/employee/TicketDetailModal';
+import { TicketSummary, AssignModal } from '@/components/CSModals';
 import { getSystemStatus } from '@/services/configurationService';
 import tokenStore from '@/auth/tokenStore';
+import { isReassignmentDenied } from '@/utils/reassignmentUtils';
+
+const checkUserIsCS = (u) => {
+  if (!u) return false;
+  const role = String(u.role || u.position || '').toLowerCase();
+  const dept = String(u.department || '').toLowerCase();
+  return (
+    role.includes('customer service') ||
+    role.includes('customer support') ||
+    role === 'cs' ||
+    role === 'cs_manager' ||
+    role === 'cs manager' ||
+    dept.includes('customer service') ||
+    dept.includes('customer support') ||
+    dept === 'cs'
+  );
+};
+
+const checkUserIsEmployee = (u) => {
+  if (!u) return false;
+  const role = String(u.role || u.position || '').toLowerCase();
+  const dept = String(u.department || '').toLowerCase();
+  const employeeRoles = ['employee', 'technician', 'engineer', 'specialist', 'service', 'lead specialist', 'staff'];
+  return (
+    employeeRoles.some((r) => role.includes(r)) ||
+    dept.includes('service') ||
+    dept.includes('engineering')
+  );
+};
 
 export default function Header({ sidebarHovered }) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -17,12 +47,15 @@ export default function Header({ sidebarHovered }) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+  const isCS = checkUserIsCS(user);
   const [notificationCount, setNotificationCount] = useState(0);
   const [notifications, setNotifications] = useState([]);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [activeTicket, setActiveTicket] = useState(null);
+  const [assignModalTicket, setAssignModalTicket] = useState(null);
   const [activeNotificationId, setActiveNotificationId] = useState(null);
   const [activeEmployees, setActiveEmployees] = useState([]);
+  const [activeDepartments, setActiveDepartments] = useState([]);
   const [activeTicketLoading, setActiveTicketLoading] = useState(false);
   useLockBodyScroll(activeTicketLoading);
   const [systemStatus, setSystemStatus] = useState('Operational');
@@ -116,8 +149,11 @@ export default function Header({ sidebarHovered }) {
           if (parsed.type === 'ticket_assigned' || parsed.type === 'ticket_reassigned') {
             return '/employee/assigned';
           }
-          if (parsed.type === 'reassignment_approved' || parsed.type === 'reassignment_denied') {
-            return '/employee/assigned';
+          if (parsed.type === 'reassignment_approved') {
+            return '/employee/assigned?tab=incoming';
+          }
+          if (parsed.type === 'reassignment_denied' || parsed.type === 'reassignment_rejected') {
+            return '/employee/machine';
           }
           if (parsed.type === 'reassignment_request') {
             return '/cs/incoming';
@@ -138,6 +174,7 @@ export default function Header({ sidebarHovered }) {
   };
 
   const handleCloseActiveTicket = useCallback(async () => {
+    const closedTicket = activeTicket;
     if (activeNotificationId) {
       const nid = activeNotificationId;
       setActiveNotificationId(null);
@@ -153,7 +190,20 @@ export default function Header({ sidebarHovered }) {
     } else {
       setActiveTicket(null);
     }
-  }, [activeNotificationId]);
+
+    if (checkUserIsEmployee(user) && closedTicket) {
+      const isApproved = closedTicket.reassignmentStatus === 'Approved' ||
+        closedTicket.notificationData?.type === 'reassignment_approved';
+      const isRejected = isReassignmentDenied(closedTicket) ||
+        closedTicket.notificationData?.type === 'reassignment_denied' ||
+        closedTicket.notificationData?.type === 'reassignment_rejected';
+      if (isApproved) {
+        navigate('/employee/assigned?tab=incoming', { state: { tab: 'incoming' } });
+      } else if (isRejected) {
+        navigate('/employee/machine');
+      }
+    }
+  }, [activeNotificationId, activeTicket, user, navigate]);
 
   const handleNotificationClick = async (n) => {
     setNotificationDropdownOpen(false);
@@ -234,10 +284,26 @@ export default function Header({ sidebarHovered }) {
         notificationTitle: n.title,
         notificationData: parsed,
       };
-      if (merged.reassignmentRequested) {
+      if (merged.reassignmentRequested || isCS) {
         try {
-          const emps = await getAssignableEmployees({ forceRefresh: false }).catch(() => []);
-          setActiveEmployees(emps.map((row) => ({ id: Number(row.id ?? row.emp_id), name: row.name || `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.email, status: row.is_active ? 'active' : 'inactive', department: row.department?.trim() || 'Unassigned' })));
+          const [emps, depts] = await Promise.all([
+            getAssignableEmployees({ forceRefresh: false }).catch(() => []),
+            getDepartments().catch(() => []),
+          ]);
+          if (emps?.length) {
+            setActiveEmployees(
+              emps.map((row) => ({
+                id: Number(row.id ?? row.emp_id),
+                name: row.name || `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.email,
+                status: row.is_active ? 'active' : 'inactive',
+                department: row.department?.trim() || 'Unassigned',
+                role: row.role || row.position || 'Technician',
+              }))
+            );
+          }
+          if (depts?.length) {
+            setActiveDepartments(depts);
+          }
         } catch {}
       }
       setActiveTicket(merged);
@@ -383,12 +449,14 @@ export default function Header({ sidebarHovered }) {
         </div>
       </header>
 
-      {activeTicket && activeTicket.reassignmentRequested && (['cs', 'customer service', 'head of cs', 'head of customer service'].includes(user?.role?.toLowerCase()) || (() => { try { const r = JSON.parse(localStorage.getItem('user')||'{}')?.role?.toLowerCase(); return ['cs', 'customer service', 'head of cs', 'head of customer service'].includes(r); } catch { return false; } })()) ? (
+      {activeTicket && isCS ? (
         <TicketSummary
           ticket={activeTicket}
           employees={activeEmployees}
           onClose={handleCloseActiveTicket}
-          onEdit={() => {}}
+          onEdit={(t) => {
+            setAssignModalTicket(t || activeTicket);
+          }}
           onStatusUpdate={async (updatedFields) => {
             try {
               if (updatedFields.reassignmentStatus) {
@@ -403,6 +471,34 @@ export default function Header({ sidebarHovered }) {
             } catch (e) { console.warn(e); }
           }}
         />
+      ) : activeTicket && checkUserIsEmployee(user) ? (
+        <TicketDetailModal
+          ticket={activeTicket}
+          onClose={handleCloseActiveTicket}
+          onStatusChange={(newStatus) => {
+            setActiveTicket((prev) => (prev ? { ...prev, status: newStatus } : null));
+          }}
+          onAccept={async (id) => {
+            const numericId = activeTicket.ticket_ID || Number(String(id).replace(/\D/g, ''));
+            await acceptTicket({ ticketId: numericId });
+            setActiveTicket((prev) => (prev ? { ...prev, accepted: true, status: 'In Progress' } : null));
+            window.dispatchEvent(new Event('notifications:updated'));
+          }}
+          onRequestReassign={(t, reason) => {
+            setActiveTicket((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    reassignmentRequested: true,
+                    reassignmentStatus: 'Pending',
+                    reassignmentReason: reason,
+                    status: 'Pending Reassignment',
+                  }
+                : null
+            );
+            window.dispatchEvent(new Event('notifications:updated'));
+          }}
+        />
       ) : activeTicket ? (
         <CustomerTicketDetailModal
           ticket={activeTicket}
@@ -412,8 +508,36 @@ export default function Header({ sidebarHovered }) {
           onResolve={null}
           allowReopen={false}
           customerName={activeTicket.customer}
+          onAssign={(t) => setAssignModalTicket(t || activeTicket)}
         />
       ) : null}
+
+      {assignModalTicket && (
+        <AssignModal
+          ticket={assignModalTicket}
+          employees={activeEmployees}
+          departments={activeDepartments}
+          priorityOptions={['Low', 'Medium', 'High', 'Critical']}
+          onClose={() => setAssignModalTicket(null)}
+          onSave={async (updated) => {
+            const priorityMap = { Low: 1, Medium: 2, High: 3, Critical: 4 };
+            try {
+              const targetTicketId = updated.ticket_ID || Number(String(updated.id || '').replace(/\D/g, ''));
+              await acceptTicket({
+                ticketId: targetTicketId,
+                employeeIds: updated.assigned,
+                assignedByEmail: user?.email,
+                priorityId: priorityMap[updated.priority] ?? 1,
+              });
+              setAssignModalTicket(null);
+              handleCloseActiveTicket();
+            } catch (err) {
+              console.error('Failed to assign ticket from header notification:', err);
+              window.alert(err?.response?.data?.message || 'Failed to assign ticket.');
+            }
+          }}
+        />
+      )}
 
       {activeTicketLoading && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40 backdrop-blur-[1.5px]">

@@ -316,7 +316,7 @@ export default function EmployeeDashboard() {
     try {
       await acceptTicket({ ticketId: numericId });
       setIsAccepting(false);
-      setPendingTicket(null);
+      setPendingTicket((prev) => (prev ? { ...prev, accepted: true, status: 'In Progress' } : null));
       setAssignedTickets((prev) =>
         prev.map((t) => (t.id === id || t.ticket_ID === numericId ? { ...t, accepted: true, status: 'In Progress' } : t))
       );
@@ -329,6 +329,7 @@ export default function EmployeeDashboard() {
         err?.response?.data?.message || 'Could not accept this assignment. It may have been reassigned or updated. Please refresh and try again.',
         'Accept failed'
       );
+      throw err;
     }
   }, [loadAssigned, toast, pendingTicket, assignedTickets]);
 
@@ -870,9 +871,32 @@ export default function EmployeeDashboard() {
           ticket={pendingTicket}
           onClose={() => setPendingTicket(null)}
           onAccept={handleAcceptAssignment}
-          onRequestReassign={(t) => {
-            setPendingTicket(null);
-            setReassignTicket(t);
+          onRequestReassign={(t, reason) => {
+            setPendingTicket((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    reassignmentRequested: true,
+                    reassignmentStatus: 'Pending',
+                    reassignmentReason: reason,
+                    status: 'Pending Reassignment',
+                  }
+                : null
+            );
+            setAssignedTickets((prev) =>
+              prev.map((item) =>
+                item.id === t.id || item.ticket_ID === t.ticket_ID
+                  ? {
+                      ...item,
+                      reassignmentRequested: true,
+                      reassignmentStatus: 'Pending',
+                      reassignmentReason: reason,
+                      status: 'Pending Reassignment',
+                    }
+                  : item
+              )
+            );
+            loadAssigned({ forceRefresh: true });
           }}
           isAccepting={isAccepting}
         />

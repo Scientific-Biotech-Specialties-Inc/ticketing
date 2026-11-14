@@ -74,9 +74,8 @@ export default function DelegateTicketModal({
   }, [employees, ticket, selectedDeptFilter, searchQuery]);
 
   const departments = useMemo(() => {
-    const list = [...new Set(employees.map((e) => e.department).filter(Boolean))];
-    return list.sort();
-  }, [employees]);
+    return ['IT', 'Customer Service', 'Service'];
+  }, []);
 
   const selectedCandidate = useMemo(() => {
     return employees.find((e) => Number(e.id || e.emp_id) === Number(selectedEmployeeId));

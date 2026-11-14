@@ -223,7 +223,7 @@ export default function ServiceManagerTickets() {
       });
 
       setAssignEmployees(mergedEmps);
-      setAssignDepartments(deps && deps.length > 0 ? deps.map((d) => d.name || d) : ['Service', 'Biomedical Engineering', 'Radiology Maintenance', 'Facilities & Equipment']);
+      setAssignDepartments(['IT', 'Customer Service', 'Service']);
     });
   }, []);
 

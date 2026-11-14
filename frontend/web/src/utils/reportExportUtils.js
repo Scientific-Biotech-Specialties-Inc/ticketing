@@ -6,11 +6,15 @@ import { buildXlsx, XLSX_MIME } from './xlsx';
  * Downloads raw CSV spreadsheet file formatted for Microsoft Excel / Google Sheets data analysis.
  */
 export function downloadCsv(filename, csvContent) {
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  let cleanContent = typeof csvContent === 'string' ? csvContent : String(csvContent || '');
+  cleanContent = cleanContent.replace(/^\uFEFF/, '').replace(/^ï»¿/, '').replace(/^Â¯Â»Â¿/, '');
+
+  // Prepend \uFEFF character in a standard UTF-8 string blob
+  const blob = new Blob(['\uFEFF' + cleanContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.setAttribute('href', url);
-  link.setAttribute('download', filename);
+  link.setAttribute('download', filename.endsWith('.csv') ? filename : `${filename}.csv`);
   link.style.visibility = 'hidden';
   document.body.appendChild(link);
   link.click();
@@ -220,18 +224,212 @@ export function buildPredictiveExportRows(data) {
 
 const todayStamp = () => new Date().toISOString().split('T')[0];
 
-/** CSV for the operational dashboards (Branch and System). */
-export function exportAnalyticsToCsv(data, period = '') {
-  const rows = buildAnalyticsExportRows(data);
-  const meta = [['Operational Analytics Report'], ['Generated', new Date().toISOString()], ...(period ? [['Period', period]] : [])];
-  downloadCsv(`Operational_Analytics_${todayStamp()}.csv`, rowsToCsv(EXPORT_HEADERS, rows, meta));
+const formatPeriodString = (period, dateFrom, dateTo) => {
+  if (period === 'Custom Range' && dateFrom && dateTo) {
+    return `Custom Range (${dateFrom} to ${dateTo})`;
+  }
+  if (dateFrom && dateTo && period) {
+    return `${period} (${dateFrom} to ${dateTo})`;
+  }
+  return period || 'All Time';
+};
+
+/**
+ * Builds dynamic rows and sections for the Operational Analytics export
+ * reflecting the active tab, date range, branch, and live metrics.
+ */
+export function buildDynamicAnalyticsCsv(data, options = {}) {
+  const activeTab = options.activeTab || 'overview';
+  const branchName = options.branchName || 'Main Branch';
+  const periodText = formatPeriodString(options.period, options.dateFrom, options.dateTo);
+  const timestampPHT = new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' });
+
+  const reportTitle = activeTab === 'departments'
+    ? 'Department Performance & Workload Report'
+    : activeTab === 'employees'
+    ? 'Technician Workload & Performance Report'
+    : activeTab === 'predictive'
+    ? 'Predictive Risk & Volume Forecast Report'
+    : 'Operational Analytics Report';
+
+  let csv = `${csvCell(reportTitle)}\r\n`;
+  csv += `Generated At:,${csvCell(timestampPHT + ' PHT')}\r\n`;
+  csv += `Branch Scope:,${csvCell(branchName)}\r\n`;
+  csv += `Date Range:,${csvCell(periodText)}\r\n`;
+  csv += `Department:,${csvCell(options.department || 'All Departments')}\r\n\r\n`;
+
+  if (activeTab === 'departments') {
+    csv += `"1. DEPARTMENT WORKLOAD & PERFORMANCE SUMMARY"\r\n`;
+    const headers = ['Department', 'Staff Count', 'Total Tickets Handled', 'Resolved Tickets', 'Open Tickets', 'Overdue / Breached Tickets', 'Avg Resolution Time (hrs)', 'SLA Compliance Rate (%)'];
+    csv += headers.map(csvCell).join(',') + '\r\n';
+
+    const depts = data?.departments?.departments || data?.departments || options.analyticsData?.departments?.departments || [];
+    let sumStaff = 0, sumTotal = 0, sumResolved = 0, sumOpen = 0, sumOverdue = 0;
+
+    depts.forEach((d) => {
+      const name = d.department || d.name || 'Unassigned';
+      const staff = Number(d.staff_count ?? d.staffCount ?? 0);
+      const total = Number(d.total_tickets ?? d.totalTickets ?? 0);
+      const resolved = Number(d.resolved_tickets ?? d.resolvedTickets ?? 0);
+      const open = Number(d.open_tickets_count ?? d.openCount ?? 0);
+      const overdue = Number(d.overdue_tickets_count ?? d.overdueCount ?? 0);
+      const avgRes = isPresent(d.avg_resolution_hours) ? `${Number(d.avg_resolution_hours).toFixed(1)}h` : (d.avgResolutionTime ? `${d.avgResolutionTime}h` : '—');
+      const slaRate = isPresent(d.sla_compliance_rate) ? `${Number(d.sla_compliance_rate).toFixed(1)}%` : (d.slaCompliance != null ? `${d.slaCompliance}%` : '—');
+
+      sumStaff += staff;
+      sumTotal += total;
+      sumResolved += resolved;
+      sumOpen += open;
+      sumOverdue += overdue;
+
+      csv += [name, staff, total, resolved, open, overdue, avgRes, slaRate].map(csvCell).join(',') + '\r\n';
+    });
+
+    if (depts.length > 0) {
+      csv += `\r\n`;
+      csv += ['SUMMARY TOTALS', sumStaff, sumTotal, sumResolved, sumOpen, sumOverdue, '—', '—'].map(csvCell).join(',') + '\r\n';
+    }
+    return csv;
+  }
+
+  if (activeTab === 'employees') {
+    csv += `"1. TECHNICIAN WORKLOAD & PERFORMANCE RECORDS"\r\n`;
+    const headers = ['Technician Name', 'Department', 'Role', 'Active Open Tickets', 'Resolved Tickets', 'Total Tickets Handled', 'SLA Compliance Rate (%)', 'Avg Resolution Time (hrs)'];
+    csv += headers.map(csvCell).join(',') + '\r\n';
+
+    const emps = data?.employee_performance?.employees || data?.employee_performance?.list || (Array.isArray(data?.employee_performance) ? data.employee_performance : []) || options.analyticsData?.performance?.employees || [];
+    let sumActive = 0, sumResolved = 0, sumTotal = 0;
+
+    emps.forEach((emp) => {
+      const name = emp.name || `Employee #${emp.id || emp.emp_id}`;
+      const dept = emp.department || 'Service';
+      const role = emp.role || emp.technical_role || 'Technician';
+      const active = Number(emp.active_tickets ?? emp.activeTickets ?? emp.open_tickets ?? 0);
+      const resolved = Number(emp.resolved_tickets ?? emp.resolvedTickets ?? 0);
+      const total = active + resolved;
+      const slaRate = isPresent(emp.sla_compliance_rate) ? `${Number(emp.sla_compliance_rate).toFixed(1)}%` : (isPresent(emp.compliance_rate) ? `${Number(emp.compliance_rate).toFixed(1)}%` : '—');
+      const avgRes = isPresent(emp.avg_resolution_hours) ? `${Number(emp.avg_resolution_hours).toFixed(1)}h` : (isPresent(emp.avg_resolution_time) ? `${emp.avg_resolution_time}h` : '—');
+
+      sumActive += active;
+      sumResolved += resolved;
+      sumTotal += total;
+
+      csv += [name, dept, role, active, resolved, total, slaRate, avgRes].map(csvCell).join(',') + '\r\n';
+    });
+
+    if (emps.length > 0) {
+      csv += `\r\n`;
+      csv += ['PORTFOLIO TOTALS', '—', '—', sumActive, sumResolved, sumTotal, '—', '—'].map(csvCell).join(',') + '\r\n';
+    }
+    return csv;
+  }
+
+  // Default: Overview Tab
+  const k = data?.kpis || {};
+  csv += `"1. EXECUTIVE OPERATIONAL METRICS & KPIS"\r\n`;
+  csv += ['Category', 'Metric Name', 'Current Value', 'Target / Unit', 'Status / Operational Notes'].map(csvCell).join(',') + '\r\n';
+
+  const addMetric = (cat, name, val, unit = '', note = '') => {
+    csv += [cat, name, isPresent(val) ? val : 'Unavailable', unit, note].map(csvCell).join(',') + '\r\n';
+  };
+
+  addMetric('Ticket Volume', 'Total Tickets Logged', k.total_tickets, 'tickets', 'Overall period volume');
+  addMetric('Ticket Volume', 'Resolved Tickets', k.resolved_tickets, 'tickets', 'Resolved and closed tickets');
+  addMetric('Ticket Volume', 'Open Backlog', k.open_tickets, 'tickets', 'Currently active pending triage/resolution');
+  addMetric('Ticket Volume', 'In Progress Workload', k.in_progress_tickets, 'tickets', 'Under active technician servicing');
+  addMetric('Ticket Volume', 'On Hold Tickets', k.on_hold_tickets, 'tickets', 'Awaiting customer or external parts');
+  addMetric('Ticket Volume', 'Closed Records', k.closed_tickets, 'tickets', 'Final closed status');
+  addMetric('SLA Adherence', 'SLA Compliance Rate', isPresent(k.sla_compliance_rate) ? `${Number(k.sla_compliance_rate).toFixed(1)}%` : 'Unavailable', 'Target ≥ 90%', Number(k.sla_compliance_rate) >= 90 ? 'Compliant' : 'Needs Attention');
+  addMetric('SLA Adherence', 'Tickets Within SLA', k.sla_met_count, 'tickets', 'Met resolution deadline');
+  addMetric('SLA Adherence', 'Tickets Breached SLA', k.sla_breached_count, 'tickets', 'Exceeded target deadline');
+  addMetric('Resolution Speed', 'Average Resolution Time', isPresent(k.avg_resolution_hours) ? `${Number(k.avg_resolution_hours).toFixed(1)}` : 'Unavailable', 'Target ≤ 8.0 hrs', 'Mean time from creation to resolution');
+  addMetric('Client Satisfaction', 'Average CSAT Score', isPresent(k.csat_score) ? `${Number(k.csat_score).toFixed(1)} / 5.0` : 'Unavailable', 'Target ≥ 4.5', isPresent(k.csat_score) ? 'Based on verified customer feedback' : 'No survey ratings collected in period');
+  addMetric('Client Satisfaction', 'Total Feedback Reviews', k.total_csat_reviews, 'surveys', 'Customer CSAT submissions');
+  addMetric('Workforce Capacity', 'Active Service Technicians', k.active_employees_count, 'personnel', 'Available duty technicians');
+
+  csv += `\r\n`;
+
+  // Status breakdown
+  const st = data?.status_distribution || {};
+  if (Object.keys(st).length > 0) {
+    csv += `"2. TICKET STATUS BREAKDOWN"\r\n`;
+    csv += ['Status Name', 'Ticket Count'].map(csvCell).join(',') + '\r\n';
+    Object.entries(st).forEach(([sName, count]) => {
+      csv += [sName, count].map(csvCell).join(',') + '\r\n';
+    });
+    csv += `\r\n`;
+  }
+
+  // Recurring categories
+  const categories = data?.recurring_issues?.top_categories || [];
+  if (categories.length > 0) {
+    csv += `"3. TOP RECURRING PROBLEM CATEGORIES"\r\n`;
+    csv += ['Category', 'Incidents Count', 'Percentage of Volume'].map(csvCell).join(',') + '\r\n';
+    categories.forEach((c) => {
+      csv += [c.name, c.count, isPresent(c.percentage) ? `${c.percentage}%` : '—'].map(csvCell).join(',') + '\r\n';
+    });
+    csv += `\r\n`;
+  }
+
+  // Recurring equipment
+  const equipment = data?.recurring_issues?.top_equipment || [];
+  if (equipment.length > 0) {
+    csv += `"4. TOP RECURRING EQUIPMENT ISSUES"\r\n`;
+    csv += ['Equipment / Model', 'Incident Count', 'Percentage of Volume'].map(csvCell).join(',') + '\r\n';
+    equipment.forEach((m) => {
+      csv += [m.name, m.count, isPresent(m.percentage) ? `${m.percentage}%` : '—'].map(csvCell).join(',') + '\r\n';
+    });
+    csv += `\r\n`;
+  }
+
+  // Branch comparisons (if present)
+  const branches = data?.branch_comparisons || data?.branchComparison || [];
+  if (branches.length > 0) {
+    csv += `"5. HOSPITAL BRANCH COMPARATIVE PERFORMANCE"\r\n`;
+    csv += ['Branch Name', 'Total Tickets', 'Resolved Tickets', 'SLA Compliance (%)', 'Avg Resolution (hrs)', 'CSAT Rating'].map(csvCell).join(',') + '\r\n';
+    branches.forEach((b) => {
+      csv += [b.name, b.total_tickets ?? b.totalTickets ?? 0, b.resolved_tickets ?? b.resolvedTickets ?? 0, `${b.sla_compliance_rate ?? b.slaCompliance ?? 0}%`, b.avg_resolution_hours ?? b.avgResolutionTime ?? '—', b.csat_score ?? b.avgCsat ?? '—'].map(csvCell).join(',') + '\r\n';
+    });
+  }
+
+  return csv;
 }
 
-/** CSV for the predictive forecast. */
-export function exportPredictiveToCsv(data, period = '') {
+/** CSV for the operational dashboards (Branch and System) - Dynamic & Filter-Aware. */
+export function exportAnalyticsToCsv(data, periodOrOptions = '', options = {}) {
+  const opts = typeof periodOrOptions === 'object' && periodOrOptions !== null
+    ? periodOrOptions
+    : { period: periodOrOptions, ...options };
+
+  const csvContent = buildDynamicAnalyticsCsv(data, opts);
+  const tabSlug = (opts.activeTab || 'Operational').replace(/\s+/g, '_');
+  const filename = `SBSI_${tabSlug}_Analytics_${todayStamp()}.csv`;
+  downloadCsv(filename, csvContent);
+}
+
+/** CSV for the predictive forecast - Dynamic & Filter-Aware. */
+export function exportPredictiveToCsv(data, periodOrOptions = '', options = {}) {
+  const opts = typeof periodOrOptions === 'object' && periodOrOptions !== null
+    ? periodOrOptions
+    : { period: periodOrOptions, ...options };
+
+  const periodText = formatPeriodString(opts.period, opts.dateFrom, opts.dateTo);
+  const branchName = opts.branchName || 'Main Branch';
+  const timestampPHT = new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' });
+
+  let csv = `${csvCell('Predictive Risk & Volume Forecast Report')}\r\n`;
+  csv += `Generated At:,${csvCell(timestampPHT + ' PHT')}\r\n`;
+  csv += `Branch Scope:,${csvCell(branchName)}\r\n`;
+  csv += `Historical Analysis Window:,${csvCell(periodText)}\r\n`;
+  csv += `Model Engine:,${csvCell('Gemini AI 2.0 & Regression Trend Baseline')}\r\n\r\n`;
+
   const rows = buildPredictiveExportRows(data);
-  const meta = [['Predictive Analytics Report'], ['Generated', new Date().toISOString()], ...(period ? [['Period', period]] : [])];
-  downloadCsv(`Predictive_Analytics_${todayStamp()}.csv`, rowsToCsv(EXPORT_HEADERS, rows, meta));
+  csv += EXPORT_HEADERS.map(csvCell).join(',') + '\r\n';
+  rows.forEach((r) => {
+    csv += r.map(csvCell).join(',') + '\r\n';
+  });
+
+  downloadCsv(`SBSI_Predictive_Forecast_${todayStamp()}.csv`, csv);
 }
 
 /** Kept for existing callers: the master report is the operational analytics report. */
@@ -240,28 +438,37 @@ export function exportMasterReportToCsv(data) {
 }
 
 /**
- * Structured CSV Export with Header and Filter Metadata (TS061)
+ * Structured CSV Export with Clean Metadata & Table Layout (Pic 3 Design)
  */
 export function exportStructuredCsv(filename, headers, rows, filterSummary = {}) {
-  const dateStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
-  let csv = `"ENTERPRISE SERVICE DESK REPORT"\n`;
-  csv += `"Generated At","${dateStr}"\n`;
-  if (filterSummary.reportType) csv += `"Report Type","${filterSummary.reportType}"\n`;
-  if (filterSummary.dateRange) csv += `"Date Range","${filterSummary.dateRange}"\n`;
-  if (filterSummary.branch) csv += `"Branch Scope","${filterSummary.branch}"\n`;
-  if (filterSummary.department) csv += `"Department","${filterSummary.department}"\n`;
-  csv += `\n`;
+  const dateStr = new Date().toLocaleString('en-US', { timeZone: 'Asia/Manila' });
+  const title = filterSummary.reportType || 'Operational Analytics Report';
+
+  let csv = `${csvCell(title)}\r\n`;
+  csv += `Generated At:,${csvCell(dateStr + ' PHT')}\r\n`;
+  csv += `Branch Scope:,${csvCell(filterSummary.branch || 'All Branches')}\r\n`;
+  csv += `Date Range:,${csvCell(filterSummary.dateRange || 'Standard Period')}\r\n`;
+  csv += `Department:,${csvCell(filterSummary.department || 'All Departments')}\r\n`;
+  if (filterSummary.priority && filterSummary.priority !== 'All') {
+    csv += `Priority:,${csvCell(filterSummary.priority)}\r\n`;
+  }
+  csv += `Total Records:,${csvCell(rows.length)}\r\n\r\n`;
 
   // Headers
-  csv += headers.map((h) => `"${String(h).replace(/"/g, '""')}"`).join(',') + '\n';
+  csv += headers.map(csvCell).join(',') + '\r\n';
 
   // Rows
   rows.forEach((r) => {
-    const rowValues = headers.map((h) => {
-      const val = r[h] !== undefined ? r[h] : (r[h.toLowerCase().replace(/\s+/g, '_')] ?? '');
-      return `"${String(val).replace(/"/g, '""')}"`;
-    });
-    csv += rowValues.join(',') + '\n';
+    let rowValues;
+    if (Array.isArray(r)) {
+      rowValues = headers.map((_, i) => csvCell(r[i]));
+    } else {
+      rowValues = headers.map((h) => {
+        const val = r[h] !== undefined ? r[h] : (r[h.toLowerCase().replace(/\s+/g, '_')] ?? '');
+        return csvCell(val);
+      });
+    }
+    csv += rowValues.join(',') + '\r\n';
   });
 
   downloadCsv(filename.endsWith('.csv') ? filename : `${filename}.csv`, csv);
@@ -287,32 +494,91 @@ const ensureXlsx = (filename) => filename.replace(/\.(xlsx|csv|pdf)$/i, '') + '.
  */
 export function exportStructuredExcel(filename, reportTitle, headers, rows, filterSummary = {}) {
   const generated = new Date().toISOString().replace('T', ' ').substring(0, 19);
-  const matrix = rows.map((r) =>
-    headers.map((h) => (r[h] !== undefined ? r[h] : (r[h.toLowerCase().replace(/\s+/g, '_')] ?? '')))
-  );
+  const matrix = rows.map((r) => {
+    if (Array.isArray(r)) return r;
+    return headers.map((h) => (r[h] !== undefined ? r[h] : (r[h.toLowerCase().replace(/\s+/g, '_')] ?? '')));
+  });
+
+  const meta = [
+    ['Generated At:', generated],
+    ['Branch Scope:', filterSummary.branch || 'All Branches'],
+    ['Date Range:', filterSummary.dateRange || 'Standard Period'],
+    ['Department:', filterSummary.department || 'All Departments'],
+  ];
+  if (filterSummary.priority && filterSummary.priority !== 'All') {
+    meta.push(['Priority:', filterSummary.priority]);
+  }
+  meta.push(['Total Records:', String(matrix.length)]);
 
   const bytes = buildXlsx({
     sheetName: 'Report',
     title: reportTitle,
-    meta: [
-      ['Generated At:', generated],
-      ['Branch Scope:', filterSummary.branch || 'All Branches'],
-      ['Date Range:', filterSummary.dateRange || 'Standard Period'],
-      ['Department:', filterSummary.department || 'All Departments'],
-    ],
+    meta,
     headers,
     rows: matrix,
   });
   downloadBytes(ensureXlsx(filename), bytes, XLSX_MIME);
 }
 
-/** Excel for the operational dashboards (Branch and System). */
-export function exportAnalyticsToExcel(data, period = 'Active Period') {
+/** Excel for the operational dashboards (Branch and System) - Dynamic & Filter-Aware. */
+export function exportAnalyticsToExcel(data, periodOrOptions = 'Active Period', options = {}) {
+  const opts = typeof periodOrOptions === 'object' && periodOrOptions !== null
+    ? periodOrOptions
+    : { period: periodOrOptions, ...options };
+
+  const activeTab = opts.activeTab || 'overview';
+  const periodText = formatPeriodString(opts.period, opts.dateFrom, opts.dateTo);
+  const branchName = opts.branchName || 'Main Branch';
+
+  if (activeTab === 'departments') {
+    const headers = ['Department', 'Staff Count', 'Total Tickets', 'Resolved Tickets', 'Open Tickets', 'Overdue Tickets', 'Avg Resolution (hrs)', 'SLA Compliance (%)'];
+    const depts = data?.departments?.departments || data?.departments || opts.analyticsData?.departments?.departments || [];
+    const matrix = depts.map((d) => [
+      d.department || d.name || 'Unassigned',
+      Number(d.staff_count ?? d.staffCount ?? 0),
+      Number(d.total_tickets ?? d.totalTickets ?? 0),
+      Number(d.resolved_tickets ?? d.resolvedTickets ?? 0),
+      Number(d.open_tickets_count ?? d.openCount ?? 0),
+      Number(d.overdue_tickets_count ?? d.overdueCount ?? 0),
+      isPresent(d.avg_resolution_hours) ? `${Number(d.avg_resolution_hours).toFixed(1)}h` : (d.avgResolutionTime ? `${d.avgResolutionTime}h` : '—'),
+      isPresent(d.sla_compliance_rate) ? `${Number(d.sla_compliance_rate).toFixed(1)}%` : (d.slaCompliance != null ? `${d.slaCompliance}%` : '—'),
+    ]);
+    exportStructuredExcel(`SBSI_Department_Performance_${todayStamp()}.xlsx`, 'Department Performance & Workload Report', headers, matrix, {
+      branch: branchName,
+      dateRange: periodText,
+      department: 'All Departments',
+    });
+    return;
+  }
+
+  if (activeTab === 'employees') {
+    const headers = ['Technician Name', 'Department', 'Role', 'Active Tickets', 'Resolved Tickets', 'Total Handled', 'SLA Compliance (%)', 'Avg Resolution (hrs)'];
+    const emps = data?.employee_performance?.employees || data?.employee_performance?.list || (Array.isArray(data?.employee_performance) ? data.employee_performance : []) || opts.analyticsData?.performance?.employees || [];
+    const matrix = emps.map((emp) => [
+      emp.name || `Employee #${emp.id || emp.emp_id}`,
+      emp.department || 'Service',
+      emp.role || emp.technical_role || 'Technician',
+      Number(emp.active_tickets ?? emp.activeTickets ?? emp.open_tickets ?? 0),
+      Number(emp.resolved_tickets ?? emp.resolvedTickets ?? 0),
+      Number(emp.active_tickets ?? emp.activeTickets ?? emp.open_tickets ?? 0) + Number(emp.resolved_tickets ?? emp.resolvedTickets ?? 0),
+      isPresent(emp.sla_compliance_rate) ? `${Number(emp.sla_compliance_rate).toFixed(1)}%` : (isPresent(emp.compliance_rate) ? `${Number(emp.compliance_rate).toFixed(1)}%` : '—'),
+      isPresent(emp.avg_resolution_hours) ? `${Number(emp.avg_resolution_hours).toFixed(1)}h` : (isPresent(emp.avg_resolution_time) ? `${emp.avg_resolution_time}h` : '—'),
+    ]);
+    exportStructuredExcel(`SBSI_Technician_Performance_${todayStamp()}.xlsx`, 'Technician Workload & Performance Report', headers, matrix, {
+      branch: branchName,
+      dateRange: periodText,
+      department: 'All Departments',
+    });
+    return;
+  }
+
+  // Default Overview
   const rows = buildAnalyticsExportRows(data).map(([section, metric, value, unit, note]) => ({
     Section: section, Metric: metric, Value: value, Unit: unit, Note: note,
   }));
-  exportStructuredExcel(`Operational_Analytics_${todayStamp()}.xlsx`, 'Operational Analytics Report', EXPORT_HEADERS, rows, {
-    dateRange: period,
+  exportStructuredExcel(`SBSI_Operational_Analytics_${todayStamp()}.xlsx`, 'Operational Analytics Executive Report', EXPORT_HEADERS, rows, {
+    branch: branchName,
+    dateRange: periodText,
     department: 'All Departments',
   });
 }

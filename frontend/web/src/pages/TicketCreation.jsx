@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import NotificationModal from '@/components/NotificationModal';
 import TitleCasingModal from '@/components/TitleCasingModal';
 import AIDepartmentModal from '@/components/AIDepartmentModal';
+import CustomerTicketDetailModal from '@/components/CustomerTicketDetailModal';
 import {
   getTicketFormOptions,
   createTicket,
@@ -50,6 +51,7 @@ export default function TicketCreation() {
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftMessage, setDraftMessage] = useState('');
   const [existingDraftAttachments, setExistingDraftAttachments] = useState([]);
+  const [showAiBackConfirm, setShowAiBackConfirm] = useState(false);
 
   const incomingPrefill = location.state?.prefillData || null;
   const isFromAi = Boolean(
@@ -70,16 +72,27 @@ export default function TicketCreation() {
     conversation_id: location.state?.conversationId || location.state?.conversation_id || location.state?.fromConversationId || undefined,
   });
 
+  const handleConfirmBackWithoutSaving = useCallback(() => {
+    setShowAiBackConfirm(false);
+    const convId = location.state?.conversationId || location.state?.conversation_id || location.state?.fromConversationId;
+    navigate('/ai-support', {
+      state: {
+        conversationId: convId || undefined,
+        activeConversationId: convId || undefined,
+      },
+    });
+  }, [location.state, navigate]);
+
   const handleCancelOrBack = useCallback(() => {
     if (isFromAi || incomingPrefill || location.state?.fromAiChat) {
-      navigate('/ai-support');
+      setShowAiBackConfirm(true);
       return;
     }
     if (draftId || location.state?.draftId) {
       navigate('/my-tickets', { state: { tab: 'drafts' } });
       return;
     }
-    if (window.history.length > 2) {
+    if (window.history.length > 1) {
       navigate(-1);
     } else {
       navigate('/customer-dashboard');
@@ -167,6 +180,8 @@ export default function TicketCreation() {
     };
   }, []);
   const [successModal, setSuccessModal] = useState(false);
+  const [createdTicketSummary, setCreatedTicketSummary] = useState(null);
+  const [showCreatedSummaryModal, setShowCreatedSummaryModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [createdTicketId, setCreatedTicketId] = useState(null);
   const [titleCasingData, setTitleCasingData] = useState(null);
@@ -753,9 +768,24 @@ export default function TicketCreation() {
       }
       
       const response = await createTicket(payload);
-      const newTicketId = response.ticket?.ticket_ID || response.ticket_ID;
+      const newTicket = response.ticket || response.dashboard_ticket || response;
+      const newTicketId = newTicket?.ticket_ID || response.ticket_ID || response.id;
       setCreatedTicketId(newTicketId);
-      setSuccessModal(true);
+
+      const createdTicketObj = {
+        ...newTicket,
+        id: newTicket.ticket_number || (newTicketId ? `TKT-${String(newTicketId).padStart(4, '0')}` : 'TKT-0001'),
+        ticket_ID: newTicketId,
+        title: title.trim(),
+        description: description.trim(),
+        priority: options.priorities?.find(p => String(p.priority_ID || p.id) === String(priorityId))?.priority_name || 'Low',
+        category: options.categories?.find(c => String(c.problem_category_ID || c.id) === String(categoryId))?.category_name || 'General',
+        equipment: options.machines?.find(m => String(m.machine_ID || m.id) === String(machineId))?.machine_name || 'Equipment',
+        status: 'Open',
+        date_created: new Date().toISOString(),
+      };
+      setCreatedTicketSummary(createdTicketObj);
+      setShowCreatedSummaryModal(true);
       fetchCustomerOpenCount();
     } catch (err) {
       setError(err?.response?.data?.message || 'Failed to submit ticket. Please try again.');
@@ -1170,6 +1200,68 @@ export default function TicketCreation() {
         message="Your support ticket has been created and will be reviewed shortly."
         onClose={handleSuccessClose}
       />
+
+      {showCreatedSummaryModal && createdTicketSummary && (
+        <CustomerTicketDetailModal
+          ticket={createdTicketSummary}
+          onClose={() => {
+            setShowCreatedSummaryModal(false);
+            navigate('/customer-dashboard');
+          }}
+          onDiscard={null}
+          onReopen={null}
+          onResolve={null}
+          allowReopen={false}
+          customerName={user?.name || `${user?.first_name || ''} ${user?.last_name || ''}`.trim() || 'Customer'}
+        />
+      )}
+
+      {showAiBackConfirm && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl border border-gray-200 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-gray-900">Return to AI Chatbot?</h3>
+                <p className="text-xs text-gray-600 leading-relaxed">
+                  Are you sure you want to go back to the AI chatbot? You can save your ticket as a draft before leaving, or return without saving.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowAiBackConfirm(false)}
+                className="w-full sm:w-auto px-3.5 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmBackWithoutSaving}
+                className="w-full sm:w-auto px-3.5 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-lg transition-colors cursor-pointer"
+              >
+                Go Back without Saving
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setShowAiBackConfirm(false);
+                  await handleSaveDraft();
+                }}
+                disabled={savingDraft}
+                className="w-full sm:w-auto px-4 py-2 text-xs font-semibold text-white bg-[#252578] hover:bg-[#1d1d60] rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 shadow-xs"
+              >
+                {savingDraft ? <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : null}
+                <span>Save to Draft</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

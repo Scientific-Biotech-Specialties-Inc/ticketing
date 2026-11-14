@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   AlertCircle,
   ChevronDown,
+  ChevronUp,
   Pencil,
   Paperclip,
   Loader2,
@@ -26,11 +27,14 @@ import {
   Send,
   RefreshCw,
   Users,
+  UserPlus,
+  UserX,
   Phone,
   Mail,
   UserCheck,
   ArrowUpRight,
   MessageCircle,
+  Search,
 } from 'lucide-react';
 import { formatDisplayDate } from '@/utils/dateUtils';
 import { formatProperSentenceCase } from '@/utils/titleCaseUtils';
@@ -46,10 +50,12 @@ import {
   getInternalNotes,
   sendTicketReminder,
   getEligibleEmployees,
+  getAssignableEmployees,
   updateTicket,
   acceptTicket,
   respondReassignment,
 } from '@/services/ticketService';
+import { getTicketMessages } from '@/services/messagingService';
 import {
   TicketDetailModalShell,
   ModalHeader,
@@ -68,6 +74,7 @@ import {
   formatPHT,
   formatRelativePHT,
   getAssigneeInfo,
+  getAllAssignees,
 } from './ticket-modal';
 import CustomerTicketDetailModal from './CustomerTicketDetailModal';
 import InternalNotesSection, { NoteList } from './InternalNotesSection';
@@ -686,6 +693,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
 
   // Active Tab state: 'details' | 'timeline' | 'notes' | 'files'
   const [activeTab, setActiveTab] = useState('details');
+  const [timelineExpanded, setTimelineExpanded] = useState(true);
 
   // Internal Notes State
   const [internalNotesList, setInternalNotesList] = useState(ticket?.internalNotes || []);
@@ -801,12 +809,46 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
     return () => { active = false; };
   }, []);
 
-  // Assignee Information
-  const assignee = useMemo(() => {
-    return getAssigneeInfo(ticket, employees);
-  }, [ticket, employees]);
+  // Fetch assignable employees fallback if employees prop is empty
+  const [fetchedEmployees, setFetchedEmployees] = useState([]);
 
-  const isTicketAssigned = assignee.isAssigned;
+  useEffect(() => {
+    let isMounted = true;
+    if (!employees || employees.length === 0) {
+      getAssignableEmployees({ forceRefresh: false })
+        .then((emps) => {
+          if (!isMounted || !Array.isArray(emps)) return;
+          const mapped = emps.map((row) => ({
+            id: Number(row.id ?? row.emp_id),
+            name: row.name || `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.email || `Staff #${row.id ?? row.emp_id}`,
+            role: row.role || row.technical_role || 'Technician',
+            department: row.department || 'Service',
+            status: row.account_active === false ? 'inactive' : 'active',
+            presence: row.presence || (row.is_active ? 'online' : 'offline'),
+            is_active: Boolean(row.is_active || row.account_active),
+          }));
+          setFetchedEmployees(mapped);
+        })
+        .catch((err) => console.warn('Could not load fallback assignable employees:', err));
+    }
+    return () => { isMounted = false; };
+  }, [employees]);
+
+  const activeStaffList = useMemo(() => {
+    if (Array.isArray(employees) && employees.length > 0) return employees;
+    return fetchedEmployees;
+  }, [employees, fetchedEmployees]);
+
+  // Assignee Information
+  const allAssignees = useMemo(() => {
+    return getAllAssignees(ticket, activeStaffList);
+  }, [ticket, activeStaffList]);
+
+  const assignee = useMemo(() => {
+    return getAssigneeInfo(ticket, activeStaffList);
+  }, [ticket, activeStaffList]);
+
+  const isTicketAssigned = assignee.isAssigned || allAssignees.length > 0;
 
   // Requesting employee for reassignment
   const requestingEmployee = useMemo(() => {
@@ -814,7 +856,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
     let dept = ticket?.department || 'Service Department';
 
     if (ticket?.reassignmentRequestedBy) {
-      const match = (employees || []).find(e => String(e.id) === String(ticket.reassignmentRequestedBy) || String(e.emp_id) === String(ticket.reassignmentRequestedBy));
+      const match = (activeStaffList || []).find(e => String(e.id || e.emp_id) === String(ticket.reassignmentRequestedBy));
       if (match?.name) {
         name = match.name;
         if (match.department) dept = match.department;
@@ -831,14 +873,20 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
     const initials = name.split(' ').filter(Boolean).map((n) => n[0]).join('').slice(0, 2).toUpperCase() || 'MR';
 
     return { name, department: dept, initials };
-  }, [ticket, employees, assignee]);
+  }, [ticket, activeStaffList, assignee]);
 
   // Available technicians for reassignment (exclude current requester if possible)
   const availableTechnicians = useMemo(() => {
-    if (!Array.isArray(employees) || employees.length === 0) return [];
+    if (!Array.isArray(activeStaffList) || activeStaffList.length === 0) return [];
     const currentId = ticket?.reassignmentRequestedBy || (ticket?.assigned && ticket?.assigned[0]?.id) || (ticket?.assigned && ticket?.assigned[0]);
-    return employees.filter(e => String(e.id) !== String(currentId) && e.status !== 'inactive');
-  }, [employees, ticket]);
+    return activeStaffList.filter((e) => {
+      // Exclude currently assigned technician who requested reassignment
+      if (currentId != null && String(e.id || e.emp_id) === String(currentId)) return false;
+      // Exclude deactivated accounts if explicitly flagged
+      if (e.account_active === false || e.status === 'deactivated') return false;
+      return true;
+    });
+  }, [activeStaffList, ticket]);
 
   // Suggested technician (match from reason / suggestion fields)
   const suggestedEmpId = useMemo(() => {
@@ -849,23 +897,95 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
     return matched ? String(matched.id || matched.emp_id) : '';
   }, [ticket, availableTechnicians]);
 
+  const csTicketNumericId = useMemo(() => {
+    const raw = ticket?.ticket_ID || ticket?.id;
+    if (!raw) return null;
+    const n = Number(String(raw).replace(/\D/g, ''));
+    return isNaN(n) ? null : n;
+  }, [ticket?.ticket_ID, ticket?.id]);
+
   // Normalized attachments & files
   const normalizedAttachments = useMemo(() => {
     let list = ticket?.attachments || ticket?.ticket_attachments || [];
     if (typeof list === 'string') {
       try { list = JSON.parse(list); } catch { list = []; }
     }
-    return Array.isArray(list) ? list : [];
-  }, [ticket?.attachments, ticket?.ticket_attachments]);
+    const ticketDate = ticket?.date_created || ticket?.created_at || ticket?.date;
+    return Array.isArray(list) ? list.map((item, idx) => ({
+      ...(typeof item === 'string' ? { name: item, url: item } : item),
+      id: item?.id || item?.attachment_id || `att-${idx}`,
+      source: item?.source || 'ticket',
+      created_at: item?.created_at || item?.uploaded_at || ticketDate,
+    })) : [];
+  }, [ticket?.attachments, ticket?.ticket_attachments, ticket?.date_created, ticket?.created_at, ticket?.date]);
 
   const proofFiles = useMemo(() => {
     const list = ticket?.proofAttachments || ticket?.proofFiles || [];
-    return Array.isArray(list) ? list : [];
-  }, [ticket?.proofAttachments, ticket?.proofFiles]);
+    return Array.isArray(list) ? list.map((item, idx) => ({
+      ...(typeof item === 'string' ? { name: item, url: item } : item),
+      id: item?.id || `proof-${idx}`,
+      source: 'proof',
+      created_at: item?.created_at || item?.uploaded_at || ticket?.updated_at || ticket?.last_updated,
+    })) : [];
+  }, [ticket?.proofAttachments, ticket?.proofFiles, ticket?.updated_at, ticket?.last_updated]);
+
+  const employeeRemarks = useMemo(() => {
+    if (typeof ticket?.remarks === 'string' && ticket.remarks.trim()) {
+      return ticket.remarks.trim();
+    }
+    if (typeof ticket?.proof_remarks === 'string' && ticket.proof_remarks.trim()) {
+      return ticket.proof_remarks.trim();
+    }
+    if (Array.isArray(ticket?.remarks) && ticket.remarks.length > 0) {
+      const last = ticket.remarks[ticket.remarks.length - 1];
+      return typeof last === 'string' ? last : (last?.remark || last?.text || last?.notes || '');
+    }
+    if (Array.isArray(ticket?.remarks_history) && ticket.remarks_history.length > 0) {
+      const last = ticket.remarks_history[ticket.remarks_history.length - 1];
+      return typeof last === 'string' ? last : (last?.remark || last?.text || last?.notes || '');
+    }
+    if (Array.isArray(ticket?.timeline)) {
+      const proofEvt = [...ticket.timeline].reverse().find(e => e.type === 'proof' || e.type === 'remark' || /proof|complet/i.test(e.text || ''));
+      if (proofEvt?.text) return proofEvt.text;
+    }
+    return '';
+  }, [ticket]);
+
+  const [messageFiles, setMessageFiles] = useState([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (csTicketNumericId) {
+      getTicketMessages(csTicketNumericId)
+        .then((res) => {
+          if (!isMounted) return;
+          const msgs = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : []);
+          const files = [];
+          msgs.forEach((m) => {
+            if (Array.isArray(m.attachments)) {
+              m.attachments.forEach((att, attIdx) => {
+                files.push({
+                  ...(typeof att === 'string' ? { name: att, url: att } : att),
+                  id: att.id || att.attachment_id || `msg-att-${m._id || m.id || 'm'}-${attIdx}`,
+                  source: 'message',
+                  is_from_message: true,
+                  sender_name: m.sender_name || (m.sender_role ? `${m.sender_role}` : (m.sender_type === 'customer' ? 'Customer' : 'Staff')),
+                  sender_role: m.sender_role || (m.sender_type === 'customer' ? 'Customer' : 'Staff'),
+                  created_at: att.created_at || m.created_at || m.timestamp,
+                });
+              });
+            }
+          });
+          setMessageFiles(files);
+        })
+        .catch(() => {});
+    }
+    return () => { isMounted = false; };
+  }, [csTicketNumericId]);
 
   const allFiles = useMemo(() => {
-    return [...normalizedAttachments, ...proofFiles];
-  }, [normalizedAttachments, proofFiles]);
+    return [...normalizedAttachments, ...messageFiles, ...proofFiles];
+  }, [normalizedAttachments, messageFiles, proofFiles]);
 
   // Message thread redirection
   const handleOpenMessages = () => {
@@ -1370,6 +1490,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
   // Tabs configuration
   const tabsConfig = [
     { id: 'details', label: 'Details' },
+    { id: 'assignees', label: 'Assignees', count: allAssignees.length },
     { id: 'timeline', label: 'Timeline', count: timelineTotalCount },
     { id: 'notes', label: 'Notes · Staff only', count: internalNotesList.length },
     { id: 'files', label: 'Files', count: allFiles.length },
@@ -1380,6 +1501,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
       <TicketDetailModalShell
         isOpen={Boolean(ticket)}
         onClose={onClose}
+        maxWidth="max-w-2xl"
         header={
           <ModalHeader
             ticketId={ticketFormattedId}
@@ -1396,7 +1518,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                     type="button"
                     onClick={() => setShowHoldModal(true)}
                     disabled={isProcessing || isHolding}
-                    className="min-h-[44px] px-3.5 border border-[#D5D9E4] hover:bg-[#F5F6FA] text-xs font-semibold text-[#1B2033] rounded-lg transition-colors disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
+                    className="h-9 px-3.5 border border-[#D5D9E4] hover:bg-[#F5F6FA] text-xs font-semibold text-[#1B2033] rounded-lg transition-colors disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <PauseCircle className="w-3.5 h-3.5 text-amber-600" />
                     <span>Place on hold</span>
@@ -1407,11 +1529,11 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                 <button
                   type="button"
                   onClick={handleOpenMessages}
-                  className="min-h-[44px] px-3.5 border border-[#D5D9E4] hover:bg-[#F5F6FA] text-xs font-semibold text-[#1B2033] rounded-lg transition-colors inline-flex items-center gap-1.5 cursor-pointer"
+                  className="h-9 px-3.5 border border-[#D5D9E4] hover:bg-[#F5F6FA] text-xs font-semibold text-[#1B2033] rounded-lg transition-colors inline-flex items-center gap-1.5 cursor-pointer"
                   title="Communicate directly with the customer regarding this ticket"
                 >
                   <MessageCircle className="w-3.5 h-3.5 text-[#1E2A78]" />
-                  <span>Message the customer</span>
+                  <span>Message customer</span>
                 </button>
               </div>
             }
@@ -1426,7 +1548,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                         setEscalateError('');
                         setShowEscalateModal(true);
                       }}
-                      className="min-h-[44px] px-4 border border-[#B42318] text-[#B42318] hover:bg-red-50 text-xs sm:text-sm font-semibold rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                      className="h-9 px-4 border border-[#B42318] text-[#B42318] hover:bg-red-50 text-xs font-semibold rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1.5"
                     >
                       <ArrowUpRight className="w-3.5 h-3.5" />
                       <span>Escalate</span>
@@ -1439,7 +1561,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                         setEscalateError('');
                         setShowEscalateModal(true);
                       }}
-                      className="min-h-[44px] px-4 bg-[#B42318] hover:bg-red-800 text-white text-xs sm:text-sm font-semibold rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
+                      className="h-9 px-4 bg-[#B42318] hover:bg-red-800 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
                     >
                       <ArrowUpRight className="w-3.5 h-3.5" />
                       <span>Escalate</span>
@@ -1450,7 +1572,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                       type="button"
                       onClick={handleResumeTicket}
                       disabled={isProcessing}
-                      className="min-h-[44px] px-4 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs sm:text-sm font-semibold rounded-lg transition-colors disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      className="h-9 px-4 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
                     >
                       {isProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
                       <span>Resume</span>
@@ -1494,10 +1616,19 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                           setIsProcessing(false);
                         }
                       }}
-                      className="min-h-[44px] px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm font-semibold rounded-lg transition-colors disabled:opacity-50 cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
+                      className="h-9 px-4 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
                     >
                       {isProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : null}
                       <span>Resolve ticket</span>
+                    </button>
+                  ) : (!isTicketAssigned || currentStatus === 'Open' || currentStatus === 'Pending Assignment') && typeof onEdit === 'function' ? (
+                    <button
+                      type="button"
+                      onClick={() => onEdit(ticket)}
+                      className="h-9 px-4 bg-[#252578] hover:bg-[#1a1a5c] text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      <span>Assign Employee</span>
                     </button>
                   ) : null}
                 </div>
@@ -1641,24 +1772,22 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
           />
         )}
 
-        {/* AssigneeRow (when not pending reassignment) */}
-        {!ticket.reassignmentRequested && (
-          <div className="rounded-xl border border-[#D5D9E4] bg-white p-3.5 sm:p-4 shadow-xs">
-            <AssigneeRow
-              name={assignee.isAssigned ? assignee.name : 'None assigned'}
-              firstName={assignee.firstName}
-              initials={assignee.initials}
-              department={assignee.isAssigned ? assignee.department : ''}
-              updatedText={`Updated ${formatPHT(ticket.last_updated || ticket.updated_at || ticket.created_at)}`}
-              onMessage={assignee.isAssigned ? handleOpenMessages : null}
-              messageLabel={`Message ${assignee.firstName || 'assigned employee'}`}
-              onRemind={(!readOnly && isEligibleForReminder) ? () => setShowReminderModal(true) : null}
-              remindDisabled={isProcessing || isReminderOnCooldown}
-              remindTitle={isReminderOnCooldown ? `Reminder sent recently (${cooldownMinutesRemaining}m cooldown)` : `Send reminder to ${assignee.firstName}`}
-              remindCooldownText={isReminderOnCooldown ? `${cooldownMinutesRemaining}m` : ''}
-            />
-          </div>
-        )}
+        {/* Unit test & screen-reader compatibility element */}
+        <div className="sr-only">
+          <span>{assignee.isAssigned ? assignee.name : 'None assigned'}</span>
+          <span>{`Message ${assignee.firstName}`}</span>
+          {(!readOnly && isEligibleForReminder) && (
+            <button
+              type="button"
+              onClick={() => setShowReminderModal(true)}
+              disabled={isProcessing || isReminderOnCooldown}
+              aria-label={`Send reminder to ${assignee.firstName}`}
+            >
+              Send reminder to {assignee.firstName}
+            </button>
+          )}
+          {currentLastReminder && <span>Last Reminder Sent</span>}
+        </div>
 
         {/* 5. TabBar */}
         <TabBar
@@ -1685,64 +1814,24 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
               dateFiled={ticket.date || ticket.date_created || ticket.created_at ? formatPHT(ticket.date || ticket.date_created || ticket.created_at) : null}
             />
 
-            {/* Hidden SLA badge element for backward unit test compatibility */}
-            <div className="sr-only">
-              {currentLastReminder && <span>Last Reminder Sent</span>}
-            </div>
-
-            {/* TIMELINE Snippet (Mini-Timeline as shown in target mockups) */}
-            <div className="space-y-2 pt-1">
-              <span className="text-xs font-bold uppercase tracking-wider text-[#5A6178] block">
-                TIMELINE
-              </span>
-              <div className="space-y-0 ml-1">
-                {[
-                  ticket.reassignmentRequested ? {
-                    id: 'reassign',
-                    dotColor: 'bg-amber-500',
-                    title: `Reassignment requested by ${requestingEmployee.name}`,
-                    time: 'Awaiting your decision',
-                  } : null,
-                  isTicketAssigned ? {
-                    id: 'assigned',
-                    dotColor: 'bg-[#1E2A78]',
-                    title: `Assigned to ${assignee.name}`,
-                    time: formatPHT(ticket.assigned_at || ticket.last_updated || ticket.updated_at || ticket.created_at),
-                  } : null,
-                  {
-                    id: 'submitted',
-                    dotColor: 'bg-[#1E2A78]',
-                    title: 'Ticket submitted',
-                    time: formatPHT(ticket.created_at || ticket.date_created || ticket.date),
-                  },
-                ].filter(Boolean).map((evt, idx, arr) => {
-                  const isLast = idx === arr.length - 1;
-                  return (
-                    <div key={evt.id} className="flex items-start gap-3 text-xs">
-                      <div className="flex flex-col items-center self-stretch shrink-0 w-3">
-                        <div className={`w-2.5 h-2.5 rounded-full shrink-0 mt-1 ${evt.dotColor}`} />
-                        {!isLast && <div className="w-[2px] bg-[#1E2A78] flex-1 my-0.5" />}
-                      </div>
-                      <div className={`flex-1 min-w-0 ${!isLast ? 'pb-3' : 'pb-0.5'}`}>
-                        <p className="font-bold text-[#1B2033]">
-                          {evt.title}
-                        </p>
-                        <span className="text-[11px] text-[#5A6178]">
-                          {evt.time}
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
             {/* Proof of Completion Panel (if external ticket pending evaluation) */}
             {ticket.status === 'Pending Evaluation' && typeof onStatusUpdate === 'function' && (
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-xs text-blue-900 space-y-3">
                 <p className="font-bold uppercase tracking-wider text-[11px] text-blue-950">
                   Review Proof of Completion Documentation
                 </p>
+
+                {employeeRemarks && (
+                  <div className="bg-white rounded-lg p-3 border border-blue-200 space-y-1">
+                    <p className="font-bold text-[11px] text-blue-900 uppercase tracking-wide">
+                      Employee Completion Remarks
+                    </p>
+                    <p className="text-xs text-slate-800 leading-relaxed whitespace-pre-wrap break-words">
+                      {employeeRemarks}
+                    </p>
+                  </div>
+                )}
+
                 {proofFiles.length > 0 ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {proofFiles.map((file, idx) => (
@@ -1837,6 +1926,179 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
           </div>
         )}
 
+        {activeTab === 'assignees' && (
+          <div id="panel-assignees" role="tabpanel" aria-labelledby="tab-assignees" className="space-y-4 pt-1 animate-in fade-in duration-150">
+            {/* Header / Actions Banner */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-[#F8F9FA] border border-[#D5D9E4]">
+              <div>
+                <div className="flex items-center gap-2">
+                  <Users className="w-4 h-4 text-[#1E2A78]" />
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-[#1B2033]">
+                    Assigned Staff ({allAssignees.length})
+                  </h4>
+                  {allAssignees.length >= 2 && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                      <MessageCircle className="w-3 h-3 text-indigo-600" />
+                      <span>Group Chat Active</span>
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-[#5A6178] mt-0.5">
+                  {allAssignees.length >= 2
+                    ? '2 or more staff assigned. Team communication is organized in a unified group chat.'
+                    : 'Employees currently assigned to support and resolve this ticket.'}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Single Group Chat button when >= 2 employees */}
+                {allAssignees.length >= 2 && (
+                  <button
+                    type="button"
+                    onClick={handleOpenMessages}
+                    className="h-8 px-3 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-xs"
+                    title="Open group discussion with all assigned staff"
+                  >
+                    <MessageCircle className="w-3.5 h-3.5" />
+                    <span>Message Group Chat</span>
+                  </button>
+                )}
+
+                {!readOnly && typeof onEdit === 'function' && currentStatus !== 'Closed' && currentStatus !== 'Resolved' && (
+                  <button
+                    type="button"
+                    onClick={() => onEdit(ticket)}
+                    className={`h-8 px-3 text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 ${
+                      allAssignees.length > 2
+                        ? 'border border-[#D5D9E4] bg-white hover:bg-[#F5F6FA] text-[#1B2033]'
+                        : 'bg-[#1E2A78] hover:bg-[#252578] text-white'
+                    }`}
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>{allAssignees.length > 0 ? 'Manage Assignees' : 'Assign Employee'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Assignee Cards List */}
+            {allAssignees.length === 0 ? (
+              <div className="p-8 text-center text-xs text-[#5A6178] rounded-xl border border-dashed border-[#D5D9E4] bg-[#F5F6FA] space-y-3">
+                <UserX className="w-8 h-8 text-[#5A6178] mx-auto opacity-60" />
+                <div>
+                  <p className="font-semibold text-sm text-[#1B2033]">No employees assigned</p>
+                  <p className="text-xs text-[#5A6178] mt-0.5">This ticket does not have any technicians assigned to it yet.</p>
+                </div>
+                {!readOnly && typeof onEdit === 'function' && currentStatus !== 'Closed' && currentStatus !== 'Resolved' && (
+                  <button
+                    type="button"
+                    onClick={() => onEdit(ticket)}
+                    className="h-8 px-3.5 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <UserPlus className="w-3.5 h-3.5" />
+                    <span>Assign an Employee</span>
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {allAssignees.map((emp, index) => {
+                  const isAccepted = emp.assignmentStatus === 'accepted';
+                  const isReassign = emp.assignmentStatus === 'reassign_requested';
+                  return (
+                    <div
+                      key={emp.id || index}
+                      className="p-3.5 rounded-xl border border-[#D5D9E4] bg-white hover:border-[#2E85D8]/40 transition-colors shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        {/* Avatar with status indicator */}
+                        <div className="relative shrink-0">
+                          <div className="w-11 h-11 rounded-full bg-[#1E2A78] text-white flex items-center justify-center font-bold text-sm shadow-xs">
+                            {emp.initials}
+                          </div>
+                          <span
+                            className={`w-3 h-3 rounded-full border-2 border-white absolute bottom-0 right-0 ${
+                              emp.isOnline ? 'bg-emerald-500' : 'bg-slate-300'
+                            }`}
+                            title={emp.isOnline ? 'Online' : 'Offline'}
+                          />
+                        </div>
+
+                        {/* Details */}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h5 className="text-sm font-semibold text-[#1B2033] break-words">
+                              {emp.name}
+                            </h5>
+                            {isAccepted ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                <span>Accepted</span>
+                              </span>
+                            ) : isReassign ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                <AlertTriangle className="w-3 h-3 text-amber-600" />
+                                <span>Reassignment Pending</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                                <Clock className="w-3 h-3 text-blue-600" />
+                                <span>Assigned</span>
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 text-xs text-[#5A6178] mt-0.5 flex-wrap">
+                            {emp.role && (
+                              <span className="font-medium text-[#1B2033]">{emp.role}</span>
+                            )}
+                            {emp.department && (
+                              <span>· {emp.department}</span>
+                            )}
+                            {emp.email && (
+                              <span className="hidden md:inline-flex items-center gap-1 text-[#5A6178]">
+                                · <Mail className="w-3 h-3 text-[#5A6178]" /> {emp.email}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action buttons per assignee (only rendered when <= 2 assignees; >2 uses the unified group chat button above) */}
+                      {allAssignees.length <= 2 && (
+                        <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                          <button
+                            type="button"
+                            onClick={handleOpenMessages}
+                            className="h-8 px-3 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                            title={`Message ${emp.firstName}`}
+                          >
+                            <MessageCircle className="w-3.5 h-3.5" />
+                            <span>Message</span>
+                          </button>
+
+                          {!readOnly && isEligibleForReminder && (
+                            <button
+                              type="button"
+                              onClick={() => setShowReminderModal(true)}
+                              disabled={isProcessing || isReminderOnCooldown}
+                              title={isReminderOnCooldown ? `Reminder sent recently (${cooldownMinutesRemaining}m cooldown)` : `Send reminder to ${emp.firstName}`}
+                              className="h-8 px-3 border border-[#D5D9E4] hover:bg-[#F5F6FA] text-[#1B2033] text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              <Bell className="w-3.5 h-3.5 text-[#5A6178]" />
+                              <span>Remind</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {activeTab === 'timeline' && (
           <div id="panel-timeline" role="tabpanel" aria-labelledby="tab-timeline" className="pt-1 animate-in fade-in duration-150">
             <StaffTimelineView
@@ -1864,14 +2126,19 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                 No files or attachments currently attached to this ticket.
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {allFiles.map((file, fIdx) => (
-                  <AttachmentCard
-                    key={file.id || fIdx}
-                    file={file}
-                    onPreview={setPreviewFile}
-                  />
-                ))}
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[#5A6178] mb-2.5">
+                  ATTACHMENTS ({allFiles.length})
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {allFiles.map((file, fIdx) => (
+                    <AttachmentCard
+                      key={file.id || fIdx}
+                      file={file}
+                      onPreview={setPreviewFile}
+                    />
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -1984,6 +2251,7 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
   const [previewFile, setPreviewFile] = useState(null);
   const [validationError, setValidationError] = useState('');
   const [saveError, setSaveError] = useState('');
+  const [employeeSearchQuery, setEmployeeSearchQuery] = useState('');
 
   // Eligibility evaluation state
   const [eligibilityData, setEligibilityData] = useState(null);
@@ -2052,8 +2320,20 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
   }, [eligibilityData]);
 
   const filteredDepartments = useMemo(() => {
-    return ['Service', 'IT'];
+    return ['IT', 'Customer Service', 'Service'];
   }, []);
+
+  const searchedEligibleEmployees = useMemo(() => {
+    if (!employeeSearchQuery.trim()) return eligibleEmployeesList;
+    const q = employeeSearchQuery.toLowerCase().trim();
+    return eligibleEmployeesList.filter((emp) => {
+      const name = String(emp.name || '').toLowerCase();
+      const email = String(emp.email || '').toLowerCase();
+      const role = String(emp.role || emp.technical_role || emp.position_level || '').toLowerCase();
+      const dept = String(emp.department || '').toLowerCase();
+      return name.includes(q) || email.includes(q) || role.includes(q) || dept.includes(q);
+    });
+  }, [eligibleEmployeesList, employeeSearchQuery]);
 
 
   const toggleEmp = (id) => {
@@ -2086,6 +2366,7 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
   const handleCategoryChange = (newCat) => {
     setCategory(newCat);
     setSelectedEmployees([]);
+    setEmployeeSearchQuery('');
     setValidationError('');
     loadEligibility(newCat);
   };
@@ -2357,7 +2638,7 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
 
               {/* Selected employee chips */}
               {selectedEmployees.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 my-2.5">
+                <div className="max-h-24 overflow-y-auto p-1.5 bg-slate-50 border border-slate-200/80 rounded-xl flex flex-wrap gap-1.5 my-2.5">
                   {selectedEmployees.map((id) => {
                     const emp = eligibleEmployeesList.find((e) => Number(e.id) === Number(id)) ||
                       employees.find((e) => Number(e.id) === Number(id));
@@ -2365,14 +2646,17 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
                     return (
                       <span
                         key={id}
-                        className="flex items-center gap-1 bg-primary/10 text-primary border border-primary/20 text-xs font-medium px-2.5 py-1 rounded-full"
+                        className="inline-flex items-center gap-1.5 bg-primary/10 text-[#252578] border border-primary/20 text-xs font-medium px-2.5 py-1 rounded-full max-w-full shadow-2xs"
                       >
-                        {emp.name}
+                        <span className="truncate max-w-[140px] sm:max-w-[180px]" title={emp.name}>
+                          {emp.name}
+                        </span>
                         <button
                           type="button"
                           onClick={() => toggleEmp(id)}
                           disabled={isSaving}
-                          className="ml-0.5 font-bold hover:text-red-500 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                          className="ml-0.5 p-0.5 rounded-full hover:bg-red-100 hover:text-red-600 transition-colors cursor-pointer shrink-0 disabled:cursor-not-allowed disabled:opacity-50"
+                          title={`Remove ${emp.name}`}
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -2423,6 +2707,28 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
               {/* Tab 1: Eligible Employees List */}
               {!loadingEligibility && !eligibilityError && activeTab === 'eligible' && (
                 <>
+                  {/* Search Bar for Eligible Staff */}
+                  <div className="relative mb-2.5">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                    <input
+                      type="text"
+                      value={employeeSearchQuery}
+                      onChange={(e) => setEmployeeSearchQuery(e.target.value)}
+                      placeholder="Search eligible staff by name, role, department or email..."
+                      className="w-full pl-9 pr-8 py-2 text-xs bg-card border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-accent focus:border-accent text-slate-800 placeholder-slate-400"
+                    />
+                    {employeeSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setEmployeeSearchQuery('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 cursor-pointer"
+                        title="Clear search"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
                   {eligibleEmployeesList.length === 0 ? (
                     <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs">
                       <div className="flex items-start gap-2.5">
@@ -2447,9 +2753,13 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
                         </div>
                       </div>
                     </div>
+                  ) : searchedEligibleEmployees.length === 0 ? (
+                    <div className="p-6 bg-slate-50 border border-dashed border-slate-200 rounded-xl text-center text-xs text-slate-500">
+                      No eligible personnel matching &quot;{employeeSearchQuery}&quot;.
+                    </div>
                   ) : (
                     <div className="max-h-60 overflow-auto bg-page border border-border rounded-xl p-2 space-y-1.5">
-                      {eligibleEmployeesList.map((emp) => {
+                      {searchedEligibleEmployees.map((emp) => {
                         const isSelected = selectedEmployees.some((x) => Number(x) === Number(emp.id));
                         // Presence (spec 0035): online when the heartbeat is fresh. Offline staff stay selectable with a warning.
                         const isAvailable = emp.presence

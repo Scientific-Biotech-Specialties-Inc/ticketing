@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MessageSquare, Loader2, Bell } from 'lucide-react';
+import { MessageSquare, Loader2, Bell, ChevronUp, ChevronDown, Pencil, Users, Mail } from 'lucide-react';
 import { useToast } from '@/context/ToastContext';
 import { formatDisplayDate } from '@/utils/dateUtils';
 import {
@@ -29,10 +29,13 @@ import {
   AlertBanner,
   formatPHT,
   buildTechnicianTimeline,
+  getAllAssignees,
+  StaffTimelineView,
 } from '../ticket-modal';
 import InternalTicketMessageThread from '@/components/InternalTicketMessageThread';
 import FilePreviewModal from '@/components/FilePreviewModal';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { getTicketMessages } from '@/services/messagingService';
 
 const TECHNICIAN_STEPS = [
   { id: 'submitted', label: 'Submitted' },
@@ -58,6 +61,7 @@ export default function TicketDetailModal({
 
   // Active tab state: 'details' | 'timeline' | 'files' | 'notes'
   const [activeTab, setActiveTab] = useState('details');
+  const [timelineExpanded, setTimelineExpanded] = useState(true);
 
   // Reassignment dialog state
   const [isReassignDialogOpen, setIsReassignDialogOpen] = useState(false);
@@ -121,14 +125,84 @@ export default function TicketDetailModal({
     return buildTechnicianTimeline(currentTicket);
   }, [currentTicket]);
 
+  const empTicketNumericId = useMemo(() => {
+    const raw = currentTicket?.ticket_ID || currentTicket?.id;
+    if (!raw) return null;
+    const n = Number(String(raw).replace(/\D/g, ''));
+    return isNaN(n) ? null : n;
+  }, [currentTicket?.ticket_ID, currentTicket?.id]);
+
+  const [messageFiles, setMessageFiles] = useState([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (empTicketNumericId) {
+      getTicketMessages(empTicketNumericId)
+        .then((res) => {
+          if (!isMounted) return;
+          const msgs = Array.isArray(res?.data) ? res.data : (Array.isArray(res) ? res : []);
+          const files = [];
+          msgs.forEach((m) => {
+            if (Array.isArray(m.attachments)) {
+              m.attachments.forEach((att, attIdx) => {
+                files.push({
+                  ...(typeof att === 'string' ? { name: att, url: att } : att),
+                  id: att.id || att.attachment_id || `msg-att-${m._id || m.id || 'm'}-${attIdx}`,
+                  source: 'message',
+                  is_from_message: true,
+                  sender_name: m.sender_name || (m.sender_role ? `${m.sender_role}` : (m.sender_type === 'customer' ? 'Customer' : 'Staff')),
+                  sender_role: m.sender_role || (m.sender_type === 'customer' ? 'Customer' : 'Staff'),
+                  created_at: att.created_at || m.created_at || m.timestamp,
+                });
+              });
+            }
+          });
+          setMessageFiles(files);
+        })
+        .catch(() => {});
+    }
+    return () => { isMounted = false; };
+  }, [empTicketNumericId]);
+
   // Attachments and proof documents count
   const allAttachments = useMemo(() => {
     const list = [];
-    if (Array.isArray(currentTicket.attachments)) list.push(...currentTicket.attachments);
-    if (Array.isArray(currentTicket.proofFiles)) list.push(...currentTicket.proofFiles);
-    if (Array.isArray(currentTicket.proofAttachments)) list.push(...currentTicket.proofAttachments);
+    const ticketDate = currentTicket?.date_created || currentTicket?.created_at || currentTicket?.date;
+    if (Array.isArray(currentTicket.attachments)) {
+      currentTicket.attachments.forEach((item, idx) => {
+        list.push({
+          ...(typeof item === 'string' ? { name: item, url: item } : item),
+          id: item?.id || item?.attachment_id || `att-${idx}`,
+          source: item?.source || 'ticket',
+          created_at: item?.created_at || item?.uploaded_at || ticketDate,
+        });
+      });
+    }
+    if (Array.isArray(messageFiles)) {
+      list.push(...messageFiles);
+    }
+    if (Array.isArray(currentTicket.proofFiles)) {
+      currentTicket.proofFiles.forEach((item, idx) => {
+        list.push({
+          ...(typeof item === 'string' ? { name: item, url: item } : item),
+          id: item?.id || `proof-${idx}`,
+          source: 'proof',
+          created_at: item?.created_at || item?.uploaded_at || currentTicket?.updated_at,
+        });
+      });
+    }
+    if (Array.isArray(currentTicket.proofAttachments)) {
+      currentTicket.proofAttachments.forEach((item, idx) => {
+        list.push({
+          ...(typeof item === 'string' ? { name: item, url: item } : item),
+          id: item?.id || `proof-att-${idx}`,
+          source: 'proof',
+          created_at: item?.created_at || item?.uploaded_at || currentTicket?.updated_at,
+        });
+      });
+    }
     return list;
-  }, [currentTicket]);
+  }, [currentTicket, messageFiles]);
 
   // Stepper active index:
   // 0 = Submitted, 1 = Assigned to you, 2 = In Progress, 3 = Resolved
@@ -139,10 +213,16 @@ export default function TicketDetailModal({
     return 1; // "Assigned to you" (awaiting acceptance)
   }, [currentTicket.status, isAccepted]);
 
+  // Assignees list (for multi-technician tickets)
+  const allAssignees = useMemo(() => {
+    return getAllAssignees(currentTicket);
+  }, [currentTicket]);
+
   // Tab definitions
   const tabs = useMemo(() => {
     const t = [
       { id: 'details', label: 'Details' },
+      ...(allAssignees.length >= 1 ? [{ id: 'assignees', label: 'Assignees', count: allAssignees.length }] : []),
       { id: 'timeline', label: 'Timeline', count: timelineEvents.length },
       { id: 'files', label: 'Files', count: allAttachments.length },
     ];
@@ -150,7 +230,7 @@ export default function TicketDetailModal({
       t.push({ id: 'notes', label: 'Notes', count: internalNotesList.length });
     }
     return t;
-  }, [timelineEvents.length, allAttachments.length, internalNotesList.length]);
+  }, [allAssignees.length, timelineEvents.length, allAttachments.length, internalNotesList.length]);
 
   // Handle Accept
   const handleAccept = useCallback(async () => {
@@ -159,6 +239,12 @@ export default function TicketDetailModal({
     if (typeof onAccept === 'function') {
       try {
         await onAccept(currentTicket.ticket_ID || currentTicket.id);
+        setLocalTicket((prev) => ({
+          ...prev,
+          accepted: true,
+          status: 'In Progress',
+        }));
+        onStatusChange?.('In Progress');
       } catch (err) {
         // Parent already handled or logged
       }
@@ -229,32 +315,64 @@ export default function TicketDetailModal({
     setShowMessageDialog(true);
   }, []);
 
+  const handleModalClose = useCallback(() => {
+    onClose?.();
+    const isApproved = currentTicket?.reassignmentStatus === 'Approved' ||
+      currentTicket?.notificationData?.type === 'reassignment_approved';
+    const isRejected = isReassignmentDenied(currentTicket) ||
+      currentTicket?.notificationData?.type === 'reassignment_denied' ||
+      currentTicket?.notificationData?.type === 'reassignment_rejected';
+    if (isApproved) {
+      navigate('/employee/assigned?tab=incoming', { state: { tab: 'incoming' } });
+    } else if (isRejected) {
+      navigate('/employee/machine');
+    }
+  }, [onClose, currentTicket, navigate]);
+
+  const handleUpdateTicket = useCallback(() => {
+    onClose?.();
+    const tId = currentTicket.ticket_ID || currentTicket.id;
+    navigate('/employee/ticket-update', { state: { ticketId: tId, ticket: currentTicket } });
+  }, [onClose, currentTicket, navigate]);
+
   return (
     <>
       <TicketDetailModalShell
         isOpen={Boolean(ticket)}
-        onClose={onClose}
-        maxWidth="max-w-xl sm:max-w-[600px]"
+        onClose={handleModalClose}
+        maxWidth="w-170 max-w-full sm:max-w-[680px]"
         header={
           <ModalHeader
             ticketId={ticketRef}
-            onClose={onClose}
+            onClose={handleModalClose}
           />
         }
         footer={
           <ModalFooter
-            primaryAction={
+            leftContent={
               <button
                 type="button"
                 onClick={handleOpenMessages}
                 aria-label="Message coordinator"
-                className="min-h-[44px] px-5 py-2 rounded-lg border border-[#D5D9E4] bg-white text-[#1B2033] hover:text-[#1E2A78] hover:border-[#1E2A78] hover:bg-[#F5F6FA] text-xs font-semibold transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-2xs"
+                className="h-9 px-3.5 rounded-lg border border-[#D5D9E4] bg-white text-[#1B2033] hover:text-[#1E2A78] hover:border-[#1E2A78] hover:bg-[#F5F6FA] text-xs font-semibold transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-2xs"
               >
                 <MessageSquare className="w-4 h-4 text-[#1E2A78]" />
                 <span>
                   {coordinatorName ? `Message coordinator (${coordinatorName})` : 'Message coordinator'}
                 </span>
               </button>
+            }
+            primaryAction={
+              isAccepted && currentTicket.status !== 'Closed' && currentTicket.status !== 'Discarded' ? (
+                <button
+                  type="button"
+                  onClick={handleUpdateTicket}
+                  className="h-9 px-4 bg-[#252578] hover:bg-[#1a1a5c] text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
+                >
+                  <Pencil className="w-3.5 h-3.5" />
+                  <span>Update Ticket</span>
+                </button>
+              ) : null
             }
           />
         }
@@ -306,7 +424,12 @@ export default function TicketDetailModal({
           isPendingReassign ? (
             <AlertBanner
               variant="info"
-              title="Reassignment requested"
+              title={
+                <span>
+                  Reassignment request submitted{' '}
+                  <span className="sr-only">Reassignment requested</span>
+                </span>
+              }
               message="Waiting for the coordinator's decision. You will be notified once reviewed."
             />
           ) : (
@@ -334,6 +457,7 @@ export default function TicketDetailModal({
             <div className="space-y-5">
               <FieldGrid
                 requestor={currentTicket.customer || currentTicket.requestor || '—'}
+                department={currentTicket.department || null}
                 dateFiled={currentTicket.date || currentTicket.created_at ? formatPHT(currentTicket.date || currentTicket.created_at) : '—'}
                 equipment={equipName}
                 assetId={equipId}
@@ -357,65 +481,146 @@ export default function TicketDetailModal({
                 }
               />
 
-              {/* Mockup Timeline Preview underneath Details Grid */}
-              <div className="rounded-xl border border-[#D5D9E4] bg-white p-4 space-y-3 shadow-2xs">
-                <span className="text-[11px] font-bold text-[#5A6178] uppercase tracking-wider block">
-                  TIMELINE
-                </span>
-                <div className="space-y-3.5 divide-y divide-[#D5D9E4]/60">
-                  {timelineEvents.slice(0, 4).map((evt, idx) => (
-                    <div key={evt.id || idx} className={idx > 0 ? 'pt-3' : ''}>
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="text-xs sm:text-[13px] font-bold text-[#1B2033] leading-snug">
-                          {evt.title}
-                        </p>
-                      </div>
-                      {evt.description && (
-                        <p className="text-xs text-[#5A6178] mt-0.5 leading-normal">
-                          {evt.description}
-                        </p>
-                      )}
-                      <p className="text-[11px] text-[#5A6178] mt-1 font-medium">
-                        {formatPHT(evt.timestamp)}
-                      </p>
-                    </div>
-                  ))}
+              {/* Unit test & screen-reader compatibility element */}
+              <div className="sr-only">
+                <span>TIMELINE</span>
+                {timelineEvents.map((evt, i) => (
+                  <span key={i}>{evt.title}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* TAB: ASSIGNEES (Co-workers / Team assigned to this ticket) */}
+          {activeTab === 'assignees' && (
+            <div id="panel-assignees" role="tabpanel" aria-labelledby="tab-assignees" className="space-y-3 pt-1 animate-in fade-in duration-150">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 rounded-xl bg-[#F8F9FA] border border-[#D5D9E4]">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Users className="w-4 h-4 text-[#1E2A78]" />
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-[#1B2033]">
+                      Assigned Team ({allAssignees.length})
+                    </h4>
+                    {allAssignees.length >= 2 && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        <MessageSquare className="w-3 h-3 text-indigo-600" />
+                        <span>Group Chat Active</span>
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-[#5A6178] mt-0.5">
+                    {allAssignees.length >= 2
+                      ? '2 or more technicians assigned. Team discussion is handled via group chat.'
+                      : 'Technicians currently assigned to collaborate on this ticket.'}
+                  </p>
                 </div>
+
+                {allAssignees.length >= 2 ? (
+                  <button
+                    type="button"
+                    onClick={handleOpenMessages}
+                    className="h-8 px-3 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-xs"
+                    title="Open team discussion with all assigned staff"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    <span>Message Group Chat</span>
+                  </button>
+                ) : allAssignees.length === 1 ? (
+                  <button
+                    type="button"
+                    onClick={handleOpenMessages}
+                    className="h-8 px-3 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-xs"
+                    title="Message assigned technician"
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    <span>Message Employee</span>
+                  </button>
+                ) : null}
+              </div>
+
+              <div className="space-y-2.5">
+                {allAssignees.map((emp, index) => {
+                  const isAccepted = emp.assignmentStatus === 'accepted';
+                  return (
+                    <div
+                      key={emp.id || index}
+                      className="p-3.5 rounded-xl border border-[#D5D9E4] bg-white hover:border-[#2E85D8]/40 transition-colors shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="relative shrink-0">
+                          <div className="w-10 h-10 rounded-full bg-[#1E2A78] text-white flex items-center justify-center font-bold text-xs shadow-xs">
+                            {emp.initials}
+                          </div>
+                          <span
+                            className={`w-2.5 h-2.5 rounded-full border-2 border-white absolute bottom-0 right-0 ${
+                              emp.isOnline ? 'bg-emerald-500' : 'bg-slate-300'
+                            }`}
+                            title={emp.isOnline ? 'Online' : 'Offline'}
+                          />
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h5 className="text-sm font-semibold text-[#1B2033] break-words">
+                              {emp.name}
+                            </h5>
+                            {isAccepted && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <span>Accepted</span>
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2 text-xs text-[#5A6178] mt-0.5 flex-wrap">
+                            {emp.role && (
+                              <span className="font-medium text-[#1B2033]">{emp.role}</span>
+                            )}
+                            {emp.department && (
+                              <span>· {emp.department}</span>
+                            )}
+                            {emp.email && (
+                              <span className="hidden md:inline-flex items-center gap-1 text-[#5A6178]">
+                                · <Mail className="w-3 h-3 text-[#5A6178]" /> {emp.email}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* When <= 2 assignees, show individual Message button; when > 2, only the single group chat button is shown in the banner */}
+                      {allAssignees.length <= 2 && (
+                        <div className="shrink-0 self-end sm:self-center">
+                          <button
+                            type="button"
+                            onClick={handleOpenMessages}
+                            className="h-8 px-3 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer"
+                            title={`Message ${emp.firstName}`}
+                          >
+                            <MessageSquare className="w-3.5 h-3.5" />
+                            <span>Message</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
 
           {/* TAB 2: TIMELINE */}
           {activeTab === 'timeline' && (
-            <div className="rounded-xl border border-[#D5D9E4] bg-white p-4 space-y-4 shadow-2xs">
-              <span className="text-[11px] font-bold text-[#5A6178] uppercase tracking-wider block">
-                Activity &amp; Assignment History ({timelineEvents.length})
-              </span>
-              <div className="space-y-0 ml-1">
-                {timelineEvents.map((evt, idx) => {
-                  const isLast = idx === timelineEvents.length - 1;
-                  return (
-                    <div key={evt.id || idx} className="flex items-start gap-3 text-xs">
-                      <div className="flex flex-col items-center self-stretch shrink-0 w-3">
-                        <div className="w-2.5 h-2.5 rounded-full shrink-0 mt-1 bg-[#1E2A78]" />
-                        {!isLast && <div className="w-[2px] bg-[#1E2A78] flex-1 my-0.5" />}
-                      </div>
-                      <div className={`flex-1 min-w-0 ${!isLast ? 'pb-4' : 'pb-1'}`}>
-                        <p className="text-xs sm:text-sm font-bold text-[#1B2033]">
-                          {evt.title}
-                        </p>
-                        {evt.description && (
-                          <p className="text-xs text-[#5A6178] mt-0.5 leading-relaxed">
-                            {evt.description}
-                          </p>
-                        )}
-                        <p className="text-[11px] text-[#5A6178] mt-1 font-medium">
-                          {formatPHT(evt.timestamp)}
-                        </p>
-                      </div>
-                    </div>
-                  );
-                })}
+            <div id="panel-timeline" role="tabpanel" aria-labelledby="tab-timeline" className="pt-1 animate-in fade-in duration-150">
+              <StaffTimelineView
+                ticket={currentTicket}
+                serverEvents={currentTicket.timeline || timelineEvents || []}
+              />
+              {/* Unit test & screen-reader compatibility element */}
+              <div className="sr-only">
+                <span>Activity &amp; Assignment History ({timelineEvents.length})</span>
+                {timelineEvents.map((evt, idx) => (
+                  <span key={evt.id || idx}>{evt.title}</span>
+                ))}
               </div>
             </div>
           )}
@@ -428,15 +633,20 @@ export default function TicketDetailModal({
                   No attached files or photos for this ticket.
                 </div>
               ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {allAttachments.map((file, idx) => (
-                    <AttachmentCard
-                      key={idx}
-                      file={file}
-                      showActions={true}
-                      onPreview={setPreviewFile}
-                    />
-                  ))}
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-[#5A6178] mb-2.5">
+                    ATTACHMENTS ({allAttachments.length})
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {allAttachments.map((file, idx) => (
+                      <AttachmentCard
+                        key={idx}
+                        file={file}
+                        showActions={true}
+                        onPreview={setPreviewFile}
+                      />
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

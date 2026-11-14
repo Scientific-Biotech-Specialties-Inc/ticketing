@@ -283,9 +283,9 @@ export default function MyTickets({ mode = 'all' }) {
       setIsModalOpen(true);
       window.history.replaceState({}, document.title);
     }
-    const focusId = location.state?.focusTicketId;
+    const focusId = location.state?.focusTicketId || location.state?.openTicketId || location.state?.selectedTicketId;
     if (focusId && tickets.length > 0) {
-      const match = tickets.find(t => t.id === focusId || t.ticket_ID === focusId);
+      const match = tickets.find(t => t.id === focusId || t.ticket_ID === focusId || Number(String(t.id).replace(/\D/g, '')) === Number(String(focusId).replace(/\D/g, '')));
       if (match) {
         handleViewTicket(match);
         window.history.replaceState({}, document.title);
@@ -499,7 +499,24 @@ export default function MyTickets({ mode = 'all' }) {
   };
 
   const handleEditDraft = (draft) => {
-    navigate('/create-ticket', { state: { draftId: draft.id } });
+    const convId = draft?.conversation_id || draft?.conversationId;
+    if (convId) {
+      navigate('/ai-support', {
+        state: {
+          draftId: draft.id,
+          draft: draft,
+          conversationId: convId,
+          activeConversationId: convId,
+        },
+      });
+    } else {
+      navigate('/create-ticket', {
+        state: {
+          draftId: draft.id,
+          draft: draft,
+        },
+      });
+    }
   };
 
   const handleDeleteDraft = (draft) => {
@@ -1414,7 +1431,7 @@ export default function MyTickets({ mode = 'all' }) {
                   title="No saved drafts"
                   description="When creating a ticket, you can click 'Save as Draft' to continue anytime."
                   action={
-                    <Button size="sm" onClick={() => navigate('/create-ticket')} icon={<Plus className="h-3.5 w-3.5" />}>
+                    <Button size="sm" onClick={() => navigate('/ai-support', { state: { startNewChat: true } })} icon={<Plus className="h-3.5 w-3.5" />}>
                       Create New Ticket
                     </Button>
                   }

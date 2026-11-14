@@ -434,7 +434,11 @@ export default function MessagingPage() {
   // Auto select contact if current selection is invalid for active tab
   useEffect(() => {
     if (displayedContacts.length > 0) {
-      if (!selectedContactId || !displayedContacts.some(c => c.id === selectedContactId)) {
+      const numSelected = selectedContactId ? Number(String(selectedContactId).replace(/\D/g, '')) : null;
+      const existsInCurrentTab = displayedContacts.some(
+        c => c.id === selectedContactId || (numSelected && Number(c.ticket_ID) === numSelected)
+      );
+      if (!existsInCurrentTab) {
         setSelectedContactId(displayedContacts[0].id);
       }
     } else {
@@ -442,7 +446,11 @@ export default function MessagingPage() {
     }
   }, [displayedContacts, selectedContactId]);
 
-  const selectedContact = useMemo(() => contacts.find(c => c.id === selectedContactId), [contacts, selectedContactId]);
+  const selectedContact = useMemo(() => {
+    if (!selectedContactId) return null;
+    const numId = Number(String(selectedContactId).replace(/\D/g, ''));
+    return contacts.find(c => c.id === selectedContactId || (numId && Number(c.ticket_ID) === numId));
+  }, [contacts, selectedContactId]);
 
   // 4. Fetch messages and bind WebSockets on selection
   useEffect(() => {
@@ -825,7 +833,18 @@ export default function MessagingPage() {
 
   const renderRoleBadge = useCallback((msg) => {
     const roleText = msg.sender_role || (msg.sender_type === 'cs' ? 'Customer Support' : (msg.sender_type === 'employee' ? 'Staff / Engineer' : 'Customer'));
-    const lower = roleText.toLowerCase();
+    const lower = roleText.toLowerCase().trim();
+    const lowerSender = String(msg.sender_name || '').toLowerCase().trim();
+
+    // Prevent redundant duplicate badges (e.g. "Customer Support [Customer Support]" or "SBSI Demo Customer [Customer]")
+    if (
+      lowerSender === lower ||
+      lowerSender.includes(lower) ||
+      (lower === 'customer' && lowerSender.includes('customer')) ||
+      (lower.includes('customer support') && lowerSender.includes('customer support'))
+    ) {
+      return null;
+    }
 
     let badgeClass = 'bg-slate-100 text-slate-700 border-slate-200';
     if (lower.includes('customer support') || lower.includes('cs') || msg.sender_type === 'cs') {
@@ -1462,7 +1481,7 @@ export default function MessagingPage() {
                                       <span className="flex items-center gap-1 font-medium">
                                         <Loader2 size={11} className="animate-spin" />
                                         {Array.isArray(msg.attachments) && msg.attachments.length > 0
-                                          ? 'Scanning file for malware (ClamAV)...'
+                                          ? 'Scanning file for malware...'
                                           : 'Sending...'}
                                       </span>
                                       {Array.isArray(msg.attachments) && msg.attachments.length > 0 && (

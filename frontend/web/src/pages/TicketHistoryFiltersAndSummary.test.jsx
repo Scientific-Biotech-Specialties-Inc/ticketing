@@ -408,7 +408,7 @@ describe('Ticket History Filters & Internal Summary Modal', () => {
       />
     );
 
-    expect(screen.getByText('Message the assigned employee')).toBeInTheDocument();
+    expect(screen.getByText('Message customer')).toBeInTheDocument();
     expect(screen.queryByText('Message Customer Support')).toBeNull();
 
     // 2. As Customer:
@@ -426,7 +426,7 @@ describe('Ticket History Filters & Internal Summary Modal', () => {
     );
 
     expect(screen.getByText('Message Customer Support')).toBeInTheDocument();
-    expect(screen.queryByText('Message the assigned employee')).toBeNull();
+    expect(screen.queryByText('Message customer')).toBeNull();
   });
 
   it('does not render "Message the assigned employee" in CSModals TicketSummary footer', () => {
@@ -457,7 +457,7 @@ describe('Ticket History Filters & Internal Summary Modal', () => {
     );
 
     expect(screen.queryByText('Message the assigned employee')).toBeNull();
-    expect(screen.getByText('Message the customer')).toBeInTheDocument();
+    expect(screen.getByText('Message customer')).toBeInTheDocument();
     expect(screen.getByText('Message Tech')).toBeInTheDocument();
   });
 

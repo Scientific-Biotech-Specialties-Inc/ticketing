@@ -1,10 +1,10 @@
 import React from 'react';
 import { ShieldAlert, Download, Eye } from 'lucide-react';
-import { getFileName, getFileUrl, formatFileSize, isQuarantinedFile } from './ticketModalUtils';
+import { getFileName, getFileUrl, formatFileSize, isQuarantinedFile, formatPHT } from './ticketModalUtils';
 
 /**
  * AttachmentCard component
- * Displays: File-type tile (PDF/PNG), file name, size/type subtitle, View/Download actions
+ * Displays: File-type tile (PDF/PNG), file name, origin badge + timestamp subtitle (matching ONE UI spec), Download/View actions
  */
 export default function AttachmentCard({
   file,
@@ -43,17 +43,54 @@ export default function AttachmentCard({
   }
 
   const badgeColor = isPdf
-    ? 'bg-rose-100 text-rose-700'
+    ? 'bg-[#FEECEE] text-[#E02424]'
     : isImg
     ? 'bg-sky-100 text-sky-700'
     : 'bg-slate-100 text-slate-700';
 
-  const actionText = isPdf ? 'PDF · Download' : isImg ? 'Image · Preview' : `${ext} · View`;
+  // Origin & timestamp metadata display (Pic 3 specification)
+  const isMessageFile = Boolean(
+    file?.source === 'message' ||
+    file?.is_from_message ||
+    file?.from_message ||
+    file?.origin === 'message' ||
+    file?.channel === 'chat'
+  );
+
+  const isProofFile = Boolean(
+    file?.source === 'proof' ||
+    file?.is_proof ||
+    file?.origin === 'proof'
+  );
+
+  let sourceLabel = 'Submitted with ticket';
+  let pillClass = 'bg-[#E8EDF5] text-[#1E2A78]';
+
+  if (isProofFile) {
+    sourceLabel = 'Proof of completion';
+    pillClass = 'bg-emerald-50 text-emerald-700';
+  } else if (isMessageFile) {
+    sourceLabel = 'From message';
+    pillClass = 'bg-slate-100 text-slate-700';
+  } else if (file?.source_label) {
+    sourceLabel = file.source_label;
+  }
+
+  const senderInfo = isMessageFile
+    ? (file?.sender_name || file?.sender_role || file?.sender || file?.uploaded_by_name || 'Customer')
+    : '';
+  const senderPrefix = senderInfo ? `${senderInfo} · ` : '';
+
+  const rawDate = file?.created_at || file?.uploaded_at || file?.date || file?.timestamp;
+  const formattedDate = rawDate
+    ? formatPHT(rawDate, { includeTime: true, showTimezone: false })
+    : '';
+  const detailText = `${senderPrefix}${formattedDate}`.trim();
 
   return (
     <div
       onClick={() => onPreview?.({ name: fileName, url: fileUrl, file_type: file?.file_type || file?.type, size: file?.size || file?.file_size })}
-      className={`flex items-center justify-between p-3 rounded-xl border border-[#D5D9E4] bg-white hover:bg-[#F5F6FA] cursor-pointer transition-colors shadow-2xs gap-3 ${className}`}
+      className={`flex items-center justify-between p-3.5 rounded-xl border border-[#D5D9E4] bg-white hover:bg-[#F5F6FA] cursor-pointer transition-colors shadow-2xs gap-3 ${className}`}
     >
       <div className="flex items-center gap-3 min-w-0 flex-1">
         <div
@@ -65,10 +102,20 @@ export default function AttachmentCard({
           <p className="text-xs font-semibold text-[#1B2033] truncate" title={fileName}>
             {fileName}
           </p>
-          <span className="text-[10px] text-[#5A6178]">
-            {file?.size ? `${formatFileSize(file.size)} · ` : ''}
-            {actionText}
-          </span>
+          <div className="mt-1 flex items-center gap-2 flex-wrap">
+            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold leading-none ${pillClass}`}>
+              {sourceLabel}
+            </span>
+            {detailText ? (
+              <span className="text-[11px] text-[#5A6178] truncate">
+                {detailText}
+              </span>
+            ) : file?.size ? (
+              <span className="text-[11px] text-[#5A6178]">
+                {formatFileSize(file.size)}
+              </span>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -84,9 +131,9 @@ export default function AttachmentCard({
               onPreview({ name: fileName, url: fileUrl, file_type: file?.file_type || file?.type, size: file?.size || file?.file_size });
             }
           }}
-          className="text-xs font-semibold text-[#1E2A78] hover:underline px-2 py-1 shrink-0"
+          className="text-xs font-bold text-[#1E2A78] hover:underline px-2 py-1 shrink-0"
         >
-          {isPdf ? 'Download' : 'View'}
+          {isPdf ? 'Download' : isImg ? 'View' : 'Download'}
         </a>
       )}
     </div>

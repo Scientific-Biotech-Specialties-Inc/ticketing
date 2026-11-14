@@ -54,7 +54,7 @@ export default function TabBar({
             type="button"
             onClick={() => onTabChange(tab.id)}
             onKeyDown={(e) => handleKeyDown(e, idx)}
-            className={`min-h-[44px] pb-3 text-xs sm:text-sm font-semibold transition-all relative cursor-pointer flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-[#1E2A78]/30 rounded-t-sm ${
+            className={`min-h-[36px] pb-2 text-xs font-bold transition-all relative cursor-pointer flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-[#1E2A78]/30 rounded-t-sm ${
               isActive
                 ? 'text-[#1E2A78] font-bold'
                 : 'text-[#5A6178] hover:text-[#1B2033]'

@@ -245,15 +245,6 @@ export default function CustomerInfoPanel({
                 <span className="leading-snug">{customerData?.address || ticket.facility || 'Customer Site'}</span>
               </div>
             </div>
-
-            {customerData?.preferred_contact_method && (
-              <div className="pt-1 text-[11px] text-gray-500 flex items-center gap-1.5">
-                <span className="font-semibold text-gray-600">Preferred Channel:</span>
-                <span className="bg-white px-2 py-0.5 rounded border border-gray-200 font-medium text-gray-700">
-                  {customerData.preferred_contact_method}
-                </span>
-              </div>
-            )}
           </div>
         </div>
 

@@ -13,6 +13,7 @@ import {
   AlertCircle,
   ShieldAlert,
   MessageSquare,
+  Pencil,
 } from 'lucide-react';
 import { formatDisplayDate } from '@/utils/dateUtils';
 import FilePreviewModal from '@/components/FilePreviewModal';
@@ -124,6 +125,54 @@ export default function EmployeeHistoryDetail() {
     return null;
   }, [ticketId, state?.ticket]);
 
+  const isAssignedToMe = useMemo(() => {
+    if (!user || !ticket) return false;
+    const myId = Number(user.id || user.emp_id || user.employee_id);
+    const myEmail = String(user.email || '').toLowerCase().trim();
+    const myName = String(user.name || `${user.first_name || ''} ${user.last_name || ''}`).toLowerCase().trim();
+
+    const assignedTo = ticket.assigned_to;
+    if (assignedTo && (Number(assignedTo) === myId || String(assignedTo).toLowerCase().trim() === myName)) {
+      return true;
+    }
+    if (ticket.employee_id && Number(ticket.employee_id) === myId) {
+      return true;
+    }
+    if (Array.isArray(ticket.assigned)) {
+      if (ticket.assigned.some((a) => {
+        if (typeof a === 'object' && a !== null) {
+          return (a.id && Number(a.id) === myId) ||
+                 (a.emp_id && Number(a.emp_id) === myId) ||
+                 (a.email && String(a.email).toLowerCase().trim() === myEmail) ||
+                 (a.name && String(a.name).toLowerCase().trim() === myName);
+        }
+        return Number(a) === myId;
+      })) return true;
+    }
+    if (Array.isArray(ticket.assigned_employees)) {
+      if (ticket.assigned_employees.some((a) => {
+        if (typeof a === 'object' && a !== null) {
+          return (a.id && Number(a.id) === myId) ||
+                 (a.emp_id && Number(a.emp_id) === myId) ||
+                 (a.email && String(a.email).toLowerCase().trim() === myEmail) ||
+                 (a.name && String(a.name).toLowerCase().trim() === myName);
+        }
+        return Number(a) === myId;
+      })) return true;
+    }
+    const assignedName = String(
+      ticket.assigned_employee?.name ||
+      ticket.assigned_employee ||
+      ticket.assigned_to_name ||
+      ticket.assignedTo ||
+      ''
+    ).toLowerCase().trim();
+    if (assignedName && myName && (assignedName === myName || assignedName.includes(myName))) {
+      return true;
+    }
+    return false;
+  }, [user, ticket]);
+
   const canReopen = useMemo(() => {
     if (!isCustomer || !ticket) return false;
     if (ticket.status !== 'Closed' && ticket.status !== 'Resolved') return false;
@@ -168,6 +217,7 @@ export default function EmployeeHistoryDetail() {
       state: {
         selectedTicketId: numericId,
         openDirectChat: true,
+        autoSelectTicketId: numericId,
       },
     });
   };
@@ -444,7 +494,7 @@ export default function EmployeeHistoryDetail() {
     ticket.resolved_at || ticket.closed_at ? formatDisplayDate(ticket.resolved_at || ticket.closed_at) : null;
 
   return (
-    <div className="space-y-6 w-full min-w-0 max-w-full">
+    <div className="space-y-6 w-full max-w-5xl mx-auto pb-10">
       {/* Back button */}
       <div>
         <Button
@@ -509,6 +559,18 @@ export default function EmployeeHistoryDetail() {
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {isAssignedToMe && ticket.status !== 'Closed' && ticket.status !== 'Discarded' && (
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                onClick={() => navigate('/employee/ticket-update', { state: { ticketId: numericId, ticket } })}
+                className="text-xs font-semibold gap-1.5 bg-[#252578] hover:bg-[#1a1a5c] text-white shrink-0 cursor-pointer"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+                <span>Update Ticket</span>
+              </Button>
+            )}
             {canReopen && (
               <Button
                 type="button"
@@ -530,7 +592,7 @@ export default function EmployeeHistoryDetail() {
                 className="text-xs font-semibold gap-1.5 shrink-0 border-border hover:bg-muted/50 cursor-pointer"
               >
                 <MessageSquare className="w-3.5 h-3.5 text-primary" />
-                <span>{isCustomer ? 'Message Support' : 'Open Conversation'}</span>
+                <span>View conversation</span>
               </Button>
             )}
           </div>
@@ -620,7 +682,7 @@ export default function EmployeeHistoryDetail() {
           </div>
         )}
 
-        <h1 className="text-2xl font-bold text-foreground mb-1">{ticket.title}</h1>
+        <h1 className="text-xl sm:text-2xl font-bold text-foreground mb-1 break-words line-clamp-2" title={ticket.title}>{ticket.title}</h1>
         <p className="text-sm text-muted-foreground mb-4">
           {machineDisplay !== '—' && `${machineDisplay} · `}
           <span className="font-medium text-foreground">{equipmentTypeDisplay}</span>
@@ -690,7 +752,9 @@ export default function EmployeeHistoryDetail() {
         {ticket.description && (
           <div className="mt-4 bg-muted/30 rounded-lg p-4 border border-border/50">
             <p className="text-[11px] uppercase font-bold text-muted-foreground mb-1">Description</p>
-            <p className="text-sm text-foreground leading-relaxed break-words whitespace-pre-wrap">{ticket.description}</p>
+            <div className="max-h-60 overflow-y-auto pr-1 text-sm text-foreground leading-relaxed break-words whitespace-pre-wrap">
+              {ticket.description}
+            </div>
           </div>
         )}
       </div>
@@ -878,12 +942,10 @@ export default function EmployeeHistoryDetail() {
             </div>
             <div>
               <h3 className="text-sm font-bold text-foreground">
-                {isCustomer ? 'Support Conversation' : 'Internal Ticket Discussion'}
+                {isCustomer ? 'Support Conversation' : 'Ticket Conversation'}
               </h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {isCustomer
-                  ? 'Direct communications and updates with our customer support team.'
-                  : 'Collaboration messages and team communication recorded for this ticket.'}
+                Direct messages and communication thread recorded for this ticket.
               </p>
             </div>
           </div>
@@ -895,7 +957,7 @@ export default function EmployeeHistoryDetail() {
             className="text-xs font-semibold gap-2 bg-[#252578] hover:bg-[#1d1d60] text-white shrink-0 cursor-pointer h-9 px-4"
           >
             <MessageSquare className="w-4 h-4" />
-            <span>{isCustomer ? 'Chat with Support' : 'Open Conversation'}</span>
+            <span>View conversation</span>
           </Button>
         </div>
       )}
@@ -930,14 +992,14 @@ export default function EmployeeHistoryDetail() {
           <TicketFeedbackSection
             ticket={ticket}
             readOnly={!isCustomer}
-            onLeaveFeedback={() => {
+            onLeaveFeedback={isCustomer ? () => {
               setEditingFeedback(null);
               setShowFeedbackModal(true);
-            }}
-            onEditFeedback={(fb) => {
+            } : null}
+            onEditFeedback={isCustomer ? (fb) => {
               setEditingFeedback(fb);
               setShowFeedbackModal(true);
-            }}
+            } : null}
           />
         </div>
       )}
@@ -947,6 +1009,8 @@ export default function EmployeeHistoryDetail() {
         ticket={ticket}
         ticketId={numericId}
         pageSize={8}
+        collapsible={true}
+        defaultCollapsed={false}
       />
 
       {/* Reopen Modal for Customer */}

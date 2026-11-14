@@ -222,7 +222,7 @@ export default function CSManagerTickets() {
       });
 
       setAssignEmployees(mergedEmps);
-      setAssignDepartments(deps && deps.length > 0 ? deps.map((d) => d.name || d) : ['Customer Service', 'Service', 'IT Department']);
+      setAssignDepartments(['IT', 'Customer Service', 'Service']);
     });
   }, []);
 

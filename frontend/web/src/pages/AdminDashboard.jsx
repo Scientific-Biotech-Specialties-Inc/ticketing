@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useLocation, useSearchParams, useInRouterContext } from 'react-router-dom';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -278,9 +279,34 @@ class AnalyticsErrorBoundary extends React.Component {
   }
 }
 
+function RouterTabResolver({ onResolved }) {
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+
+  useEffect(() => {
+    const tabFromQuery = searchParams.get('tab');
+    const tabFromPath = location.pathname.includes('/departments')
+      ? 'departments'
+      : location.pathname.includes('/employees')
+      ? 'employees'
+      : location.pathname.includes('/predictive')
+      ? 'predictive'
+      : null;
+
+    const resolved = location.state?.tab || tabFromQuery || tabFromPath;
+    if (resolved) {
+      onResolved(resolved);
+    }
+  }, [location, searchParams, onResolved]);
+
+  return null;
+}
+
 // ─── Main Dashboard ──────────────────────────────────────────────────────────
-export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState('overview');
+export default function AdminDashboard({ initialTab = 'overview' }) {
+  const inRouter = useInRouterContext();
+  const [activeTab, setActiveTab] = useState(initialTab);
+
   const { selectedBranch, selectedBranchId, selectBranch, isSuperAdmin } = useBranch();
   const [branchSortBy, setBranchSortBy] = useState('total_tickets');
   const [branchSortDir, setBranchSortDir] = useState('desc');
@@ -437,15 +463,34 @@ export default function AdminDashboard() {
     if (activeTab === 'predictive') {
       exportPredictiveToExcel(analyticsData?.predictive, selectedPreset);
     } else {
-      exportAnalyticsToExcel(dashboardData || analyticsData, selectedPreset);
+      exportAnalyticsToExcel(dashboardData || analyticsData, {
+        activeTab,
+        period: selectedPreset,
+        dateFrom: globalDateFrom,
+        dateTo: globalDateTo,
+        branchName: selectedBranch?.name || 'Main Branch',
+        analyticsData,
+      });
     }
   };
 
   const handleExportCsv = () => {
     if (activeTab === 'predictive') {
-      exportPredictiveToCsv(analyticsData?.predictive, selectedPreset);
+      exportPredictiveToCsv(analyticsData?.predictive, {
+        period: selectedPreset,
+        dateFrom: globalDateFrom,
+        dateTo: globalDateTo,
+        branchName: selectedBranch?.name || 'Main Branch',
+      });
     } else {
-      exportAnalyticsToCsv(dashboardData || analyticsData, selectedPreset);
+      exportAnalyticsToCsv(dashboardData || analyticsData, {
+        activeTab,
+        period: selectedPreset,
+        dateFrom: globalDateFrom,
+        dateTo: globalDateTo,
+        branchName: selectedBranch?.name || 'Main Branch',
+        analyticsData,
+      });
     }
   };
 
@@ -1073,9 +1118,27 @@ export default function AdminDashboard() {
 
   return (
     <div id="admin-analytics-report" className="space-y-6">
+      {inRouter && <RouterTabResolver onResolved={setActiveTab} />}
+      {/* Print-Only Professional Executive Report Header */}
+      <div className="hidden print:block mb-6 pb-4 border-b-2 border-slate-300">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold text-[#252578]">SBSI Operational Analytics & Intelligence Report</h1>
+            <p className="text-xs text-slate-600 mt-1">
+              {`Branch Scope: [ ${selectedBranch?.name || 'All Branches'} ] • Report View: [ ${activeTab} ] • Range: [ ${selectedPreset === 'custom' ? `${globalDateFrom} to ${globalDateTo}` : selectedPreset} ]`}
+            </p>
+          </div>
+          <div className="text-right text-xs text-slate-500">
+            <p className="font-semibold text-slate-800">Enterprise Service Desk</p>
+            <p>{`Report Date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}`}</p>
+          </div>
+        </div>
+      </div>
+
       {/* Page Header (Pattern A) */}
       <PageHeader
         pattern="A"
+        className="print:hidden"
         title="Admin Dashboard"
         subtitle="Operational analytics, SLA performance, and recurring issue insights"
         actions={
@@ -1087,7 +1150,7 @@ export default function AdminDashboard() {
             )}
 
             {/* Export Dropdown Button (PDF, Excel, CSV, Print) */}
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button
                   size="sm"
@@ -1133,7 +1196,7 @@ export default function AdminDashboard() {
             </DropdownMenu>
 
             {/* ETL Sync Dropdown Button (Incremental vs Full ETL) */}
-            <DropdownMenu>
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="outline"
@@ -1175,129 +1238,135 @@ export default function AdminDashboard() {
         }
       />
 
-      {/* Top Navigation & Toolbar Bar: Left Tabs (Overview / Predictive) & Right Controls (Branch + Date Range) */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-200 mb-5 pb-2 sm:pb-0 print:hidden">
-        {/* Left: Tab Switcher */}
-        <div className="flex flex-wrap items-center gap-1.5 sm:gap-8 w-full lg:w-auto -mb-px">
-          <button
-            type="button"
-            onClick={() => setActiveTab('overview')}
-            className={cn(
-              "px-3 py-1.5 sm:px-0 sm:pb-3 sm:pt-1 rounded-lg sm:rounded-none text-xs sm:text-sm transition-all relative cursor-pointer border sm:border-0 sm:border-b-2 font-medium shrink-0 whitespace-nowrap",
-              activeTab === 'overview'
-                ? "bg-[#252578]/10 text-[#252578] border-[#252578]/20 sm:bg-transparent sm:border-[#252578] font-semibold"
-                : "bg-slate-50 text-slate-600 border-slate-200/80 hover:bg-slate-100 sm:bg-transparent sm:text-slate-500 hover:text-slate-800 sm:border-transparent"
-            )}
-          >
-            Overview
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('predictive')}
-            className={cn(
-              "px-3 py-1.5 sm:px-0 sm:pb-3 sm:pt-1 rounded-lg sm:rounded-none text-xs sm:text-sm transition-all relative cursor-pointer border sm:border-0 sm:border-b-2 font-medium shrink-0 whitespace-nowrap",
-              activeTab === 'predictive'
-                ? "bg-[#252578]/10 text-[#252578] border-[#252578]/20 sm:bg-transparent sm:border-[#252578] font-semibold"
-                : "bg-slate-50 text-slate-600 border-slate-200/80 hover:bg-slate-100 sm:bg-transparent sm:text-slate-500 hover:text-slate-800 sm:border-transparent"
-            )}
-          >
-            Predictive Analytics
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('departments')}
-            className={cn(
-              "px-3 py-1.5 sm:px-0 sm:pb-3 sm:pt-1 rounded-lg sm:rounded-none text-xs sm:text-sm transition-all relative cursor-pointer border sm:border-0 sm:border-b-2 font-medium shrink-0 whitespace-nowrap",
-              activeTab === 'departments'
-                ? "bg-[#252578]/10 text-[#252578] border-[#252578]/20 sm:bg-transparent sm:border-[#252578] font-semibold"
-                : "bg-slate-50 text-slate-600 border-slate-200/80 hover:bg-slate-100 sm:bg-transparent sm:text-slate-500 hover:text-slate-800 sm:border-transparent"
-            )}
-          >
-            Departments
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('employees')}
-            className={cn(
-              "px-3 py-1.5 sm:px-0 sm:pb-3 sm:pt-1 rounded-lg sm:rounded-none text-xs sm:text-sm transition-all relative cursor-pointer border sm:border-0 sm:border-b-2 font-medium shrink-0 whitespace-nowrap",
-              activeTab === 'employees'
-                ? "bg-[#252578]/10 text-[#252578] border-[#252578]/20 sm:bg-transparent sm:border-[#252578] font-semibold"
-                : "bg-slate-50 text-slate-600 border-slate-200/80 hover:bg-slate-100 sm:bg-transparent sm:text-slate-500 hover:text-slate-800 sm:border-transparent"
-            )}
-          >
-            Employees
-          </button>
+      {/* Top Navigation & Toolbar Bar: Separated Tab bar and Filter bar to prevent wrapping collisions */}
+      <div className="space-y-4 mb-5 print:hidden">
+        {/* Tab Switcher */}
+        <div className="border-b border-slate-200">
+          <div className="flex items-center gap-2 sm:gap-8 overflow-x-auto no-scrollbar -mb-px">
+            <button
+              type="button"
+              onClick={() => setActiveTab('overview')}
+              className={cn(
+                "px-3 py-2 sm:px-1 sm:pb-3 sm:pt-1 text-xs sm:text-sm transition-all relative cursor-pointer border-b-2 font-medium shrink-0 whitespace-nowrap",
+                activeTab === 'overview'
+                  ? "border-[#252578] text-[#252578] font-semibold"
+                  : "border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"
+              )}
+            >
+              Overview
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('predictive')}
+              className={cn(
+                "px-3 py-2 sm:px-1 sm:pb-3 sm:pt-1 text-xs sm:text-sm transition-all relative cursor-pointer border-b-2 font-medium shrink-0 whitespace-nowrap",
+                activeTab === 'predictive'
+                  ? "border-[#252578] text-[#252578] font-semibold"
+                  : "border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"
+              )}
+            >
+              Predictive Analytics
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('departments')}
+              className={cn(
+                "px-3 py-2 sm:px-1 sm:pb-3 sm:pt-1 text-xs sm:text-sm transition-all relative cursor-pointer border-b-2 font-medium shrink-0 whitespace-nowrap",
+                activeTab === 'departments'
+                  ? "border-[#252578] text-[#252578] font-semibold"
+                  : "border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"
+              )}
+            >
+              Departments
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('employees')}
+              className={cn(
+                "px-3 py-2 sm:px-1 sm:pb-3 sm:pt-1 text-xs sm:text-sm transition-all relative cursor-pointer border-b-2 font-medium shrink-0 whitespace-nowrap",
+                activeTab === 'employees'
+                  ? "border-[#252578] text-[#252578] font-semibold"
+                  : "border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300"
+              )}
+            >
+              Employees
+            </button>
+          </div>
         </div>
 
-        {/* Right: Active Branch Selector & Date Range Preset Filters side-by-side */}
-        <div className="flex items-center gap-2 sm:gap-3 w-full lg:w-auto flex-wrap lg:flex-nowrap justify-start lg:justify-end pb-2">
+        {/* Filter Controls Bar: Branch Selector + Presets + Custom Date Range */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-2.5 rounded-xl border border-slate-200/80 shadow-2xs">
           {/* Branch Selector Pill */}
-          <BranchSelector variant="inline" />
-
-          {/* Date Range Filter Buttons */}
-          <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
-            {FILTER_OPTIONS.map((opt) => (
-              <button
-                key={opt}
-                type="button"
-                onClick={() => {
-                  setSelectedPreset(opt);
-                  setDateRangeError('');
-                }}
-                className={cn(
-                  "text-xs px-2.5 sm:px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer shrink-0 whitespace-nowrap border",
-                  selectedPreset === opt
-                    ? "bg-[#252578] text-white border-[#252578] font-semibold shadow-xs"
-                    : "bg-white text-slate-600 border-slate-200 hover:text-slate-900 hover:border-slate-300"
-                )}
-              >
-                {opt}
-              </button>
-            ))}
+          <div className="shrink-0">
+            <BranchSelector variant="inline" />
           </div>
 
-          {/* Custom Date Range Popover / Pickers if Custom Range is selected */}
-          {selectedPreset === 'Custom Range' && (
-            <div className="flex flex-col gap-1 max-w-full">
-              <div className="flex items-center gap-2 bg-white border border-slate-200/80 rounded-xl px-3 py-1.5 text-xs shadow-xs max-w-full overflow-x-auto flex-wrap">
-                <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                <input
-                  type="date"
-                  aria-label="Start date"
-                  value={customStartDate}
-                  onChange={(e) => {
-                    const next = resolveStartDateUpdate(e.target.value, customEndDate);
-                    setCustomStartDate(next.startDate);
-                    setCustomEndDate(next.endDate);
-                    setDateRangeError(next.error);
-                  }}
-                  className="bg-transparent text-xs text-slate-800 focus:outline-none"
-                />
-                <span className="text-slate-400 font-medium">to</span>
-                <input
-                  type="date"
-                  aria-label="End date"
-                  min={customStartDate || undefined}
-                  value={customEndDate}
-                  onChange={(e) => {
-                    const next = resolveEndDateUpdate(customStartDate, e.target.value);
-                    if (!next.valid) {
-                      setDateRangeError(next.error);
-                      return;
-                    }
-                    setCustomEndDate(next.endDate);
+          {/* Date Range Filter Buttons and Custom Range Inputs */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {FILTER_OPTIONS.map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => {
+                    setSelectedPreset(opt);
                     setDateRangeError('');
                   }}
-                  className="bg-transparent text-xs text-slate-800 focus:outline-none"
-                />
-              </div>
-              {dateRangeError && (
-                <p role="alert" className="text-[11px] text-red-600 font-medium">
-                  {dateRangeError}
-                </p>
-              )}
+                  className={cn(
+                    "text-xs px-2.5 sm:px-3 py-1.5 rounded-lg font-medium transition-all cursor-pointer shrink-0 whitespace-nowrap border",
+                    selectedPreset === opt
+                      ? "bg-[#252578] text-white border-[#252578] font-semibold shadow-xs"
+                      : "bg-white text-slate-600 border-slate-200 hover:text-slate-900 hover:border-slate-300"
+                  )}
+                >
+                  {opt}
+                </button>
+              ))}
             </div>
-          )}
+
+            {/* Custom Date Range Popover / Pickers if Custom Range is selected */}
+            {selectedPreset === 'Custom Range' && (
+              <div className="flex flex-col gap-1 shrink-0">
+                <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs shrink-0 whitespace-nowrap flex-nowrap shadow-2xs">
+                  <Calendar className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+                  <input
+                    type="date"
+                    aria-label="Start date"
+                    value={customStartDate}
+                    onChange={(e) => {
+                      const next = resolveStartDateUpdate(e.target.value, customEndDate);
+                      setCustomStartDate(next.startDate);
+                      setCustomEndDate(next.endDate);
+                      setDateRangeError(next.error);
+                    }}
+                    className="bg-transparent text-xs text-slate-800 focus:outline-none w-[115px] cursor-pointer"
+                  />
+                  <span className="text-slate-400 font-medium">to</span>
+                  <input
+                    type="date"
+                    aria-label="End date"
+                    min={customStartDate || undefined}
+                    value={customEndDate}
+                    onChange={(e) => {
+                      const next = resolveEndDateUpdate(customStartDate, e.target.value);
+                      if (!next.valid) {
+                        setDateRangeError(next.error);
+                        return;
+                      }
+                      setCustomEndDate(next.endDate);
+                      setDateRangeError('');
+                    }}
+                    className="bg-transparent text-xs text-slate-800 focus:outline-none w-[115px] cursor-pointer"
+                  />
+                </div>
+                {dateRangeError && (
+                  <p role="alert" className="text-[11px] text-red-600 font-medium">
+                    {dateRangeError}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1479,6 +1548,7 @@ export default function AdminDashboard() {
           selectedPeriod={selectedPreset}
           dateFrom={globalDateFrom}
           dateTo={globalDateTo}
+          onSelectEmployee={() => setActiveTab('employees')}
         />
       ) : (
         <AnalyticsErrorBoundary>

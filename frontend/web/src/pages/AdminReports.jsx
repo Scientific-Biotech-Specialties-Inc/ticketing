@@ -11,6 +11,7 @@ import {
   Search,
 } from 'lucide-react';
 import { exportAdminReport, getAdminReports } from '@/services/ticketService';
+import { exportStructuredCsv, exportStructuredExcel, exportStructuredPdf } from '@/utils/reportExportUtils';
 import { useBranch } from '@/context/BranchContext';
 import BranchSelector from '@/components/BranchSelector';
 import { PageHeader } from '@/components/ui/page-header';
@@ -73,11 +74,9 @@ const REPORT_TYPES = [
 
 const DEPARTMENTS = [
   'All Departments',
-  'Service',
-  'Engineering',
-  'Customer Service',
   'IT',
-  'Quality Assurance',
+  'Customer Service',
+  'Service',
 ];
 
 export default function AdminReports() {
@@ -126,7 +125,7 @@ export default function AdminReports() {
 
   // Filters shared by the preview and the server side export so both read the same snapshot.
   const buildFilterParams = useCallback(() => {
-    const params = { preset: datePreset };
+    const params = { preset: datePreset, force_refresh: true };
 
     if (datePreset === 'Custom Range') {
       params.date_from = customStartDate;
@@ -215,10 +214,16 @@ export default function AdminReports() {
       return;
     }
 
-    // The server renders PDF, Excel and CSV from the same query as the preview, so files match what is on screen.
     const apiFormat = format === 'excel' ? 'xlsx' : format;
     const resolvedBranch = (appliedFilters?.branch || branchName).replace(/\s+/g, '_');
     const fallbackName = `${currentReportDef.id}_${resolvedBranch}_${new Date().toISOString().split('T')[0]}.${apiFormat}`;
+    const reportFilterMeta = appliedFilters || {
+      reportType: currentReportDef.name,
+      branch: branchName,
+      dateRange: effectiveDateRange,
+      department: selectedDepartment,
+      priority: priorityFilter,
+    };
 
     try {
       const response = await exportAdminReport({
@@ -226,6 +231,29 @@ export default function AdminReports() {
         format: apiFormat,
         filters: buildFilterParams(),
       });
+
+      // If CSV export, generate structured CSV with clean formatting
+      if (format === 'csv') {
+        exportStructuredCsv(
+          fallbackName,
+          activeHeaders,
+          previewData,
+          reportFilterMeta
+        );
+        return;
+      }
+
+      // If Excel export, generate genuine styled OOXML workbook matching Pic 3
+      if (format === 'excel' || format === 'xlsx') {
+        exportStructuredExcel(
+          fallbackName,
+          currentReportDef.name,
+          activeHeaders,
+          previewData,
+          reportFilterMeta
+        );
+        return;
+      }
 
       const disposition = response?.headers?.['content-disposition'] || '';
       const match = /filename="?([^";]+)"?/i.exec(disposition);
@@ -420,7 +448,7 @@ export default function AdminReports() {
 
             {/* Export Format Dropdown (PDF, Excel, CSV) */}
             <div className="flex items-center gap-2 shrink-0">
-              <DropdownMenu>
+              <DropdownMenu modal={false}>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="default"

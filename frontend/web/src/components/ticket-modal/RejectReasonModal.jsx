@@ -85,14 +85,14 @@ export default function RejectReasonModal({
               type="button"
               onClick={onClose}
               disabled={isSubmitting}
-              className="min-h-[44px] px-4 rounded-lg border border-[#D5D9E4] hover:bg-[#F5F6FA] text-xs font-semibold text-[#1B2033] cursor-pointer"
+              className="h-9 px-4 rounded-lg border border-[#D5D9E4] hover:bg-[#F5F6FA] text-xs font-semibold text-[#1B2033] cursor-pointer"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting || !reason.trim()}
-              className="min-h-[44px] px-4 rounded-lg bg-[#B42318] hover:bg-red-800 text-white text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
+              className="h-9 px-4 rounded-lg bg-[#B42318] hover:bg-red-800 text-white text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
             >
               {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               Confirm Rejection

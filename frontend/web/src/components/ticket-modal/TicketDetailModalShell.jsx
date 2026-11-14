@@ -3,7 +3,7 @@ import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 
 /**
  * TicketDetailModalShell component
- * Centered modal on desktop (max-width ~600px, 16px border-radius)
+ * Centered modal on desktop (w-170 max-w-full / ~680px, rounded-xl matching AssignModal standard)
  * Mobile bottom sheet (<640px)
  * Native scrolling, focus trap, Escape key handling
  */
@@ -14,7 +14,7 @@ export default function TicketDetailModalShell({
   children,
   footer,
   className = '',
-  maxWidth = 'max-w-3xl lg:max-w-4xl',
+  maxWidth = 'w-170 max-w-full sm:max-w-[680px]',
 }) {
   useLockBodyScroll(isOpen);
   const modalRef = useRef(null);
@@ -46,7 +46,7 @@ export default function TicketDetailModalShell({
       role="dialog"
       aria-modal="true"
       aria-labelledby="ticket-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-0 sm:p-4 backdrop-blur-[2px] overscroll-none animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-0 sm:p-4 backdrop-blur-[1.5px] overscroll-none animate-in fade-in duration-200"
     >
       <button
         type="button"
@@ -58,14 +58,14 @@ export default function TicketDetailModalShell({
       </button>
       <div
         ref={modalRef}
-        className={`flex w-full ${maxWidth} flex-col overflow-hidden bg-white border border-[#D5D9E4] shadow-2xl transition-all
-          max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:max-h-[96vh] max-sm:rounded-t-2xl max-sm:rounded-b-none
-          sm:max-h-[90vh] sm:rounded-2xl ${className}`}
+        className={`flex w-full ${maxWidth} flex-col overflow-hidden bg-white border border-[#D5D9E4] shadow-modal transition-all
+          max-sm:fixed max-sm:inset-x-0 max-sm:bottom-0 max-sm:max-h-[96vh] max-sm:rounded-t-xl max-sm:rounded-b-none
+          sm:max-h-[92vh] sm:rounded-xl ${className}`}
       >
         {/* Sticky Header */}
         {header}
 
-        {/* Scrollable Content (Native Scroll, no custom arrows, 24px padding on desktop, 16px section gap) */}
+        {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto overscroll-contain px-5 sm:px-6 py-5 space-y-4">
           {children}
         </div>

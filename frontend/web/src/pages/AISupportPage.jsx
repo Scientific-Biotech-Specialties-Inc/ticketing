@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
-import { Bot, Send, Paperclip, ChevronDown, ChevronUp, X, CheckCircle, CheckCircle2, AlertTriangle, Plus, MessageSquare, Trash2, ArrowLeft, Clock, Menu } from 'lucide-react';
+import { Bot, Send, ChevronDown, ChevronUp, X, CheckCircle, CheckCircle2, AlertTriangle, Plus, MessageSquare, Trash2, ArrowLeft, Clock, Menu } from 'lucide-react';
 import axiosInstance from '@/api/axiosInstance';
 import { AI_API_URL } from '@/config/api.config';
 import { getTicketFormOptions, createTicket, getCustomerTickets, saveTicketDraft } from '@/services/ticketService';
@@ -31,8 +31,6 @@ const formatShortTime = (iso) => {
 };
 
 function FormattedText({ text, isUser = false }) {
-  const [completedSteps, setCompletedSteps] = useState({});
-
   if (typeof text !== 'string') return text;
 
   if (isUser) {
@@ -44,117 +42,44 @@ function FormattedText({ text, isUser = false }) {
   }
 
   const lines = text.split('\n');
-  const stepRegex = /^(?:\*\*step\s*(\d+)[:\.\-]?\*\*|step\s*(\d+)[:\.\-]|(\d+)[\.\)])\s*(.*)$/i;
-
-  const totalDetectedSteps = lines.reduce((acc, line) => {
-    const trimmed = line.trim();
-    const isBullet = trimmed.startsWith('- ') || trimmed.startsWith('* ');
-    const cleanLine = isBullet ? trimmed.substring(2) : trimmed;
-    return stepRegex.test(cleanLine) ? acc + 1 : acc;
-  }, 0);
-
-  const completedCount = Object.values(completedSteps).filter(Boolean).length;
 
   const renderInlineTokens = (rawStr) =>
     rawStr.split(/(\*\*.*?\*\*|\*.*?\*|`.*?`)/g).map((part, idx) => {
       if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
-        return <strong key={idx} className="font-bold text-slate-900">{part.slice(2, -2)}</strong>;
+        return <strong key={idx} className="font-semibold text-slate-900">{part.slice(2, -2)}</strong>;
       }
       if (part.startsWith('*') && part.endsWith('*') && part.length >= 2) {
         return <em key={idx} className="italic">{part.slice(1, -1)}</em>;
       }
       if (part.startsWith('`') && part.endsWith('`') && part.length >= 2) {
-        return <code key={idx} className="bg-white border border-gray-200 px-1.5 py-0.5 rounded text-xs font-mono text-[#252578]">{part.slice(1, -1)}</code>;
+        return <code key={idx} className="bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-xs font-mono text-[#252578]">{part.slice(1, -1)}</code>;
       }
       return part;
     });
 
   return (
-    <div className="text-sm leading-relaxed break-words space-y-1.5">
-      {totalDetectedSteps >= 2 && (
-        <div className="mb-2.5 flex items-center justify-between gap-2 rounded-xl bg-[#252578]/5 border border-[#252578]/15 px-3 py-2 text-xs">
-          <span className="font-bold text-[#252578] flex items-center gap-1.5">
-            <CheckCircle2 size={14} className="text-[#2E85D8]" />
-            Guided Troubleshooting Steps
-          </span>
-          <span className="text-[11px] font-semibold text-slate-600 bg-white px-2 py-0.5 rounded-full border border-slate-200">
-            {completedCount} / {totalDetectedSteps} Completed
-          </span>
-        </div>
-      )}
+    <div className="text-sm leading-relaxed break-words space-y-1 text-slate-800">
       {lines.map((line, lineIdx) => {
         const trimmed = line.trim();
-        const isBullet = trimmed.startsWith('- ') || trimmed.startsWith('* ');
-        const cleanLine = isBullet ? trimmed.substring(2) : trimmed;
-
-        // Structured step detection: "Step 1: ...", "**Step 1:** ...", "1. ...", "2) ..."
-        const stepMatch = cleanLine.match(stepRegex);
-        if (stepMatch) {
-          const stepNum = stepMatch[1] || stepMatch[2] || stepMatch[3];
-          const stepBody = stepMatch[4] || '';
-          const isDone = Boolean(completedSteps[stepNum]);
-
-          // Extract optional leading bold title e.g. "**Power Cycle Unit** — Unplug the main cord..."
-          const titleMatch = stepBody.match(/^\*\*(.+?)\*\*\s*(?:[:\-—–]\s*)?(.*)$/);
-          const stepTitle = titleMatch ? titleMatch[1] : null;
-          const stepDesc = titleMatch ? titleMatch[2] : stepBody;
-
-          return (
-            <div
-              key={lineIdx}
-              onClick={() => setCompletedSteps((prev) => ({ ...prev, [stepNum]: !prev[stepNum] }))}
-              className={`my-2 p-3.5 rounded-xl border transition-all cursor-pointer flex items-start gap-3 text-left shadow-xs ${
-                isDone
-                  ? 'bg-emerald-50/70 border-emerald-200'
-                  : 'bg-blue-50/60 hover:bg-blue-50/90 border-blue-200/80'
-              }`}
-              title="Click to mark step as completed"
-            >
-              <div className="flex items-center gap-2 shrink-0 mt-0.5">
-                <span
-                  className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-colors ${
-                    isDone
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-[#252578] text-white'
-                  }`}
-                >
-                  {isDone ? '✓' : stepNum}
-                </span>
-                <span
-                  className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                    isDone
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-[#252578]/10 text-[#252578]'
-                  }`}
-                >
-                  Step {stepNum}
-                </span>
-              </div>
-              <div className={`flex-1 text-xs leading-relaxed ${isDone ? 'line-through text-slate-500' : 'text-slate-800 font-medium'}`}>
-                {stepTitle && (
-                  <p className={`font-bold text-xs mb-0.5 ${isDone ? 'text-emerald-800' : 'text-[#252578]'}`}>
-                    {stepTitle}
-                  </p>
-                )}
-                <div>{renderInlineTokens(stepDesc || stepTitle || '')}</div>
-              </div>
-            </div>
-          );
+        if (!trimmed) {
+          return <div key={lineIdx} className="h-1.5" />;
         }
 
+        const isBullet = trimmed.startsWith('- ') || trimmed.startsWith('* ');
+        const cleanLine = isBullet ? trimmed.substring(2) : trimmed;
         const elements = renderInlineTokens(cleanLine);
 
         if (isBullet) {
           return (
             <div key={lineIdx} className="flex items-start gap-2 pl-2">
               <span className="text-[#252578] font-bold flex-shrink-0 select-none">•</span>
-              <div>{elements}</div>
+              <div className="flex-1">{elements}</div>
             </div>
           );
         }
 
         return (
-          <p key={lineIdx} className={lineIdx > 0 && line === '' ? 'h-2' : ''}>
+          <p key={lineIdx} className="leading-relaxed">
             {elements}
           </p>
         );
@@ -167,40 +92,39 @@ const isTroubleshootingResponse = (content) => {
   if (typeof content !== 'string' || !content.trim()) return false;
   const lower = content.toLowerCase();
 
-  // If it's a pure greeting, acknowledgment, or informational request without troubleshooting steps, do NOT prompt
-  const isGreetingOrClarification =
+  // Pure greeting, acknowledgment, or question prompts should never show the feedback resolution
+  if (
     lower.startsWith('hello') ||
     lower.startsWith('hi') ||
     lower.startsWith('hey') ||
     lower.startsWith('greetings') ||
-    lower.includes('describe the machine') ||
-    lower.includes('what machine are you having') ||
-    lower.includes('what is the brand') ||
+    lower.includes('how can i help you today') ||
     lower.includes('how can i assist you today') ||
-    lower.includes('how can i help you today');
-
-  // Check for troubleshooting steps or actionable directives
-  const hasStructuredSteps = /^(?:step\s*\d+|[1-9]\s*[\.\)]|\*|\-)\s+/im.test(content);
-  const hasTroubleshootingKeywords =
-    lower.includes('step 1') ||
-    lower.includes('troubleshoot') ||
-    lower.includes('try the following') ||
-    lower.includes('to resolve this') ||
-    lower.includes('check if') ||
-    lower.includes('power cycle') ||
-    lower.includes('restart the') ||
-    lower.includes('unplug') ||
-    lower.includes('disconnect') ||
-    lower.includes('clear the jam') ||
-    lower.includes('reinstall') ||
-    lower.includes('inspect the') ||
-    lower.includes('replace the');
-
-  if (isGreetingOrClarification && !hasStructuredSteps) {
-    return false;
+    lower.includes('what machine are you having') ||
+    lower.includes('can you provide') ||
+    lower.includes('describe the machine')
+  ) {
+    if (!/\bstep\s*1\b/i.test(content) && !/^\s*(?:1[\.\)]|\*\*1[\.\)]\*\*)\s+/m.test(content)) {
+      return false;
+    }
   }
 
-  return hasStructuredSteps || hasTroubleshootingKeywords;
+  // Count sequential action steps in the message
+  const lines = content.split('\n');
+  const stepLineRegex = /^(?:\*\*step\s*\d+[:\.\-]?\*\*|step\s*\d+[:\.\-]|(?:\*\*)?\d+[\.\)](?:\*\*)?)\s+/i;
+  let count = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const clean = (trimmed.startsWith('- ') || trimmed.startsWith('* ')) ? trimmed.substring(2) : trimmed;
+    if (stepLineRegex.test(clean)) {
+      count++;
+    }
+  }
+
+  const hasExplicitStepKeyword = /\bstep\s*1\b/i.test(content) || /\bstep\s*one\b/i.test(content);
+
+  // Strictly only show feedback when the message actually presents actionable troubleshooting steps
+  return count >= 2 || (count >= 1 && hasExplicitStepKeyword);
 };
 
 const suggestionChips = [
@@ -358,6 +282,7 @@ function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onS
   const [form, setForm] = useState(data || {});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [showBackConfirm, setShowBackConfirm] = useState(false);
   const [titleCasingData, setTitleCasingData] = useState(null);
   const [showTitleCasingModal, setShowTitleCasingModal] = useState(false);
   const [isTitleManuallyEdited, setIsTitleManuallyEdited] = useState(false);
@@ -368,6 +293,7 @@ function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onS
       setForm(data);
       setIsSubmitting(false);
       setIsSavingDraft(false);
+      setShowBackConfirm(false);
       setTitleCasingData(null);
       setShowTitleCasingModal(false);
       setIsTitleManuallyEdited(false);
@@ -440,8 +366,20 @@ function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onS
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[1.5px]">
       <div className="w-full max-w-2xl rounded-xl bg-white shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
-          <h2 className="text-lg font-bold text-gray-900">Review Support Ticket</h2>
-          <button onClick={onClose} disabled={isSubmitting} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 cursor-pointer disabled:opacity-50">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowBackConfirm(true)}
+              disabled={isSubmitting}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors cursor-pointer text-xs font-semibold"
+              title="Back to Chat"
+            >
+              <ArrowLeft size={16} />
+              <span>Back</span>
+            </button>
+            <h2 className="text-lg font-bold text-gray-900">Review Support Ticket</h2>
+          </div>
+          <button onClick={() => setShowBackConfirm(true)} disabled={isSubmitting} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 cursor-pointer disabled:opacity-50">
             <X size={20} />
           </button>
         </div>
@@ -609,11 +547,12 @@ function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onS
           <div className="flex items-center gap-3 ml-auto">
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => setShowBackConfirm(true)}
               disabled={isSubmitting || isSavingDraft}
-              className="px-4 py-2.5 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100 transition-all cursor-pointer disabled:opacity-50"
+              className="px-4 py-2.5 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100 transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
             >
-              Cancel
+              <ArrowLeft size={14} />
+              <span>Back</span>
             </button>
             {onSaveDraft && (
               <button
@@ -652,6 +591,58 @@ function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onS
           </div>
         </div>
       </div>
+
+      {showBackConfirm && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl border border-gray-200 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-gray-900">Return to AI Chatbot?</h3>
+                <p className="text-xs text-gray-600 leading-relaxed">
+                  Are you sure you want to go back to the AI chatbot? You can save your ticket as a draft before leaving, or return without saving.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowBackConfirm(false)}
+                className="w-full sm:w-auto px-3.5 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowBackConfirm(false);
+                  onClose();
+                }}
+                className="w-full sm:w-auto px-3.5 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-lg transition-colors cursor-pointer"
+              >
+                Go Back without Saving
+              </button>
+              {onSaveDraft && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowBackConfirm(false);
+                    await handleSaveDraft();
+                  }}
+                  disabled={isSavingDraft}
+                  className="w-full sm:w-auto px-4 py-2 text-xs font-semibold text-white bg-[#252578] hover:bg-[#1d1d60] rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 shadow-xs"
+                >
+                  {isSavingDraft ? <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : null}
+                  <span>Save to Draft</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <TitleCasingModal
         isOpen={showTitleCasingModal}
@@ -1056,10 +1047,43 @@ function AISupportPage() {
               title: c.title ? c.title.replace(/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i, '').trim() : 'AI Support Session'
             }));
           setConversations(fetched);
-          // Always open on a clean New Support Session by default instead of loading stale test chats
-          handleNewChat();
+          const incomingDraft = location.state?.draft;
+          const resumeConvId = location.state?.activeConversationId || location.state?.conversationId || incomingDraft?.conversation_id;
+          if (resumeConvId) {
+            loadConversation(resumeConvId);
+          } else {
+            handleNewChat();
+          }
+          if (incomingDraft) {
+            setEscalationTicketData({
+              title: incomingDraft.title || '',
+              machine_ID: incomingDraft.machine_ID || null,
+              problem_category_ID: incomingDraft.problem_category_ID || null,
+              conversationSummary: incomingDraft.description || '',
+              problemSummary: incomingDraft.description || '',
+              draftId: incomingDraft.id,
+            });
+            setShowTicketCard(true);
+          }
         } else {
-          handleNewChat();
+          const incomingDraft = location.state?.draft;
+          const resumeConvId = location.state?.activeConversationId || location.state?.conversationId || incomingDraft?.conversation_id;
+          if (resumeConvId) {
+            loadConversation(resumeConvId);
+          } else {
+            handleNewChat();
+          }
+          if (incomingDraft) {
+            setEscalationTicketData({
+              title: incomingDraft.title || '',
+              machine_ID: incomingDraft.machine_ID || null,
+              problem_category_ID: incomingDraft.problem_category_ID || null,
+              conversationSummary: incomingDraft.description || '',
+              problemSummary: incomingDraft.description || '',
+              draftId: incomingDraft.id,
+            });
+            setShowTicketCard(true);
+          }
         }
       })
       .catch(err => {
@@ -1763,8 +1787,8 @@ function AISupportPage() {
 
   const handleViewTicket = useCallback(() => {
     setShowSuccess(false);
-    navigate('/my-tickets');
-  }, [navigate]);
+    navigate('/my-tickets', { state: { openTicketId: ticketNumber } });
+  }, [navigate, ticketNumber]);
 
   const handleCloseSuccess = useCallback(() => {
     setShowSuccess(false);
@@ -2188,13 +2212,6 @@ function AISupportPage() {
 
           <div className="px-3 sm:px-6 py-2.5 sm:py-3 border-t border-border bg-card shrink-0">
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                className="p-2 rounded-xl text-slate-muted hover:text-slate-dark hover:bg-slate-100 transition-all shrink-0 cursor-pointer"
-                title="Attach file"
-              >
-                <Paperclip size={18} />
-              </button>
               <textarea
                 ref={inputRef}
                 rows={1}

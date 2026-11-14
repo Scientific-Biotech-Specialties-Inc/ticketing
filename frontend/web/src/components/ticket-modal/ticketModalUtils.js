@@ -128,57 +128,151 @@ export const getStepIndex = (status, isAssigned) => {
 };
 
 /**
- * Parse assignee details
+ * Parse all assignee details into a normalized array of employee objects.
+ * Handles ticket.assigned_employees (array of objects/ids), ticket.assigned (array of objects/ids),
+ * or single string/object properties like ticket.assigned_employee.
  */
-export const getAssigneeInfo = (ticket, employees = []) => {
-  let name = '';
-  let department = ticket?.department || 'Support Department';
+export const getAllAssignees = (ticket, employees = []) => {
+  if (!ticket) return [];
+  const list = [];
+  const seenIds = new Set();
+  const seenNames = new Set();
 
-  if (Array.isArray(ticket?.assigned_employees) && ticket.assigned_employees.length > 0) {
-    const first = ticket.assigned_employees[0];
-    name = first.name || first.full_name || '';
-    if (first.department) department = first.department;
-  } else if (Array.isArray(ticket?.assigned) && ticket.assigned.length > 0) {
-    const first = ticket.assigned[0];
-    if (typeof first === 'object' && first?.name) {
-      name = first.name;
-      if (first.department) department = first.department;
-    } else {
-      const match = employees.find((e) => String(e.id) === String(first) || String(e.emp_id) === String(first));
+  const addAssignee = (raw, idx = 0) => {
+    if (!raw) return;
+    let id = null;
+    let name = '';
+    let department = ticket?.department || 'Support Department';
+    let role = 'Assigned Technician';
+    let email = '';
+    let assignmentStatus = 'assigned';
+    let isOnline = true;
+
+    if (typeof raw === 'object' && raw !== null) {
+      id = raw.id || raw.emp_id || raw.employee_id;
+      name = raw.name || raw.full_name || (raw.first_name ? `${raw.first_name} ${raw.last_name || ''}`.trim() : '');
+      department = raw.department || raw.dept || department;
+      role = raw.role || raw.position || raw.job_title || role;
+      email = raw.email || '';
+      assignmentStatus = raw.assignment_status || raw.status || 'assigned';
+      isOnline = raw.is_online ?? raw.online ?? true;
+    } else if (typeof raw === 'string' || typeof raw === 'number') {
+      const match = (employees || []).find(
+        (e) =>
+          String(e.id) === String(raw) ||
+          String(e.emp_id) === String(raw) ||
+          (typeof raw === 'string' && e.name && e.name.toLowerCase() === raw.toLowerCase())
+      );
       if (match) {
-        name = match.name;
-        if (match.department) department = match.department;
+        id = match.id || match.emp_id;
+        name = match.name || match.full_name || '';
+        department = match.department || department;
+        role = match.role || match.position || match.job_title || role;
+        email = match.email || '';
+        isOnline = match.is_online ?? match.online ?? true;
+      } else if (typeof raw === 'string' && raw.toLowerCase() !== 'unassigned') {
+        name = raw;
       }
     }
-  }
 
-  if (!name) {
-    name = ticket?.assigned_employee || ticket?.assigned_employee_name || ticket?.assigned_to_name || '';
-  }
+    if (!name || name.toLowerCase() === 'unassigned') return;
 
-  if (!name && ticket?.assigned_to && typeof ticket.assigned_to === 'string' && ticket.assigned_to.toLowerCase() !== 'unassigned') {
-    name = ticket.assigned_to;
-  }
+    // Try to enrich from employees array if info is missing
+    if (Array.isArray(employees) && employees.length > 0) {
+      const matched = employees.find(
+        (e) =>
+          (id && (String(e.id) === String(id) || String(e.emp_id) === String(id))) ||
+          (name && e.name && e.name.toLowerCase() === name.toLowerCase())
+      );
+      if (matched) {
+        id = id || matched.id || matched.emp_id;
+        if (!email && matched.email) email = matched.email;
+        if ((department === 'Support Department' || !department) && matched.department) {
+          department = matched.department;
+        }
+        if (role === 'Assigned Technician' && (matched.role || matched.position)) {
+          role = matched.role || matched.position;
+        }
+      }
+    }
 
-  const isAssigned = Boolean(name && name.toLowerCase() !== 'unassigned');
-  const displayName = isAssigned ? name : 'Unassigned';
-  const firstName = isAssigned ? displayName.split(' ')[0] : 'Support';
-  const initials = isAssigned
-    ? displayName
+    const key = id ? `id-${id}` : `name-${name.toLowerCase()}`;
+    if (seenIds.has(key) || seenNames.has(name.toLowerCase())) return;
+    if (id) seenIds.add(key);
+    seenNames.add(name.toLowerCase());
+
+    const firstName = name.split(' ')[0] || 'Staff';
+    const initials =
+      name
         .split(' ')
         .filter(Boolean)
         .map((p) => p[0])
         .join('')
         .slice(0, 2)
-        .toUpperCase()
-    : 'CS';
+        .toUpperCase() || 'ST';
+
+    list.push({
+      id: id || `assignee-${idx}`,
+      name,
+      firstName,
+      initials,
+      department,
+      role,
+      email,
+      assignmentStatus,
+      isOnline,
+    });
+  };
+
+  // 1. Check ticket.assigned_employees array
+  if (Array.isArray(ticket.assigned_employees) && ticket.assigned_employees.length > 0) {
+    ticket.assigned_employees.forEach((emp, i) => addAssignee(emp, i));
+  }
+
+  // 2. Check ticket.assigned array
+  if (Array.isArray(ticket.assigned) && ticket.assigned.length > 0) {
+    ticket.assigned.forEach((emp, i) => addAssignee(emp, i));
+  }
+
+  // 3. Check single assignee properties if still empty
+  if (list.length === 0) {
+    const single =
+      ticket.assigned_employee ||
+      ticket.assigned_employee_name ||
+      ticket.assigned_to_name ||
+      ticket.assigned_to;
+    if (single) addAssignee(single, 0);
+  }
+
+  return list;
+};
+
+/**
+ * Parse primary assignee details with full backward-compatible interface
+ */
+export const getAssigneeInfo = (ticket, employees = []) => {
+  const all = getAllAssignees(ticket, employees);
+  if (all.length > 0) {
+    const first = all[0];
+    return {
+      isAssigned: true,
+      name: first.name,
+      firstName: first.firstName,
+      initials: first.initials,
+      department: first.department,
+      count: all.length,
+      assignees: all,
+    };
+  }
 
   return {
-    isAssigned,
-    name: displayName,
-    firstName,
-    initials,
-    department,
+    isAssigned: false,
+    name: 'Unassigned',
+    firstName: 'Support',
+    initials: 'CS',
+    department: ticket?.department || 'Support Department',
+    count: 0,
+    assignees: [],
   };
 };
 

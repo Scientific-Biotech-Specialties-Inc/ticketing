@@ -2155,7 +2155,7 @@ export default function SuperAdminTicketConfig() {
       }
       showConfirm(
         `Delete Ticket Category?`,
-        `Are you sure you want to delete the "${item.name}" ticket category?\n\n⚠️ Feedback Form Impact: The feedback questions for this category will be deactivated. Existing feedback submissions will remain in analytics and history reports.`,
+        `Are you sure you want to delete the "${item.name}" ticket category?\n\nFeedback Form Impact: The feedback questions for this category will be deactivated. Existing feedback submissions will remain in analytics and history reports.`,
         () => confirmDelete(item),
         { confirmText: 'Delete Category', confirmClassName: 'bg-red-600 hover:bg-red-700' }
       );
@@ -7443,7 +7443,7 @@ export default function SuperAdminTicketConfig() {
                         {newEmailConfigErrors.apiKey ? (
                           <p className="text-xs font-medium text-red-600 mt-0.5">{newEmailConfigErrors.apiKey}</p>
                         ) : (
-                          <p className="text-xs text-amber-600 font-medium mt-0.5">⚠️ Once you save, you cannot see the API key again. It will be permanently masked.</p>
+                          <p className="text-xs text-amber-600 font-medium mt-0.5">Note: Once you save, you cannot see the API key again. It will be permanently masked.</p>
                         )}
                       </div>
 
@@ -11530,7 +11530,7 @@ export default function SuperAdminTicketConfig() {
                 <p className="text-xs font-semibold text-red-600">{changeApiKeyError}</p>
               )}
               <p className="text-[11px] text-amber-600 font-medium">
-                ⚠️ Once you save, you cannot see the API key again. It will be permanently masked as <span className="font-mono font-semibold text-gray-700">re_•••••••••</span>.
+                Note: Once you save, you cannot see the API key again. It will be permanently masked as <span className="font-mono font-semibold text-gray-700">re_•••••••••</span>.
               </p>
             </div>
 

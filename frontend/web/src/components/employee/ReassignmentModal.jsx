@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { requestReassignment } from '@/services/ticketService';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 
@@ -8,6 +9,7 @@ export default function ReassignmentModal({
   onReassignSuccess,
 }) {
   useLockBodyScroll(Boolean(ticket));
+  const navigate = useNavigate();
   const [reason, setReason] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -15,6 +17,20 @@ export default function ReassignmentModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!ticket) return null;
+
+  const handleClose = () => {
+    if (isSubmitted) {
+      if (typeof onReassignSuccess === 'function') {
+        const rawReason = reason.trim();
+        const formattedReason = rawReason ? rawReason.charAt(0).toUpperCase() + rawReason.slice(1) : '';
+        onReassignSuccess(ticket.id, formattedReason);
+      }
+      onClose?.();
+      navigate('/employee/assigned?tab=pending_reassignment', { state: { tab: 'pending_reassignment' } });
+      return;
+    }
+    onClose?.();
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -35,10 +51,7 @@ export default function ReassignmentModal({
       ticket.reassignmentRequested = true;
       ticket.reassignmentReason = formattedReason;
       ticket.reassignmentStatus = 'Pending';
-
-      if (typeof onReassignSuccess === 'function') {
-        onReassignSuccess(ticket.id);
-      }
+      ticket.status = 'Pending Reassignment';
 
       setSuccessMessage('Reassignment request submitted successfully!');
       setIsSubmitted(true);
@@ -50,14 +63,14 @@ export default function ReassignmentModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 backdrop-blur-[1.5px] overflow-y-auto p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 backdrop-blur-[1.5px] overflow-y-auto p-4" onClick={handleClose}>
       <div
         className="bg-white rounded-xl shadow-2xl w-full max-w-xl mx-4 p-6 sm:p-8 relative animate-in fade-in zoom-in-95 duration-200"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           type="button"
-          onClick={onClose}
+          onClick={handleClose}
           className="absolute top-5 right-5 p-2 rounded-full hover:bg-gray-100 text-gray-400 transition-colors cursor-pointer"
           aria-label="Close"
         >
@@ -103,7 +116,7 @@ export default function ReassignmentModal({
               <div className="flex items-center justify-end gap-3 pt-2 border-t border-gray-100">
                 <button
                   type="button"
-                  onClick={onClose}
+                  onClick={handleClose}
                   disabled={isSubmitting}
                   className="px-5 py-2.5 border border-gray-200 hover:bg-gray-50 text-gray-700 text-xs font-semibold rounded-xl transition-colors cursor-pointer"
                 >
@@ -126,24 +139,34 @@ export default function ReassignmentModal({
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </div>
-            <h3 className="text-lg font-bold text-gray-900 leading-snug">Pending Reassignment</h3>
-            <p className="text-xs text-gray-500 mt-1 mb-6">
+            <p className="text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full uppercase tracking-wider w-max mx-auto mb-3">
+              Reassignment Request Submitted
+            </p>
+            <h3 className="text-lg font-bold text-gray-900 leading-snug">Request Reassignment Submitted</h3>
+            <p className="text-xs text-gray-500 mt-1.5 mb-5">
               Your request has been filed. The ticket is now awaiting coordinator approval.
             </p>
 
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-left mb-3">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[11px] font-mono font-semibold text-[#252578]">{ticket.id}</span>
+                <span className="text-[10px] font-bold text-amber-700 bg-amber-100/70 px-2 py-0.5 rounded-full">Pending Reassignment</span>
+              </div>
+              <div className="text-sm font-semibold text-slate-800">{ticket.title}</div>
+            </div>
+
             <div className="bg-amber-50/50 border border-amber-100 rounded-xl p-4 text-left mb-6 text-xs text-amber-800 space-y-1">
-              <p className="font-bold text-amber-900">Reason Provided:</p>
+              <p className="font-bold text-amber-900 text-[10px] uppercase tracking-wider">Reason Provided:</p>
               <p className="italic leading-relaxed font-medium">&quot;{reason}&quot;</p>
             </div>
 
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className="w-full py-2.5 bg-[#252578] hover:bg-[#1a1a5c] text-white text-xs font-semibold rounded-xl transition-all shadow-md shadow-[#252578]/25 cursor-pointer"
             >
               Close
             </button>
-
           </div>
         )}
       </div>

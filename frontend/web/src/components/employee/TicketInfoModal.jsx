@@ -78,17 +78,17 @@ export default function TicketInfoModal({ ticket, onClose, onReassignSuccess }) 
       onClick={onClose}
     >
       <div
-        className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 relative flex flex-col max-h-[88vh] overflow-hidden"
+        className="bg-white rounded-xl shadow-modal w-170 max-w-full sm:max-w-[680px] mx-4 relative flex flex-col max-h-[92vh] overflow-hidden border border-[#D5D9E4]"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="p-6 border-b border-gray-100 flex-shrink-0 relative">
-          <div className="absolute top-5 right-5 flex items-center gap-2">
-            <button type="button" onClick={onClose} className="p-2 rounded-full hover:bg-gray-100 transition-colors text-gray-400">
+        <div className="px-6 py-4 border-b border-gray-100 flex-shrink-0 relative">
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <button type="button" onClick={onClose} className="p-1.5 rounded-md hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-700 cursor-pointer">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
             </button>
           </div>
-          <h2 className="text-xl font-bold text-gray-900 leading-snug pr-8">{ticket.title}</h2>
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 leading-snug pr-8">{ticket.title}</h2>
           <div className="flex flex-wrap items-center gap-2 mt-2 pr-8">
             <span className="text-xs font-bold text-[#252578] bg-blue-50 px-3 py-1 rounded-full">{ticket.id}</span>
             <span className={`text-xs font-semibold px-3 py-1 rounded-full ${statusColors[ticket.status] ?? 'bg-gray-100 text-gray-700'}`}>{ticket.status}</span>
@@ -335,21 +335,21 @@ export default function TicketInfoModal({ ticket, onClose, onReassignSuccess }) 
         </div>
 
         {/* Footer */}
-        <div className="p-6 border-t border-gray-150 flex-shrink-0 flex items-center justify-between gap-3">
+        <div className="px-6 py-4 border-t border-gray-150 flex-shrink-0 flex items-center justify-between gap-3 bg-white">
           <button
             type="button"
             onClick={handleOpenMessages}
-            className="flex items-center gap-1.5 px-4 py-2.5 border border-primary/20 text-[#252578] hover:bg-primary/5 text-sm font-semibold rounded-xl transition-all cursor-pointer"
+            className="flex items-center gap-1.5 h-9 px-3.5 border border-[#D5D9E4] text-[#1E2A78] hover:bg-[#F5F6FA] text-xs font-semibold rounded-lg transition-all cursor-pointer"
           >
-            <MessageCircle className="w-4 h-4 text-[#252578]" />
+            <MessageCircle className="w-3.5 h-3.5 text-[#1E2A78]" />
             <span>Messages</span>
           </button>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             {isReassignmentDenied(currentTicket) && (
               <button
                 type="button"
                 onClick={() => setShowReassignModal(true)}
-                className="px-5 py-2.5 border border-red-200 text-red-700 hover:bg-red-50 text-sm font-semibold rounded-xl transition-all"
+                className="h-9 px-4 border border-red-200 text-red-700 hover:bg-red-50 text-xs font-semibold rounded-lg transition-all cursor-pointer"
               >
                 Request Reassignment Again
               </button>
@@ -357,7 +357,7 @@ export default function TicketInfoModal({ ticket, onClose, onReassignSuccess }) 
             <button
               type="button"
               onClick={handleUpdate}
-              className="px-7 py-2.5 bg-[#252578] hover:bg-[#1a1a5c] text-white text-sm font-semibold rounded-xl transition-all shadow-md shadow-[#252578]/25"
+              className="h-9 px-4 bg-[#252578] hover:bg-[#1a1a5c] text-white text-xs font-semibold rounded-lg transition-all shadow-xs cursor-pointer"
             >
               Update
             </button>

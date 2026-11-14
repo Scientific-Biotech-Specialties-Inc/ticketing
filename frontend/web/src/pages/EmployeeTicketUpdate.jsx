@@ -22,7 +22,7 @@ import {
   Download,
 } from 'lucide-react';
 import { formatDisplayDate } from '@/utils/dateUtils';
-import { getTicketDetails, updateEmployeeTicket, saveWorkLog, getAssignableEmployees, acceptTicket } from '@/services/ticketService';
+import { getTicketDetails, updateEmployeeTicket, saveWorkLog, getAssignableEmployees, acceptTicket, getInternalNotes } from '@/services/ticketService';
 import { getTicketMessages } from '@/services/messagingService';
 import ProofCompletionModal from '@/components/employee/ProofCompletionModal';
 import ActionErrorModal, { getActionError } from '@/components/employee/ActionErrorModal';
@@ -139,9 +139,20 @@ export default function EmployeeTicketUpdate() {
     setErrorMessage('');
     try {
       const details = await getTicketDetails(numericId);
+      let notes = [];
+      try {
+        if (typeof getInternalNotes === 'function') {
+          const res = await getInternalNotes(numericId);
+          notes = Array.isArray(res) ? res : [];
+        }
+      } catch {
+        notes = [];
+      }
+
       setTicket((prev) => ({
-        ...details,
         ...(prev || {}),
+        ...details,
+        internalNotes: notes.length > 0 ? notes : (details?.internalNotes || prev?.internalNotes || []),
         timeline: details?.timeline || prev?.timeline,
         reassignmentDenyReason: prev?.reassignmentDenyReason || details?.reassignmentDenyReason,
         disapprovalReason: prev?.disapprovalReason || details?.disapprovalReason,
@@ -988,98 +999,33 @@ export default function EmployeeTicketUpdate() {
               </div>
             )}
 
-            {/* TS040: Complete Customer & Support Conversation History */}
-            <div className="rounded-xl border border-border bg-card p-6 shadow-xs">
-              <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                <h3 className="text-sm font-bold text-foreground uppercase tracking-wider flex items-center gap-2">
-                  <MessageSquare className="h-4 w-4 text-primary" />
-                  Customer Conversation History ({conversationMessages.length})
-                </h3>
-                <span className="text-xs text-muted-foreground">
-                  Unified thread across Customer, CS &amp; Assigned Employees
-                </span>
+            {/* TS040: Customer & Support Conversation Summary */}
+            <div className="rounded-xl border border-border bg-card p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                  <MessageSquare className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">
+                    Customer Conversation ({conversationMessages.length})
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {conversationMessages.length > 0
+                      ? `Latest: "${(conversationMessages[conversationMessages.length - 1].message || conversationMessages[conversationMessages.length - 1].text || '').slice(0, 80)}${(conversationMessages[conversationMessages.length - 1].message || '').length > 80 ? '...' : ''}"`
+                      : 'Customer and support communication thread recorded for this ticket.'}
+                  </p>
+                </div>
               </div>
-
-              {conversationLoading ? (
-                <div className="space-y-3">
-                  <Skeleton className="h-16 w-full rounded-lg" />
-                  <Skeleton className="h-16 w-full rounded-lg" />
-                </div>
-              ) : conversationError ? (
-                <div className="rounded-lg bg-destructive/10 border border-destructive/20 text-destructive p-3 text-xs flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 shrink-0" />
-                  <span>{conversationError}</span>
-                </div>
-              ) : conversationMessages.length === 0 ? (
-                <div className="text-center py-6 border border-dashed border-border rounded-lg bg-muted/20">
-                  <p className="text-xs text-muted-foreground">No customer-facing messages exchanged yet.</p>
-                </div>
-              ) : (
-                <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
-                  {conversationMessages.map((msg, idx) => {
-                    const senderName = msg.sender_name || msg.user_name || msg.sender?.name || msg.author || 'User';
-                    const senderRole = msg.sender_role || msg.user_role || msg.sender?.role || 'Customer';
-                    const isPriorEmp = isPreviousEmployee(senderName, senderRole);
-                    const isCustomer = /customer|client/i.test(senderRole);
-
-                    return (
-                      <div
-                        key={msg.id || msg._id || idx}
-                        className={`rounded-lg border p-4 text-xs transition-colors ${
-                          isCustomer
-                            ? 'bg-muted/30 border-border'
-                            : 'bg-primary/5 border-primary/20'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2 mb-1.5 flex-wrap">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-bold text-foreground">
-                              {senderName}
-                            </span>
-                            {isPriorEmp ? (
-                              <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-950 rounded-md border border-amber-300">
-                                {senderName} (previous Assigned Employee)
-                              </span>
-                            ) : (
-                              <Badge variant="outline" className="text-[10px] py-0">
-                                {senderRole}
-                              </Badge>
-                            )}
-                          </div>
-                          <span className="text-[11px] text-muted-foreground">
-                            {formatDisplayDate(msg.created_at || msg.timestamp || msg.date)}
-                          </span>
-                        </div>
-
-                        <p className="text-sm text-foreground whitespace-pre-wrap leading-relaxed mt-1">
-                          {msg.message || msg.text || msg.body}
-                        </p>
-
-                        {/* Attachments within message */}
-                        {Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
-                          <div className="mt-3 flex flex-wrap gap-2 pt-2 border-t border-border/50">
-                            {msg.attachments.map((att, aIdx) => {
-                              const attName = typeof att === 'string' ? att.split('/').pop() : (att.name || att.file_name || `Attachment-${aIdx + 1}`);
-                              const attUrl = typeof att === 'string' ? att : (att.url || att.file_path || '');
-                              return (
-                                <button
-                                  key={aIdx}
-                                  type="button"
-                                  onClick={() => setPreviewFile({ name: attName, url: attUrl })}
-                                  className="inline-flex items-center gap-1.5 text-xs bg-card hover:bg-muted text-primary font-medium px-2.5 py-1 rounded-md border border-border transition-colors cursor-pointer"
-                                >
-                                  <Paperclip className="h-3 w-3 text-muted-foreground" />
-                                  <span>{attName}</span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                onClick={() => navigate('/employee/messages', { state: { selectedTicketId: numericId, autoSelectTicketId: numericId } })}
+                className="text-xs font-semibold gap-2 bg-[#252578] hover:bg-[#1d1d60] text-white shrink-0 cursor-pointer h-9 px-4"
+              >
+                <MessageSquare className="w-4 h-4" />
+                <span>View conversation</span>
+              </Button>
             </div>
 
             {/* Staff-Only Internal Notes */}

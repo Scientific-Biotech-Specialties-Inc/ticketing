@@ -38,8 +38,20 @@ const formatMessageTime = (iso) => {
 };
 
 // Role badge component reflecting immutable role at the time
-const RoleBadge = ({ role }) => {
+const RoleBadge = ({ role, senderName = '' }) => {
   const normalized = String(role || '').trim().toLowerCase();
+  const lowerSender = String(senderName || '').trim().toLowerCase();
+
+  if (
+    lowerSender &&
+    (lowerSender === normalized ||
+      lowerSender.includes(normalized) ||
+      (normalized === 'customer' && lowerSender.includes('customer')) ||
+      (normalized.includes('customer support') && lowerSender.includes('customer support')))
+  ) {
+    return null;
+  }
+
   let colorStyles = 'bg-slate-100 text-slate-700 border-slate-200';
 
   if (normalized.includes('requestor') || normalized.includes('requester')) {
@@ -357,7 +369,7 @@ export default function InternalTicketMessageThread({
                   <span className="font-semibold text-foreground">
                     {msg.sender_name || 'User'}
                   </span>
-                  <RoleBadge role={senderRole} />
+                  <RoleBadge role={senderRole} senderName={msg.sender_name} />
                   <span className="text-[11px] text-muted-foreground/80" title={dateDisplay}>
                     {timeDisplay}
                   </span>
@@ -577,13 +589,13 @@ export default function InternalTicketMessageThread({
                 <label
                   htmlFor={`internal-thread-file-input-${numericTicketId}`}
                   className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted rounded-xl border border-border cursor-pointer transition-colors"
-                  title="Attach file (inspected for threats with ClamAV)"
+                  title="Attach files (inspected for security threats)"
                 >
                   <Paperclip className="w-4 h-4 text-primary" />
                   <span>Attach Files</span>
                 </label>
                 <span className="text-[11px] text-muted-foreground hidden sm:inline">
-                  ClamAV scanned · Press Enter to send, Shift+Enter for newline
+                  Security scanned · Press Enter to send, Shift+Enter for newline
                 </span>
               </div>
 

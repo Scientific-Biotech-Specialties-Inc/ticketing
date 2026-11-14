@@ -424,7 +424,9 @@ function App() {
               >
                 <Route index element={<Navigate to="dashboard" replace />} />
                 <Route path="dashboard" element={<AdminDashboard />} />
-                <Route path="employees" element={<Navigate to="dashboard" replace />} />
+                <Route path="departments" element={<AdminDashboard initialTab="departments" />} />
+                <Route path="employees" element={<AdminDashboard initialTab="employees" />} />
+                <Route path="predictive" element={<AdminDashboard initialTab="predictive" />} />
                 <Route path="reports" element={<AdminReports />} />
                 <Route path="profile" element={<Profile />} />
                 <Route path="notifications" element={<Notifications />} />
