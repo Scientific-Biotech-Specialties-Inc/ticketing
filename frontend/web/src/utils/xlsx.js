@@ -15,7 +15,7 @@ const NS_MAIN = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const NS_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
 
 // Style ids defined in styles.xml below.
-const STYLE = { default: 0, header: 1, title: 2, metaLabel: 3 };
+const STYLE = { default: 0, header: 1, title: 2, metaLabel: 3, metaValue: 4, number: 5 };
 
 /** Escape text and drop characters that are not allowed in XML 1.0. */
 export function escapeXml(value) {
@@ -56,37 +56,59 @@ function asNumber(value) {
 }
 
 function cell(ref, value, style = STYLE.default) {
-  const num = style === STYLE.default ? asNumber(value) : null;
+  const num = (style === STYLE.default || style === STYLE.number) ? asNumber(value) : null;
+  const activeStyle = num !== null ? STYLE.number : style;
+  const styleAttr = activeStyle !== undefined && activeStyle !== null ? ` s="${activeStyle}"` : '';
+
   if (num !== null) {
-    return `<c r="${ref}" t="n"${style ? ` s="${style}"` : ''}><v>${num}</v></c>`;
+    return `<c r="${ref}" t="n"${styleAttr}><v>${num}</v></c>`;
   }
   const text = value === null || value === undefined ? '' : String(value);
   if (text === '') {
-    return style ? `<c r="${ref}" s="${style}"/>` : '';
+    return styleAttr ? `<c r="${ref}"${styleAttr}/>` : '';
   }
-  return `<c r="${ref}" t="inlineStr"${style ? ` s="${style}"` : ''}><is><t xml:space="preserve">${escapeXml(text)}</t></is></c>`;
+  return `<c r="${ref}" t="inlineStr"${styleAttr}><is><t xml:space="preserve">${escapeXml(text)}</t></is></c>`;
 }
 
 const STYLES_XML = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="${NS_MAIN}">
-<fonts count="4">
-<font><sz val="11"/><name val="Calibri"/></font>
-<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>
-<font><b/><sz val="14"/><color rgb="FF1E293B"/><name val="Calibri"/></font>
-<font><b/><sz val="10"/><color rgb="FF475569"/><name val="Calibri"/></font>
+<fonts count="6">
+<font><sz val="10.5"/><color rgb="FF1E293B"/><name val="Segoe UI"/></font>
+<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Segoe UI"/></font>
+<font><b/><sz val="15"/><color rgb="FF252578"/><name val="Segoe UI"/></font>
+<font><b/><sz val="10"/><color rgb="FF475569"/><name val="Segoe UI"/></font>
+<font><sz val="10"/><color rgb="FF1E293B"/><name val="Segoe UI"/></font>
+<font><sz val="10.5"/><color rgb="FF1E293B"/><name val="Segoe UI"/></font>
 </fonts>
-<fills count="3">
+<fills count="4">
 <fill><patternFill patternType="none"/></fill>
 <fill><patternFill patternType="gray125"/></fill>
-<fill><patternFill patternType="solid"><fgColor rgb="FF252578"/><bgColor indexed="64"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FF252578"/></patternFill></fill>
+<fill><patternFill patternType="solid"><fgColor rgb="FFF8F9FA"/></patternFill></fill>
 </fills>
-<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+<borders count="3">
+<border><left/><right/><top/><bottom/><diagonal/></border>
+<border>
+<left style="thin"><color rgb="FFE2E8F0"/></left>
+<right style="thin"><color rgb="FFE2E8F0"/></right>
+<top style="thin"><color rgb="FFE2E8F0"/></top>
+<bottom style="thin"><color rgb="FFE2E8F0"/></bottom>
+</border>
+<border>
+<left style="thin"><color rgb="FF3A3A85"/></left>
+<right style="thin"><color rgb="FF3A3A85"/></right>
+<top style="thin"><color rgb="FF3A3A85"/></top>
+<bottom style="medium"><color rgb="FF1E1E60"/></bottom>
+</border>
+</borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="4">
-<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
-<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>
-<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1"/>
-<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/>
+<cellXfs count="6">
+<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="0" fontId="1" fillId="2" borderId="2" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>
+<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="0" fontId="4" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment vertical="center"/></xf>
+<xf numFmtId="0" fontId="5" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>
 </cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
@@ -109,12 +131,12 @@ export function buildXlsx({ sheetName = 'Report', title = '', meta = [], headers
 
   if (title) {
     rowNumber += 1;
-    sheetRows.push(`<row r="${rowNumber}">${cell(`A${rowNumber}`, title, STYLE.title)}</row>`);
+    sheetRows.push(`<row r="${rowNumber}" ht="28" customHeight="1">${cell(`A${rowNumber}`, title, STYLE.title)}</row>`);
   }
   meta.forEach(([label, value]) => {
     rowNumber += 1;
     sheetRows.push(
-      `<row r="${rowNumber}">${cell(`A${rowNumber}`, label, STYLE.metaLabel)}${cell(`B${rowNumber}`, value, STYLE.metaLabel)}</row>`
+      `<row r="${rowNumber}" ht="18" customHeight="1">${cell(`A${rowNumber}`, label, STYLE.metaLabel)}${cell(`B${rowNumber}`, value, STYLE.metaValue)}</row>`
     );
   });
   if (title || meta.length) rowNumber += 1; // one blank row before the table
@@ -122,23 +144,26 @@ export function buildXlsx({ sheetName = 'Report', title = '', meta = [], headers
   const headerRow = rowNumber + 1;
   rowNumber = headerRow;
   sheetRows.push(
-    `<row r="${headerRow}">${headers.map((h, i) => cell(`${columnLetter(i)}${headerRow}`, h, STYLE.header)).join('')}</row>`
+    `<row r="${headerRow}" ht="24" customHeight="1">${headers.map((h, i) => cell(`${columnLetter(i)}${headerRow}`, h, STYLE.header)).join('')}</row>`
   );
 
   rows.forEach((values) => {
     rowNumber += 1;
-    const cells = headers.map((_, i) => cell(`${columnLetter(i)}${rowNumber}`, values[i]));
-    sheetRows.push(`<row r="${rowNumber}">${cells.join('')}</row>`);
+    const cells = headers.map((_, i) => cell(`${columnLetter(i)}${rowNumber}`, values[i], STYLE.default));
+    sheetRows.push(`<row r="${rowNumber}" ht="20" customHeight="1">${cells.join('')}</row>`);
   });
 
   const lastCol = columnLetter(Math.max(0, headers.length - 1));
   const lastRow = Math.max(headerRow, rowNumber);
   const tableRange = `A${headerRow}:${lastCol}${lastRow}`;
 
-  // Column widths follow the longest value, within sensible limits.
+  // Column widths follow the longest value, with generous padding so numbers/dates never show #####
   const widths = headers.map((h, i) => {
     const longest = rows.reduce((max, r) => Math.max(max, String(r[i] ?? '').length), String(h).length);
-    return Math.min(60, Math.max(10, longest + 2));
+    let w = Math.min(65, Math.max(20, longest + 5));
+    if (i === 0 && meta.length > 0) w = Math.max(w, 24);
+    if (i === 1 && meta.length > 0) w = Math.max(w, 28);
+    return w;
   });
   const cols = widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('');
 

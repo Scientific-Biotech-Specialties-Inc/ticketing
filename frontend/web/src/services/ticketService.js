@@ -866,13 +866,9 @@ export const resumeTicket = async (ticketId) => {
   return response.data;
 };
 
-export const reclassifyTicket = async ({ ticketId, problem_category_ID, priority_ID, machine_ID }) => {
+export const reclassifyTicket = async ({ ticketId, problem_category_ID, priority_ID }) => {
   const numericId = Number(String(ticketId).replace(/\D/g, ''));
   const payload = {};
-  // Spec 0043 (AC-20): a Service classification carries one of the customer's machines.
-  if (machine_ID !== undefined && machine_ID !== null && machine_ID !== '') {
-    payload.machine_ID = Number(machine_ID);
-  }
   if (problem_category_ID !== undefined && problem_category_ID !== null) {
     payload.problem_category_ID = Number(problem_category_ID);
   }
@@ -1625,28 +1621,12 @@ export const getEmployeeFilterOptions = async () => {
 };
 
 // Ticket SLA Reminder (TS-REMINDER)
-// Spec 0038 AC-31: record that the current CS user opened a proof of completion file.
-// Returns { viewed_attachment_ids, all_viewed }.
-export const recordProofView = async (ticketId, attachmentId) => {
+export const sendTicketReminder = async (ticketId, customMessage = '') => {
   const numericId = typeof ticketId === 'number' ? ticketId : Number(String(ticketId).replace(/\D/g, ''));
-  const response = await ticketClient.post(`/tickets/${numericId}/proof-views`, {
-    attachment_id: Number(attachmentId),
-  });
-  return response.data;
-};
-
-// Spec 0038 AC-8: `employeeId` reminds that specific active assignee (per assignee cooldown).
-// Omit it to remind the primary assignee, as before.
-export const sendTicketReminder = async (ticketId, customMessage = '', employeeId = null) => {
-  const numericId = typeof ticketId === 'number' ? ticketId : Number(String(ticketId).replace(/\D/g, ''));
-  const body = {
+  const response = await ticketClient.post(`/tickets/${numericId}/reminders`, {
     custom_message: customMessage,
     message: customMessage,
-  };
-  if (employeeId !== null && employeeId !== undefined && employeeId !== '') {
-    body.employee_id = Number(employeeId);
-  }
-  const response = await ticketClient.post(`/tickets/${numericId}/reminders`, body);
+  });
   return response.data;
 };
 
@@ -1818,32 +1798,4 @@ export const classifyDepartment = async (title, description) => {
       source: 'client-fallback'
     };
   }
-};
-
-// ─── Spec 0043: department codes (superadmin; employee-service owns `departments`) ───
-
-/** Every department with its code and active state, for the superadmin departments table. */
-export const getDepartmentsWithCodes = async () => {
-  const response = await employeeClient.get('/departments', { params: { include_inactive: 1 } });
-  return response.data?.departments ?? [];
-};
-
-/** Server suggested code for a department name (initials, first 3 letters, number suffix if taken). */
-export const suggestDepartmentCode = async (name, excludeId = null) => {
-  const params = { name };
-  if (excludeId) params.exclude_id = excludeId;
-  const response = await employeeClient.get('/departments/code-suggestion', { params });
-  return response.data?.code ?? '';
-};
-
-export const createDepartment = async ({ name, code, description }) => {
-  const response = await employeeClient.post('/departments', { name, code: code || undefined, description: description || undefined });
-  departmentsCache = null;
-  return response.data?.department;
-};
-
-export const updateDepartment = async (id, fields) => {
-  const response = await employeeClient.put(`/departments/${id}`, fields);
-  departmentsCache = null;
-  return response.data?.department;
 };

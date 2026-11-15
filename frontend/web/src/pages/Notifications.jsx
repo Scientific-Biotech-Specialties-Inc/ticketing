@@ -24,6 +24,7 @@ import {
   markNotificationRead,
   getTicketDetails,
   getAssignableEmployees,
+  acceptTicket,
 } from '@/services/ticketService';
 import { useAuth } from '@/context/AuthContext';
 import useRealtimeRefresh from '@/hooks/useRealtimeRefresh';
@@ -31,10 +32,40 @@ import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import SkeletonLoader from '@/components/SkeletonLoader';
 import { formatDisplayDate } from '@/utils/dateUtils';
 import CustomerTicketDetailModal from '@/components/CustomerTicketDetailModal';
+import TicketDetailModal from '@/components/employee/TicketDetailModal';
 import { TicketSummary } from '@/components/CSModals';
 import { respondReassignment } from '@/services/ticketService';
+import { isReassignmentDenied } from '@/utils/reassignmentUtils';
 import SecurityIncidentModal from '@/components/security/SecurityIncidentModal';
 import SystemAlertModal from '@/components/security/SystemAlertModal';
+
+const checkUserIsCS = (u) => {
+  if (!u) return false;
+  const role = String(u.role || u.position || '').toLowerCase();
+  const dept = String(u.department || '').toLowerCase();
+  return (
+    role.includes('customer service') ||
+    role.includes('customer support') ||
+    role === 'cs' ||
+    role === 'cs_manager' ||
+    role === 'cs manager' ||
+    dept.includes('customer service') ||
+    dept.includes('customer support') ||
+    dept === 'cs'
+  );
+};
+
+const checkUserIsEmployee = (u) => {
+  if (!u) return false;
+  const role = String(u.role || u.position || '').toLowerCase();
+  const dept = String(u.department || '').toLowerCase();
+  const employeeRoles = ['employee', 'technician', 'engineer', 'specialist', 'service', 'lead specialist', 'staff'];
+  return (
+    employeeRoles.some((r) => role.includes(r)) ||
+    dept.includes('service') ||
+    dept.includes('engineering')
+  );
+};
 
 export const isNotificationRead = (n) => {
   if (!n) return false;
@@ -157,8 +188,11 @@ export default function Notifications() {
           if (parsed.type === 'ticket_assigned' || parsed.type === 'ticket_reassigned') {
             return '/employee/assigned';
           }
-          if (parsed.type === 'reassignment_approved' || parsed.type === 'reassignment_denied') {
-            return '/employee/assigned';
+          if (parsed.type === 'reassignment_approved') {
+            return '/employee/assigned?tab=incoming';
+          }
+          if (parsed.type === 'reassignment_denied' || parsed.type === 'reassignment_rejected') {
+            return '/employee/machine';
           }
           if (parsed.type === 'reassignment_request') {
             return '/cs/incoming';
@@ -180,6 +214,7 @@ export default function Notifications() {
   };
 
   const handleCloseActiveTicket = useCallback(async () => {
+    const closedTicket = activeTicket;
     if (activeNotificationId) {
       const nid = activeNotificationId;
       setActiveNotificationId(null);
@@ -194,7 +229,20 @@ export default function Notifications() {
     } else {
       setActiveTicket(null);
     }
-  }, [activeNotificationId, loadData]);
+
+    if (checkUserIsEmployee(user) && closedTicket) {
+      const isApproved = closedTicket.reassignmentStatus === 'Approved' ||
+        closedTicket.notificationData?.type === 'reassignment_approved';
+      const isRejected = isReassignmentDenied(closedTicket) ||
+        closedTicket.notificationData?.type === 'reassignment_denied' ||
+        closedTicket.notificationData?.type === 'reassignment_rejected';
+      if (isApproved) {
+        navigate('/employee/assigned?tab=incoming', { state: { tab: 'incoming' } });
+      } else if (isRejected) {
+        navigate('/employee/machine');
+      }
+    }
+  }, [activeNotificationId, activeTicket, user, navigate, loadData]);
 
   const handleNotificationClick = async (n) => {
     if (!isNotificationRead(n)) {
@@ -660,11 +708,83 @@ export default function Notifications() {
         </div>
       )}
 
-      {activeTicket && (() => { const role = (()=>{ try{ return JSON.parse(localStorage.getItem('user')||'{}')?.role||'';}catch{return ''}})(); const isCSReassign = activeTicket.reassignmentRequested && role==='cs'; return isCSReassign ? (
-        <TicketSummary ticket={activeTicket} employees={activeEmployees} onClose={handleCloseActiveTicket} onEdit={()=>{}} onStatusUpdate={async (upd)=>{ try{ if(upd.reassignmentStatus){ const nid=Number(String(activeTicket.ticket_ID||activeTicket.id).replace(/\D/g,'')); const act=upd.reassignmentStatus==='Approved'?'approve':'deny'; await respondReassignment({ticketId:nid, action:act}); } }catch(e){ console.warn(e);} }} />
-      ) : (
-        <CustomerTicketDetailModal ticket={activeTicket} onClose={handleCloseActiveTicket} onAssign={(t) => { const tid = t?.ticket_ID || activeTicket.ticket_ID || activeTicket.id; handleCloseActiveTicket(); let r = ''; try { r = String(JSON.parse(localStorage.getItem('user') || '{}')?.role || '').toLowerCase(); } catch {} navigate(r === 'employee' || r === 'service' ? '/employee/incoming' : '/cs/incoming', { state: { assignTicketId: tid } }); }} onDiscard={null} onReopen={null} onResolve={null} allowReopen={false} customerName={activeTicket.customer} />
-      );})()}
+      {activeTicket && (() => {
+        const isUserCS = checkUserIsCS(user);
+        if (isUserCS) {
+          return (
+            <TicketSummary
+              ticket={activeTicket}
+              employees={activeEmployees}
+              onClose={handleCloseActiveTicket}
+              onEdit={(t) => {
+                const tid = t?.ticket_ID || activeTicket.ticket_ID || activeTicket.id;
+                handleCloseActiveTicket();
+                navigate('/cs/incoming', { state: { assignTicketId: tid } });
+              }}
+              onStatusUpdate={async (upd) => {
+                try {
+                  if (upd.reassignmentStatus) {
+                    const nid = Number(String(activeTicket.ticket_ID || activeTicket.id).replace(/\D/g, ''));
+                    const act = upd.reassignmentStatus === 'Approved' ? 'approve' : 'deny';
+                    await respondReassignment({ ticketId: nid, action: act });
+                  }
+                } catch (e) { console.warn(e); }
+              }}
+            />
+          );
+        }
+
+        if (checkUserIsEmployee(user)) {
+          return (
+            <TicketDetailModal
+              ticket={activeTicket}
+              onClose={handleCloseActiveTicket}
+              onStatusChange={(newStatus) => {
+                setActiveTicket((prev) => (prev ? { ...prev, status: newStatus } : null));
+              }}
+              onAccept={async (id) => {
+                const numericId = activeTicket.ticket_ID || Number(String(id).replace(/\D/g, ''));
+                await acceptTicket({ ticketId: numericId });
+                setActiveTicket((prev) => (prev ? { ...prev, accepted: true, status: 'In Progress' } : null));
+                window.dispatchEvent(new Event('notifications:updated'));
+              }}
+              onRequestReassign={(t, reason) => {
+                setActiveTicket((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        reassignmentRequested: true,
+                        reassignmentStatus: 'Pending',
+                        reassignmentReason: reason,
+                        status: 'Pending Reassignment',
+                      }
+                    : null
+                );
+                window.dispatchEvent(new Event('notifications:updated'));
+              }}
+            />
+          );
+        }
+
+        return (
+          <CustomerTicketDetailModal
+            ticket={activeTicket}
+            onClose={handleCloseActiveTicket}
+            onAssign={(t) => {
+              const tid = t?.ticket_ID || activeTicket.ticket_ID || activeTicket.id;
+              handleCloseActiveTicket();
+              let r = '';
+              try { r = String(JSON.parse(localStorage.getItem('user') || '{}')?.role || '').toLowerCase(); } catch {}
+              navigate(r === 'employee' || r === 'service' ? '/employee/incoming' : '/cs/incoming', { state: { assignTicketId: tid } });
+            }}
+            onDiscard={null}
+            onReopen={null}
+            onResolve={null}
+            allowReopen={false}
+            customerName={activeTicket.customer}
+          />
+        );
+      })()}
 
       {activeSecurityIncident && (
         <SecurityIncidentModal

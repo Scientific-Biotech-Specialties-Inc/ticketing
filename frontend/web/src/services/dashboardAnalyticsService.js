@@ -25,41 +25,39 @@ export const METRIC_DEFINITIONS = {
   branchComparison: 'Comparative ranking of hospital branches by ticket volume, SLA compliance %, resolution speed, and CSAT rating.',
 };
 
-// Department configuration across branches
+// Department configuration across branches (Standardized to 3 canonical departments)
 export const BRANCH_DEPARTMENTS = [
-  'Service Engineering',
-  'Biomedical Support',
+  'IT',
   'Customer Service',
-  'Quality Assurance',
-  'IT Systems & Hardware',
+  'Service',
 ];
 
 // Seeded staff directory scoped by branch
 export const BRANCH_EMPLOYEES = {
   main: [
-    { id: 101, name: 'Engr. Mark Reyes', role: 'Senior Field Engineer', department: 'Service Engineering', branchId: 'main' },
+    { id: 101, name: 'Engr. Mark Reyes', role: 'Senior Field Engineer', department: 'Service', branchId: 'main' },
     { id: 102, name: 'Ava Santos', role: 'Support Specialist', department: 'Customer Service', branchId: 'main' },
-    { id: 103, name: 'Jose Cruz', role: 'Biomedical Tech II', department: 'Biomedical Support', branchId: 'main' },
-    { id: 104, name: 'Maria Dela Cruz', role: 'Systems QA Lead', department: 'Quality Assurance', branchId: 'main' },
-    { id: 105, name: 'Carlo Tan', role: 'Hardware Technician', department: 'IT Systems & Hardware', branchId: 'main' },
-    { id: 106, name: 'Anna Lim', role: 'Field Service Engineer', department: 'Service Engineering', branchId: 'main' },
+    { id: 103, name: 'Jose Cruz', role: 'Biomedical Tech II', department: 'Service', branchId: 'main' },
+    { id: 104, name: 'Maria Dela Cruz', role: 'Systems QA Lead', department: 'IT', branchId: 'main' },
+    { id: 105, name: 'Carlo Tan', role: 'Hardware Technician', department: 'IT', branchId: 'main' },
+    { id: 106, name: 'Anna Lim', role: 'Field Service Engineer', department: 'Service', branchId: 'main' },
   ],
   luzon: [
-    { id: 201, name: 'Roberto Gomez', role: 'Regional Field Lead', department: 'Service Engineering', branchId: 'luzon' },
+    { id: 201, name: 'Roberto Gomez', role: 'Regional Field Lead', department: 'Service', branchId: 'luzon' },
     { id: 202, name: 'Elena Bautista', role: 'Customer Care Rep', department: 'Customer Service', branchId: 'luzon' },
-    { id: 203, name: 'Paolo Mendoza', role: 'Biomedical Specialist', department: 'Biomedical Support', branchId: 'luzon' },
-    { id: 204, name: 'Grace Ramos', role: 'IT Support Analyst', department: 'IT Systems & Hardware', branchId: 'luzon' },
+    { id: 203, name: 'Paolo Mendoza', role: 'Biomedical Specialist', department: 'Service', branchId: 'luzon' },
+    { id: 204, name: 'Grace Ramos', role: 'IT Support Analyst', department: 'IT', branchId: 'luzon' },
   ],
   visayas: [
-    { id: 301, name: 'Francis Yap', role: 'Senior Biomedical Engineer', department: 'Biomedical Support', branchId: 'visayas' },
+    { id: 301, name: 'Francis Yap', role: 'Senior Biomedical Engineer', department: 'Service', branchId: 'visayas' },
     { id: 302, name: 'Kristine Tan', role: 'Support Agent', department: 'Customer Service', branchId: 'visayas' },
-    { id: 303, name: 'Dexter Sy', role: 'Field Service Tech', department: 'Service Engineering', branchId: 'visayas' },
-    { id: 304, name: 'Camille Ocampo', role: 'Quality Control Officer', department: 'Quality Assurance', branchId: 'visayas' },
+    { id: 303, name: 'Dexter Sy', role: 'Field Service Tech', department: 'Service', branchId: 'visayas' },
+    { id: 304, name: 'Camille Ocampo', role: 'Quality Control Officer', department: 'Service', branchId: 'visayas' },
   ],
   mindanao: [
-    { id: 401, name: 'Dante Navarro', role: 'Regional Maintenance Lead', department: 'Service Engineering', branchId: 'mindanao' },
+    { id: 401, name: 'Dante Navarro', role: 'Regional Maintenance Lead', department: 'Service', branchId: 'mindanao' },
     { id: 402, name: 'Sarah Joy Datu', role: 'CS Representative', department: 'Customer Service', branchId: 'mindanao' },
-    { id: 403, name: 'Kenneth Alcantara', role: 'Medical Equipment Tech', department: 'Biomedical Support', branchId: 'mindanao' },
+    { id: 403, name: 'Kenneth Alcantara', role: 'Medical Equipment Tech', department: 'Service', branchId: 'mindanao' },
   ],
 };
 

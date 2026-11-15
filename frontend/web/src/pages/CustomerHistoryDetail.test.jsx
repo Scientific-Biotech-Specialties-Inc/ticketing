@@ -147,7 +147,7 @@ describe('Customer Ticket History Detail View (/history/:ticketId)', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/history');
   });
 
-  it('navigates to /messages with selectedTicketId when Message Support is clicked', async () => {
+  it('navigates to /messages with selectedTicketId when View conversation is clicked', async () => {
     ticketServiceModule.getTicketDetails.mockResolvedValueOnce(mockTicket);
 
     render(<EmployeeHistoryDetail />);
@@ -156,12 +156,13 @@ describe('Customer Ticket History Detail View (/history/:ticketId)', () => {
       expect(screen.getByText('Hospital Bedside Monitor Calibration')).toBeInTheDocument();
     });
 
-    const msgBtn = screen.getByRole('button', { name: /Message Support/i });
+    const msgBtn = screen.getAllByRole('button', { name: /View conversation/i })[0];
     fireEvent.click(msgBtn);
 
     expect(mockNavigate).toHaveBeenCalledWith('/messages', {
       state: {
         selectedTicketId: 101,
+        autoSelectTicketId: 101,
         openDirectChat: true,
       },
     });

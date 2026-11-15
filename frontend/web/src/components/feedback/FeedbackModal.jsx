@@ -20,9 +20,7 @@ export default function FeedbackModal({ ticket, onClose, existingFeedback = null
   const modalRef = useRef(null);
 
   // Derive ticket category
-  // Spec 0043 (AC-12): questions follow the ticket's live problem category name. A missing or
-  // unclassified category loads the general `Others` set; `IT` is never a fallback.
-  const ticketCategory = ticket?.category && ticket.category !== 'Unclassified' ? ticket.category : 'Others';
+  const ticketCategory = ticket?.category || ticket?.department?.name || ticket?.department || 'IT';
 
   // Fetch enabled questions for category at form open time and freeze snapshot in state
   useEffect(() => {

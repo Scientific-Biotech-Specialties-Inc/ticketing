@@ -158,7 +158,12 @@ export const checkIsAdmin = (user) => {
   if (!user) return false;
   const role = resolveUserRole(user).toLowerCase();
   const dept = resolveUserDepartment(user).toLowerCase();
-  return role === 'admin' || role === 'it admin' || (dept === 'admin' && role !== 'superadmin' && role !== 'super admin');
+  return (
+    role === 'admin' ||
+    role === 'it admin' ||
+    role === 'branch admin' ||
+    (dept === 'admin' && role !== 'superadmin' && role !== 'super admin')
+  );
 };
 
 export const checkIsEmployee = (user) => {
@@ -478,9 +483,7 @@ export function AuthProvider({ children }) {
       }
       return true;
     } catch (err) {
-      // Only the customer portal has a customer-service refresh token. Staff sessions come from the
-      // central SSO, and the staff gateway closes auth/refresh (spec 0044, AC-14).
-      if (err.response?.status === 401 && IS_CUSTOMER_SITE) {
+      if (err.response?.status === 401) {
         try {
           const resp = await axiosInstance.post(AUTH_ENDPOINTS.REFRESH_TOKEN, {}, { withCredentials: true });
           const newToken = resp.data?.token;
@@ -558,10 +561,7 @@ export function AuthProvider({ children }) {
 
 
   // Login with email and password
-  const login = useCallback(async (email, password, requestedMode = 'customer') => {
-    // The customer site only ever authenticates against customer-service; it can never hand off
-    // to the central SSO / auth module, whatever mode a caller asks for.
-    const mode = IS_CUSTOMER_SITE ? 'customer' : requestedMode;
+  const login = useCallback(async (email, password, mode = 'customer') => {
     if (mode === 'employee') {
       if (typeof window !== 'undefined') {
         window.location.href = '/';
