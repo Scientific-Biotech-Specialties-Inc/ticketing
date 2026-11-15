@@ -257,6 +257,15 @@ class TicketService
         }
 
         $clientId = (int) $user->id;
+
+        // CRMS machine sync: a ticket on a registered machine belongs to that machine's SBSI branch
+        // unless the request names a branch itself.
+        if (empty($validated['branch_id']) && !empty($validated['machine_ID'])) {
+            $validated['branch_id'] = DB::table('machines')
+                ->where('machine_ID', (int) $validated['machine_ID'])
+                ->value('branch_id');
+        }
+
         $rawTitle = trim(strip_tags((string) $validated['title']));
         $cleanedTitle = preg_replace('/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i', '', $rawTitle);
         $finalTitle = !empty(trim($cleanedTitle)) ? trim($cleanedTitle) : $rawTitle;

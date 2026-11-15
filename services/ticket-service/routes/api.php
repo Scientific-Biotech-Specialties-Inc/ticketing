@@ -50,6 +50,12 @@ Route::post('/internal/tickets/{ticketId}/sla/recalculate', [\App\Http\Controlle
 Route::middleware(['internal.token', 'auth.subsystem'])
     ->get('/internal/attachment-access', [\App\Http\Controllers\InternalAttachmentAccessController::class, 'check']);
 
+// ─── CRMS Machine Sync (X-Internal-Secret; never on the customer edge) ───────
+Route::middleware(['internal.secret', 'throttle:120,1'])->prefix('/internal/crms')->group(function () {
+    Route::post('/machines', [\App\Http\Controllers\CrmsMachineSyncController::class, 'store']);
+    Route::get('/branches', [\App\Http\Controllers\CrmsMachineSyncController::class, 'branches']);
+});
+
 Route::middleware('auth.subsystem')->group(function () {
     // ─── Customer Ticket Drafts (spec 0034: verified customer token only) ────
     Route::post('/tickets/draft', [TicketDraftController::class, 'saveDraft']);

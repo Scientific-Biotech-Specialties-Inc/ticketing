@@ -21,8 +21,9 @@ class ProvisionController extends Controller
         $validator = Validator::make($request->all(), [
             'client_name'    => 'required|string|max:255',
             'email'          => 'required|email|max:255',
-            'address'        => 'required|string|max:500',
-            'contact_number' => 'required|string|max:50',
+            // Optional: the CRMS machine sync only knows a customer's name and email.
+            'address'        => 'nullable|string|max:500',
+            'contact_number' => 'nullable|string|max:50',
         ]);
 
         if ($validator->fails()) {
@@ -53,8 +54,8 @@ class ProvisionController extends Controller
             $client = Client::create([
                 'client_name'    => $validated['client_name'],
                 'email'          => $validated['email'],
-                'address'        => $validated['address'],
-                'contact_number' => $validated['contact_number'],
+                'address'        => $validated['address'] ?? '',
+                'contact_number' => $validated['contact_number'] ?? '',
                 'status'         => true,
             ]);
 

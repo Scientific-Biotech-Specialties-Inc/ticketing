@@ -68,5 +68,6 @@ class Kernel extends HttpKernel
         'auth.employee' => \App\Http\Middleware\VerifyEmployeeJwt::class,
         'auth.subsystem' => \App\Http\Middleware\AuthenticateSubsystem::class,
         'internal.token' => \App\Http\Middleware\VerifyInternalToken::class,
+        'internal.secret' => \App\Http\Middleware\VerifyInternalSecret::class,
     ];
 }

@@ -73,7 +73,7 @@ Base Gateway URL: `/api/ticketing/customer`
 | `PUT` | `/profile` | Update contact details and avatar | All authenticated |
 | `POST` | `/change-password` | Rotate credentials with RSA payload | All authenticated |
 | `GET` | `/employee-statuses` | Real-time presence of engineers | CS, Admin |
-| `POST` | `/customers/provision` | Automated customer registration | Admin, Internal |
+| `POST` | `/customers/provision` | Find or create a customer by email (`client_name`, `email`, optional `address`, `contact_number`). Requires `X-Internal-Secret` | Internal |
 
 ---
 
@@ -145,6 +145,62 @@ Base Gateway URL: `/api/ticketing/ticket`
 | `GET/POST/PUT` | `/superadmin/workflow-statuses`| Configure custom ticket lifecycle states |
 | `GET/POST/PUT` | `/superadmin/escalation-rules` | Configure automated escalation triggers |
 | `GET` | `/superadmin/audit-logs` | Immutable audit trail query with filters |
+
+### CRMS Machine Sync (Internal, `X-Internal-Secret`)
+
+The CRMS pushes customer machines into the ticketing system so customers can pick them when filing a ticket. These routes go through the staff gateway only. The customer portal returns 404 for any `/internal/` path.
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/internal/crms/machines` | Register or update one machine, or a batch of up to 100 |
+| `GET` | `/internal/crms/branches` | Active SBSI branches (the accepted `branch` values) |
+
+* **Auth**: `X-Internal-Secret: <INTERNAL_SERVICE_SECRET>`. A missing or wrong header returns 401. If the server has no secret configured, it returns 503.
+* **Rate limit**: 120 requests per minute.
+* **Record**:
+
+  | Field | Required | Notes |
+  | :--- | :--- | :--- |
+  | `machine_name` | yes | Equipment or machine name, max 255 |
+  | `brand` | no | Max 255 |
+  | `serial_number` | yes | Unique key. Sending a known serial again updates that machine |
+  | `customer_name` | yes | Used only when the customer is new |
+  | `customer_email` | yes | Identifies the customer account |
+  | `branch` | yes | SBSI branch name, code or slug, for example `SBSI Makati Branch`, `Makati`, `MKT` or `sbsi-makati-branch` |
+
+  ```json
+  {
+    "machine_name": "Hematology Analyzer",
+    "brand": "Sysmex",
+    "serial_number": "XN-1000-12345",
+    "customer_name": "St. Luke's Laboratory",
+    "customer_email": "lab@example.com",
+    "branch": "SBSI Makati Branch"
+  }
+  ```
+
+  For a batch, send `{ "machines": [ record, ... ] }`.
+* **Behavior**:
+  * The customer is found by email, or created through customer-service `customers/provision`. A new customer gets the welcome email with a temporary password.
+  * The machine is upserted by `serial_number`. The CRMS is the source of truth, so name, brand, owner and branch follow the latest push.
+  * New machines get the `Uncategorized` machine category.
+  * A customer ticket filed on the machine takes the machine's branch unless the ticket names a branch.
+* **Single record responses**:
+
+  | Status | Body `status` | Meaning |
+  | :--- | :--- | :--- |
+  | 201 | `created` | New machine registered |
+  | 200 | `updated` / `unchanged` | Known serial number |
+  | 422 | `failed` | Validation error or unknown branch (`errors` lists the fields) |
+  | 502 | `failed` | customer-service could not provision the customer. Retry later |
+
+  ```json
+  { "status": "created", "machine_ID": 42, "client_ID": 7, "customer_status": "created", "branch_id": "sbsi-makati-branch", "serial_number": "XN-1000-12345" }
+  ```
+* **Batch response**: always 200, with one result per record (same shape, plus `index` and `http_status` on failures):
+  ```json
+  { "summary": { "received": 3, "created": 2, "updated": 0, "unchanged": 0, "failed": 1 }, "results": [ { "index": 0, "status": "created", "...": "..." } ] }
+  ```
 
 ---
 
