@@ -143,8 +143,9 @@ class TicketDashboardController extends Controller
 
         // Branch dashboard is Admin and Super Admin only (same allow list as adminReports).
         $role = strtolower(trim((string) ($user->role ?? '')));
-        $allowedRoles = ['superadmin', 'super admin', 'admin', 'systemadministrator', 'itadmin', 'it admin'];
-        if (!in_array($role, $allowedRoles, true)) {
+        $roleClean = strtolower(str_replace([' ', '_', '-'], '', (string) ($user->role ?? '')));
+        $allowedRoles = ['superadmin', 'super admin', 'admin', 'systemadministrator', 'system administrator', 'itadmin', 'it admin', 'branchadmin', 'branch admin', 'branch_admin', 'branch-admin'];
+        if (!in_array($role, $allowedRoles, true) && !in_array($roleClean, ['superadmin', 'admin', 'systemadministrator', 'itadmin', 'branchadmin'], true)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Access denied: Admin role required to view the branch dashboard.',
@@ -173,8 +174,9 @@ class TicketDashboardController extends Controller
         }
 
         $role = strtolower(trim((string) ($user->role ?? '')));
-        $allowedRoles = ['superadmin', 'super admin', 'admin', 'systemadministrator', 'itadmin', 'it admin'];
-        if (!in_array($role, $allowedRoles, true)) {
+        $roleClean = strtolower(str_replace([' ', '_', '-'], '', (string) ($user->role ?? '')));
+        $allowedRoles = ['superadmin', 'super admin', 'admin', 'systemadministrator', 'system administrator', 'itadmin', 'it admin', 'branchadmin', 'branch admin', 'branch_admin', 'branch-admin'];
+        if (!in_array($role, $allowedRoles, true) && !in_array($roleClean, ['superadmin', 'admin', 'systemadministrator', 'itadmin', 'branchadmin'], true)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Access denied: Admin role required to view operational reports.',
@@ -217,7 +219,8 @@ class TicketDashboardController extends Controller
         }
 
         $role = strtolower(trim((string) ($user->role ?? '')));
-        if (!in_array($role, ['admin', 'superadmin', 'super admin'], true)) {
+        $roleClean = strtolower(str_replace([' ', '_', '-'], '', (string) ($user->role ?? '')));
+        if (!in_array($role, ['admin', 'superadmin', 'super admin', 'itadmin', 'it admin', 'branch admin', 'branchadmin', 'branch_admin', 'branch-admin'], true) && !in_array($roleClean, ['admin', 'superadmin', 'itadmin', 'branchadmin'], true)) {
             return response()->json(['message' => 'Access denied: Admin or SuperAdmin role required.'], 403);
         }
 

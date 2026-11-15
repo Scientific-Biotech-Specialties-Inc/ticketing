@@ -28,9 +28,10 @@ class AdminReportController extends Controller
         }
 
         $role = strtolower(trim((string) ($user->role ?? '')));
-        $allowedRoles = ['superadmin', 'super admin', 'admin', 'systemadministrator', 'itadmin'];
+        $roleClean = strtolower(str_replace([' ', '_', '-'], '', (string) ($user->role ?? '')));
+        $allowedRoles = ['superadmin', 'super admin', 'admin', 'systemadministrator', 'system administrator', 'itadmin', 'it admin', 'branchadmin', 'branch admin', 'branch_admin', 'branch-admin'];
 
-        if (!in_array($role, $allowedRoles, true)) {
+        if (!in_array($role, $allowedRoles, true) && !in_array($roleClean, ['superadmin', 'admin', 'systemadministrator', 'itadmin', 'branchadmin'], true)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Access denied: Admin role required to view operational reports.',

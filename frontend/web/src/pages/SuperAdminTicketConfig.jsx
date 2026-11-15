@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Search, Plus, MoreVertical, Clock, Save, Building2, ChevronRight, ChevronDown, ChevronUp, ArrowLeft, CheckCircle2, Edit3, Trash2, Power, AlertCircle, RotateCcw, GitBranch, ArrowRight, Lock, Info, ShieldCheck, ShieldAlert, FileUp, Check, HardDrive, Bell, Users, UserCheck, Mail, Layers, Star, MessageSquare, Hash, Eye, Calendar, Tag, EyeOff, Send, Key, RefreshCw, X, Sparkles, Sliders, Settings, Table, ArrowUpDown } from 'lucide-react';
+import { Search, Plus, MoreVertical, Clock, Save, Building2, ChevronRight, ChevronDown, ChevronUp, ArrowLeft, CheckCircle2, Edit3, Trash2, Power, AlertCircle, RotateCcw, GitBranch, ArrowRight, ArrowUp, ArrowDown, Lock, Info, ShieldCheck, ShieldAlert, FileUp, Check, HardDrive, Bell, Users, UserCheck, Mail, Layers, Star, MessageSquare, Hash, Eye, Calendar, Tag, EyeOff, Send, Key, RefreshCw, X, Sparkles, Sliders, Settings, Table, ArrowUpDown } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import NotificationModal from '@/components/NotificationModal';
 import { PageHeader } from '@/components/ui/page-header';
@@ -1195,19 +1195,52 @@ export default function SuperAdminTicketConfig() {
     ));
   }, [activeGroup, currentSubTab]);
 
+  const [notification, setNotification] = useState(null);
+  const closeNotif = useCallback(() => setNotification(null), []);
+  const showError = useCallback((title, message) => setNotification({ type: 'error', title, message }), []);
+  const showSuccess = useCallback((title, message) => {
+    const isErr = /error|fail|invalid|warning/i.test(String(title || ''));
+    setNotification({ type: isErr ? 'error' : 'success', title, message });
+  }, []);
+  const showConfirm = useCallback((title, message, onConfirm, opts = {}) => setNotification({ type: 'confirm', title, message, onConfirm, onCancel: closeNotif, ...opts }), [closeNotif]);
+
+  const hasUnsavedChangesRef = useRef(() => false);
+  const resetDirtyStatesRef = useRef(() => {});
+
+  const confirmNavigation = useCallback((proceedFn) => {
+    if (hasUnsavedChangesRef.current && hasUnsavedChangesRef.current()) {
+      showConfirm(
+        'Unsaved Changes',
+        'You have unsaved changes in this tab. If you navigate to another section now, your modifications will be discarded. Do you want to proceed?',
+        () => {
+          closeNotif();
+          if (resetDirtyStatesRef.current) resetDirtyStatesRef.current();
+          proceedFn();
+        },
+        { confirmText: 'Discard & Proceed', confirmClassName: 'bg-rose-600 hover:bg-rose-700 text-white' }
+      );
+      return;
+    }
+    proceedFn();
+  }, [showConfirm, closeNotif]);
+
   const handleSelectGroup = useCallback((groupId) => {
     const validGroup = normalizeGroupId(groupId) || GROUP_CLASSIFICATION;
     const groupDef = GROUPS_CONFIG.find((g) => g.id === validGroup) || GROUPS_CONFIG[0];
     const targetSubTab = normalizeSubTabId(validGroup, activeSubTabs[validGroup]) || groupDef.defaultSubTab;
-    setSelectedDeptId(null);
-    navigate(`/superadmin/config/${targetSubTab}`);
-  }, [activeSubTabs, normalizeGroupId, normalizeSubTabId, navigate]);
+    confirmNavigation(() => {
+      setSelectedDeptId(null);
+      navigate(`/superadmin/config/${targetSubTab}`);
+    });
+  }, [activeSubTabs, normalizeGroupId, normalizeSubTabId, navigate, confirmNavigation]);
 
   const handleSelectSubTab = useCallback((subTabId) => {
     const validSubTab = normalizeSubTabId(activeGroup, subTabId) || currentGroup.defaultSubTab;
-    setSelectedDeptId(null);
-    navigate(`/superadmin/config/${validSubTab}`);
-  }, [activeGroup, currentGroup.defaultSubTab, normalizeSubTabId, navigate]);
+    confirmNavigation(() => {
+      setSelectedDeptId(null);
+      navigate(`/superadmin/config/${validSubTab}`);
+    });
+  }, [activeGroup, currentGroup.defaultSubTab, normalizeSubTabId, navigate, confirmNavigation]);
 
   const setNotifSubtab = handleSelectSubTab;
   const [items, setItems] = useState({ ticketCategories: [], equipment: [], priorities: [], slaRules: [], departments: [], slas: [] });
@@ -1267,8 +1300,6 @@ export default function SuperAdminTicketConfig() {
     Medium: { response_time_limit: '120', resolution_time_limit: '1440' },
     Low: { response_time_limit: '240', resolution_time_limit: '4320' },
   });
-
-  const [notification, setNotification] = useState(null);
 
   // Workflow Rules state
   const [workflowStatuses, setWorkflowStatuses] = useState(defaultWorkflowStatuses);
@@ -1684,13 +1715,57 @@ export default function SuperAdminTicketConfig() {
   );
   useLockBodyScroll(isAnyModalOpen);
 
-  const closeNotif = () => setNotification(null);
-  const showError = (title, message) => setNotification({ type: 'error', title, message });
-  const showSuccess = (title, message) => {
-    const isErr = /error|fail|invalid|warning/i.test(String(title || ''));
-    setNotification({ type: isErr ? 'error' : 'success', title, message });
+  const hasUnsavedChanges = useCallback(() => {
+    if (isAnyModalOpen) return true;
+    if (businessHoursDirty) return true;
+    if (transitionDraftDirtyRef.current || hasTransitionChanges) return true;
+    if (numberFormatDraftDirty || numberFormatDraftDirtyRef.current) return true;
+    if (ticketLimitDraftDirty || ticketLimitDraftDirtyRef.current) return true;
+    if (defaultsDraftDirtyRef.current) return true;
+    const hasDirtyTemplates = (emailTemplates || []).some((t) => {
+      const draft = editingTemplates[t.event_key];
+      return draft && (draft.subject !== t.subject || draft.body !== t.body);
+    });
+    if (hasDirtyTemplates) return true;
+    return false;
+  }, [
+    isAnyModalOpen,
+    businessHoursDirty,
+    hasTransitionChanges,
+    numberFormatDraftDirty,
+    ticketLimitDraftDirty,
+    emailTemplates,
+    editingTemplates,
+  ]);
+
+  hasUnsavedChangesRef.current = hasUnsavedChanges;
+
+  resetDirtyStatesRef.current = () => {
+    transitionDraftDirtyRef.current = false;
+    defaultsDraftDirtyRef.current = false;
+    numberFormatDraftDirtyRef.current = false;
+    setNumberFormatDraftDirty(false);
+    ticketLimitDraftDirtyRef.current = false;
+    setTicketLimitDraftDirty(false);
+    setEditingItem(null);
+    setEditingWorkflow(null);
+    setEditingEscalation(null);
+    setEditingQuestion(null);
+    setEditingBranchOverride(null);
+    setEditingCategory(null);
+    setEditingSlaPolicy(null);
   };
-  const showConfirm = (title, message, onConfirm, opts = {}) => setNotification({ type: 'confirm', title, message, onConfirm, onCancel: closeNotif, ...opts });
+
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (hasUnsavedChanges()) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   const handleTestTemplate = async (template, draft) => {
     if (!isEmailConfigured) {
@@ -2304,6 +2379,48 @@ export default function SuperAdminTicketConfig() {
         showError('Error', errMsg);
       }
     }, { confirmText: 'Restore Defaults', confirmClassName: 'bg-[#252578] hover:bg-[#1e1e62]' });
+  };
+
+  const handleMoveWorkflow = async (status, direction) => {
+    const sorted = workflowStatuses.slice().sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+    const currentIndex = sorted.findIndex((s) => s.id === status.id);
+    if (currentIndex < 0) return;
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= sorted.length) return;
+
+    const currentItem = sorted[currentIndex];
+    const targetItem = sorted[targetIndex];
+
+    const currentOrder = Number(currentItem.order) || (currentIndex + 1);
+    const targetOrder = Number(targetItem.order) || (targetIndex + 1);
+
+    setWorkflowStatuses((prev) =>
+      prev.map((s) => {
+        if (s.id === currentItem.id) return { ...s, order: targetOrder };
+        if (s.id === targetItem.id) return { ...s, order: currentOrder };
+        return s;
+      })
+    );
+
+    try {
+      await updateWorkflowStatus(currentItem.id, {
+        name: currentItem.name,
+        order_position: targetOrder,
+        bg_color: currentItem.bgColor,
+        text_color: currentItem.textColor,
+        requires_previous_fulfilled: Boolean(currentItem.requiresPreviousFulfilled),
+      });
+      await updateWorkflowStatus(targetItem.id, {
+        name: targetItem.name,
+        order_position: currentOrder,
+        bg_color: targetItem.bgColor,
+        text_color: targetItem.textColor,
+        requires_previous_fulfilled: Boolean(targetItem.requiresPreviousFulfilled),
+      });
+      showSuccess('Order Updated', `Moved "${currentItem.name}" ${direction}.`);
+    } catch {
+      await loadConfig({ source: 'background' });
+    }
   };
 
   // Escalation CRUD
@@ -4915,280 +5032,420 @@ export default function SuperAdminTicketConfig() {
         subtitle="Configure ticket classification, lifecycle state machines, service level agreements, and system policies."
       />
 
-      {/* Level 1: 5 Group Pills (Centered & Fully Responsive) */}
-      <div className="flex gap-1.5 rounded-xl bg-slate-100 p-1.5 w-full sm:w-fit flex-wrap shadow-2xs">
-        {GROUPS_CONFIG.map((group) => {
-          const isActive = activeGroup === group.id;
-          return (
-            <button
-              key={group.id}
-              type="button"
-              onClick={() => handleSelectGroup(group.id)}
-              className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${isActive
-                  ? 'bg-white text-[#252578] shadow-xs'
-                  : 'text-gray-600 hover:text-gray-900'
+      {/* Level 1: Main Groups Underline Tab Bar (Patterned after Dashboard Navigation) */}
+      <div className="border-b border-slate-200 w-full">
+        <div className="flex items-center gap-2 sm:gap-8 overflow-x-auto [scrollbar-width:none] -mb-px">
+          {GROUPS_CONFIG.map((group) => {
+            const isActive = activeGroup === group.id;
+            return (
+              <button
+                key={group.id}
+                type="button"
+                onClick={() => handleSelectGroup(group.id)}
+                className={`px-3 py-2 sm:px-1 sm:pb-3 sm:pt-1 text-xs sm:text-sm transition-all relative cursor-pointer border-b-2 shrink-0 whitespace-nowrap ${
+                  isActive
+                    ? 'border-[#252578] text-[#252578] font-bold'
+                    : 'border-transparent text-slate-500 hover:text-slate-800 hover:border-slate-300 font-medium'
                 }`}
-            >
-              {group.label}
-            </button>
-          );
-        })}
+              >
+                {group.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Level 2 & 3: Centered Master-Detail Workspace (Facebook Settings style) */}
-      <div className="flex flex-col lg:flex-row gap-6 items-start w-full">
-        {/* Left: Facebook Settings Vertical Sub-Category List */}
-        <aside className="w-full lg:w-80 shrink-0 lg:sticky lg:top-24" aria-label={`${currentGroup.label} Subcategories`}>
-          <div className="rounded-2xl border border-gray-200/80 bg-white p-3 shadow-xs">
-            <div className="px-3 py-2.5 mb-2 border-b border-gray-100 flex items-center justify-between">
-              <div>
-                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                  Settings Menu
-                </span>
-                <h2 className="text-sm font-bold text-gray-800">
-                  {currentGroup.label}
-                </h2>
-              </div>
-              <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-[#252578] border border-blue-100">
-                {currentGroup.subTabs.length} items
-              </span>
-            </div>
-
-            <nav className="flex flex-col gap-1.5 max-h-64 sm:max-h-80 lg:max-h-[calc(100vh-170px)] overflow-y-auto [scrollbar-width:thin]" aria-label={`${currentGroup.label} Subcategories`}>
-              {currentGroup.subTabs.map((sub) => {
-                const isSubActive = currentSubTab === sub.id;
-                const meta = SUBTAB_METADATA[sub.id] || { icon: Settings, subtitle: '' };
-                const IconComponent = meta.icon || Settings;
-
-                return (
-                  <button
-                    key={sub.id}
-                    type="button"
-                    onClick={() => handleSelectSubTab(sub.id)}
-                    className={`group flex items-center gap-3 w-full p-2.5 rounded-xl text-left transition-all cursor-pointer ${
-                      isSubActive
-                        ? 'bg-[#252578]/5 border-l-4 border-[#252578] shadow-xs text-[#252578]'
-                        : 'text-gray-700 hover:bg-gray-50 hover:text-gray-900 border-l-4 border-transparent'
-                    }`}
-                  >
-                    <div
-                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors ${
-                        isSubActive
-                          ? 'bg-[#252578] text-white shadow-xs'
-                          : 'bg-gray-100 text-gray-500 group-hover:bg-gray-200 group-hover:text-gray-700'
-                      }`}
-                    >
-                      <IconComponent size={18} />
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      <div className={`text-sm font-semibold truncate ${isSubActive ? 'text-[#252578]' : 'text-gray-800'}`}>
-                        {sub.label}
-                      </div>
-                      {meta.subtitle && (
-                        <div className="text-[11px] text-gray-400 truncate mt-0.5">
-                          {meta.subtitle}
-                        </div>
-                      )}
-                    </div>
-
-                    <ChevronRight
-                      size={15}
-                      className={`shrink-0 transition-transform group-hover:translate-x-0.5 ${
-                        isSubActive ? 'text-[#252578]' : 'text-gray-300 group-hover:text-gray-400'
-                      }`}
-                    />
-                  </button>
-                );
-              })}
-            </nav>
+      {/* Level 2: Horizontal Subcategories Filter Bar (Maximizes space & fast navigation) */}
+      <div className="bg-white rounded-2xl border border-gray-200/80 p-2.5 shadow-xs w-full">
+        <div className="flex items-center justify-between gap-3 px-3 py-1.5 mb-2 border-b border-gray-100 flex-wrap">
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+              Settings Menu
+            </span>
+            <span className="text-gray-300">•</span>
+            <span className="text-xs font-bold text-gray-800">
+              {currentGroup.label}
+            </span>
           </div>
-        </aside>
+          <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-[11px] font-semibold text-[#252578] border border-blue-100">
+            {currentGroup.subTabs.length} items
+          </span>
+        </div>
 
-        {/* Right: Tab Content Area */}
-        <div
-          ref={tabContentRef}
-          key={`${activeGroup}-${currentSubTab}-${branchSubSection}`}
-          className="flex-1 min-w-0 w-full animate-fade-slide-in flex flex-col gap-6 scroll-mt-36"
+        <nav
+          className="flex items-center gap-2 overflow-x-auto [scrollbar-width:thin] p-1 pb-1.5"
+          aria-label={`${currentGroup.label} Subcategories`}
         >
+          {currentGroup.subTabs.map((sub) => {
+            const isSubActive = currentSubTab === sub.id;
+            const meta = SUBTAB_METADATA[sub.id] || { icon: Settings, subtitle: '' };
+            const IconComponent = meta.icon || Settings;
+
+            return (
+              <button
+                key={sub.id}
+                type="button"
+                onClick={() => handleSelectSubTab(sub.id)}
+                className={`group inline-flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-semibold transition-all cursor-pointer shrink-0 whitespace-nowrap border ${
+                  isSubActive
+                    ? 'bg-[#252578] text-white border-[#252578] shadow-xs ring-2 ring-[#252578]/20'
+                    : 'bg-white text-gray-700 border-gray-200/80 hover:bg-gray-50 hover:text-gray-900 hover:border-gray-300'
+                }`}
+              >
+                <div
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg transition-colors ${
+                    isSubActive
+                      ? 'bg-white/20 text-white'
+                      : 'bg-gray-100 text-gray-500 group-hover:bg-gray-200 group-hover:text-gray-700'
+                  }`}
+                >
+                  <IconComponent size={14} />
+                </div>
+                <span>{sub.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+
+      {/* Level 3: Full-Width Tab Content Area */}
+      <div
+        ref={tabContentRef}
+        key={`${activeGroup}-${currentSubTab}-${branchSubSection}`}
+        className="w-full animate-fade-slide-in flex flex-col gap-6 scroll-mt-36"
+      >
         {loading ? (
           <TicketConfigTabSkeleton currentSubTab={currentSubTab} />
         ) : tab === TAB_WORKFLOW ? (
           <div className="flex flex-col gap-6">
-          {/* Page Header */}
-          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-            <div className="min-w-0 flex-1">
-              <h2 className="text-lg sm:text-xl font-bold text-gray-900">Workflow Status Sequence</h2>
-              <p className="text-xs sm:text-sm text-gray-500 mt-0.5">Define progression stages and prerequisite guardrails tickets move through from submission to closure.</p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0 flex-wrap">
-              <button
-                type="button"
-                onClick={handleResetDefaultWorkflow}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 hover:text-[#252578] transition-all shrink-0 cursor-pointer shadow-xs"
-              >
-                <RotateCcw size={13} />
-                <span>Reset to Defaults</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleAddWorkflow}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-[#252578] px-3.5 py-2 text-xs font-semibold text-white transition-all hover:shadow-md shrink-0 cursor-pointer"
-              >
-                <Plus size={16} />
-                <span>Add Status</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Stepper / Sequence Diagram */}
-          <div className="rounded-2xl border border-gray-100 bg-white p-8 shadow-sm">
-            <div className="relative">
-              {/* Background connecting line */}
-              <div className="absolute top-7 left-[calc(7%+28px)] right-[calc(7%+28px)] h-0.5 bg-gray-200" />
-              <div className="relative flex justify-between">
-                {workflowStatuses.slice().sort((a, b) => a.order - b.order).map((status, idx) => (
-                  <div key={status.id} className="flex flex-col items-center" style={{ flex: '1 1 0%' }}>
-                    <div className="relative z-10 flex h-14 w-14 items-center justify-center rounded-full font-semibold text-lg shadow-sm"
-                      style={{ backgroundColor: status.bgColor, color: status.textColor }}>
-                      {idx + 1}
-                      {status.requiresPreviousFulfilled && (
-                        <div className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-amber-500 text-white shadow-xs" title="Requires prerequisite completion">
-                          <Lock size={10} />
-                        </div>
-                      )}
-                    </div>
-                    <span className="mt-2.5 text-sm font-semibold flex items-center gap-1 text-center" style={{ color: status.textColor }}>
-                      {status.name}
-                    </span>
-                    <span className="mt-1 text-[11px] text-gray-500 text-center leading-tight px-1 max-w-[130px]">{status.description}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Status Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {workflowStatuses.slice().sort((a, b) => a.order - b.order).map((status, idx) => (
-              <div key={status.id} className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm flex items-start gap-4 hover:shadow-md transition-all">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full font-semibold text-sm"
-                  style={{ backgroundColor: status.bgColor, color: status.textColor }}>
-                  {idx + 1}
+            {/* Page Header */}
+            <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 pb-4 border-b border-gray-100">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <h2 className="text-lg sm:text-xl font-bold text-gray-900">Workflow Status Sequence & Progression</h2>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700 border border-blue-200">
+                    {activeWorkflowStatuses.length} Stages
+                  </span>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h4 className="text-sm font-semibold text-gray-900">{status.name}</h4>
-                      {status.isSystem ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700 border border-blue-200">
-                          <ShieldCheck size={10} />
-                          System
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-purple-50 px-2 py-0.5 text-[10px] font-semibold text-purple-700 border border-purple-200">
-                          Custom
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => handleEditWorkflow(status)} className="rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600 transition-colors" title="Edit">
-                        <Edit3 size={14} />
-                      </button>
-                      {status.isSystem ? (
-                        <span className="rounded-full p-1.5 text-gray-300 cursor-not-allowed" title="System statuses cannot be deleted">
-                          <Lock size={14} />
-                        </span>
-                      ) : (
-                        <button onClick={() => handleDeleteWorkflow(status)} className="rounded-full p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 transition-colors" title="Delete">
-                          <Trash2 size={14} />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <p className="mt-1 text-xs text-gray-500">{status.description}</p>
-                  {status.requiresPreviousFulfilled && (
-                    <div className="mt-2.5 flex items-center gap-1.5 rounded-lg bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-800 border border-amber-200/60 w-fit">
-                      <Lock size={11} className="shrink-0 text-amber-600" />
-                      <span>
-                        {status.prerequisite ? `Requires "${status.prerequisite.name}" fulfilled` : 'Requires preceding status fulfilled'}
-                      </span>
-                    </div>
-                  )}
-
-                  {/* Connected Allowed Next Transitions Summary */}
-                  {(() => {
-                    const rule = transitionRules[status.name];
-                    const allowedList = rule?.allowed || [];
-                    return (
-                      <div className="mt-3 pt-3 border-t border-gray-100 flex flex-col gap-1.5">
-                        <div className="flex items-center justify-between text-[11px]">
-                          <span className="font-semibold text-gray-500">Allowed Transitions:</span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedTransitionStatus(status.name);
-                              handleSelectSubTab(TAB_TRANSITIONS);
-                            }}
-                            className="text-[#252578] font-semibold hover:underline inline-flex items-center gap-0.5 cursor-pointer text-[11px]"
-                          >
-                            <span>Matrix</span>
-                            <ArrowRight size={10} />
-                          </button>
-                        </div>
-                        {allowedList.length > 0 ? (
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            {allowedList.map((targetName) => {
-                              const targetObj = activeWorkflowStatuses.find((s) => s.name === targetName);
-                              return (
-                                <span
-                                  key={targetName}
-                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold border"
-                                  style={{
-                                    backgroundColor: targetObj?.bgColor || '#F3F4F6',
-                                    color: targetObj?.textColor || '#4B5563',
-                                    borderColor: 'rgba(0,0,0,0.08)',
-                                  }}
-                                >
-                                  {targetName}
-                                </span>
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <span className="text-[11px] text-gray-400 italic">No transitions permitted</span>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Transition Matrix Connection Callout */}
-          <div className="rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50/70 via-indigo-50/40 to-white p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-start sm:items-center gap-3.5">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#252578] text-white shadow-xs">
-                <Sliders size={20} />
-              </div>
-              <div>
-                <h4 className="text-sm font-bold text-gray-900">Synchronized with Transition Matrix</h4>
-                <p className="text-xs text-gray-600 mt-0.5">
-                  These {activeWorkflowStatuses.length} sequence stages directly power the Transition Matrix. Configure state changes, rollback paths, and prerequisite checks between each stage.
+                <p className="text-xs sm:text-sm text-gray-500 mt-1">
+                  Define the sequential lifecycle roadmap tickets progress through from intake to resolution.
                 </p>
               </div>
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleResetDefaultWorkflow}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50 hover:text-[#252578] transition-all shrink-0 cursor-pointer shadow-xs"
+                >
+                  <RotateCcw size={13} />
+                  <span>Reset to Defaults</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSelectSubTab(TAB_TRANSITIONS)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-[#252578]/20 bg-blue-50/50 px-3.5 py-2 text-xs font-semibold text-[#252578] hover:bg-blue-100/60 transition-all shrink-0 cursor-pointer"
+                >
+                  <Sliders size={13} />
+                  <span>Transition Matrix</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddWorkflow}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#252578] px-4 py-2 text-xs font-semibold text-white transition-all hover:bg-[#1a1a5e] shadow-xs shrink-0 cursor-pointer"
+                >
+                  <Plus size={15} />
+                  <span>Add Status Stage</span>
+                </button>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={() => handleSelectSubTab(TAB_TRANSITIONS)}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#252578] px-4 py-2.5 text-xs font-semibold text-white hover:bg-[#1e1e62] transition-all shrink-0 cursor-pointer shadow-xs"
-            >
-              <span>Open Transition Matrix</span>
-              <ArrowRight size={14} />
-            </button>
+
+            {/* Lifecycle Phase Map: 3 Functional Milestones */}
+            <div className="rounded-2xl border border-slate-200/90 bg-white p-5 shadow-xs">
+              <div className="flex items-center justify-between mb-3.5 pb-2.5 border-b border-slate-100">
+                <div className="flex items-center gap-2">
+                  <GitBranch size={16} className="text-[#252578]" />
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">Lifecycle Roadmap Overview</h3>
+                </div>
+                <span className="text-[11px] text-slate-500">Chronological lifecycle progression</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-3.5 flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-blue-800 block mb-1">
+                      Phase 1 • Intake & Triage
+                    </span>
+                    <p className="text-xs text-blue-900 font-semibold">New ticket arrival, validation & technician assignment</p>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-2.5">
+                    {activeWorkflowStatuses.filter((s, idx) => idx < 2).map((s) => (
+                      <span key={s.id} className="px-2 py-0.5 rounded text-[10px] font-bold" style={{ backgroundColor: s.bgColor, color: s.textColor }}>
+                        {s.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-amber-100 bg-amber-50/40 p-3.5 flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 block mb-1">
+                      Phase 2 • Active Work & Evaluation
+                    </span>
+                    <p className="text-xs text-amber-950 font-semibold">Diagnosis, technician repair, parts waiting & review</p>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-2.5">
+                    {activeWorkflowStatuses.filter((s, idx) => idx >= 2 && idx < activeWorkflowStatuses.length - 2).map((s) => (
+                      <span key={s.id} className="px-2 py-0.5 rounded text-[10px] font-bold" style={{ backgroundColor: s.bgColor, color: s.textColor }}>
+                        {s.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3.5 flex flex-col justify-between">
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 block mb-1">
+                      Phase 3 • Resolution & Closure
+                    </span>
+                    <p className="text-xs text-emerald-950 font-semibold">Work confirmed resolved and finalized with customer</p>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-2.5">
+                    {activeWorkflowStatuses.filter((s, idx) => idx >= activeWorkflowStatuses.length - 2).map((s) => (
+                      <span key={s.id} className="px-2 py-0.5 rounded text-[10px] font-bold" style={{ backgroundColor: s.bgColor, color: s.textColor }}>
+                        {s.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Informational Guidance Callout */}
+            <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4 flex items-start gap-3.5 shadow-2xs">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-blue-600/10 text-blue-600 shrink-0 mt-0.5">
+                <Info size={16} />
+              </div>
+              <div className="text-xs text-blue-950 leading-relaxed">
+                <span className="font-bold">Understanding Sequence vs Transition Matrix: </span>
+                This sequence defines the standard, step-by-step pipeline order (from Step 1 to Step {activeWorkflowStatuses.length}). To customize which specific roles can trigger transitions, jump between non-consecutive steps, or roll back tickets, visit the{' '}
+                <button
+                  type="button"
+                  onClick={() => handleSelectSubTab(TAB_TRANSITIONS)}
+                  className="font-bold text-[#252578] underline hover:text-blue-900 cursor-pointer"
+                >
+                  Transition Matrix tab
+                </button>.
+              </div>
+            </div>
+
+            {/* Sequential Status Flow List */}
+            <div className="flex flex-col gap-3">
+              {activeWorkflowStatuses.map((status, idx) => {
+                const isFirst = idx === 0;
+                const isLast = idx === activeWorkflowStatuses.length - 1;
+                const rule = transitionRules[status.name];
+                const allowedList = rule?.allowed || [];
+                const prereq = status.requiresPreviousFulfilled
+                  ? (status.prerequisite?.name || (idx > 0 ? activeWorkflowStatuses[idx - 1]?.name : 'Preceding stage'))
+                  : null;
+
+                return (
+                  <React.Fragment key={status.id}>
+                    <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs transition-all hover:shadow-sm hover:border-slate-300">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        {/* Left: Step Number + Status Badge + System Tag */}
+                        <div className="flex items-center gap-3.5 min-w-0">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-700 font-bold text-xs border border-slate-200">
+                            #{idx + 1}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span
+                                className="px-3 py-1 rounded-lg text-xs font-bold border shadow-2xs"
+                                style={{
+                                  backgroundColor: status.bgColor,
+                                  color: status.textColor,
+                                  borderColor: 'rgba(0,0,0,0.08)',
+                                }}
+                              >
+                                {status.name}
+                              </span>
+                              {status.isSystem ? (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 border border-slate-200">
+                                  <ShieldCheck size={11} className="text-slate-500" />
+                                  Core System Stage
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-purple-50 px-2 py-0.5 text-[10px] font-semibold text-purple-700 border border-purple-200">
+                                  Custom Stage
+                                </span>
+                              )}
+                              {isFirst && (
+                                <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 border border-emerald-200">
+                                  <CheckCircle2 size={11} />
+                                  Intake Entry Point
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                              {status.description || 'No description provided.'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Right: Stage Controls & Actions */}
+                        <div className="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                          {/* Reorder Buttons */}
+                          <div className="flex items-center border border-slate-200 rounded-lg overflow-hidden bg-slate-50 mr-1">
+                            <button
+                              type="button"
+                              onClick={() => handleMoveWorkflow(status, 'up')}
+                              disabled={isFirst}
+                              title="Move stage earlier in sequence"
+                              className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-200/70 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                            >
+                              <ArrowUp size={13} />
+                            </button>
+                            <div className="w-px h-4 bg-slate-200" />
+                            <button
+                              type="button"
+                              onClick={() => handleMoveWorkflow(status, 'down')}
+                              disabled={isLast}
+                              title="Move stage later in sequence"
+                              className="p-1.5 text-slate-500 hover:text-slate-800 hover:bg-slate-200/70 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                            >
+                              <ArrowDown size={13} />
+                            </button>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleEditWorkflow(status)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-[#252578] transition-colors cursor-pointer shadow-2xs"
+                            title="Edit stage name, appearance, or rules"
+                          >
+                            <Edit3 size={12} />
+                            <span>Edit</span>
+                          </button>
+
+                          {status.isSystem ? (
+                            <span
+                              className="p-1.5 rounded-lg text-slate-300 cursor-not-allowed"
+                              title="System stages cannot be deleted"
+                            >
+                              <Lock size={14} />
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteWorkflow(status)}
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50 transition-colors cursor-pointer"
+                              title="Delete custom stage"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Detail Footer: Prerequisites & Allowed Next Transitions */}
+                      <div className="mt-3.5 pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 text-xs">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                            Guardrail:
+                          </span>
+                          {prereq ? (
+                            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-amber-50 text-[11px] font-semibold text-amber-800 border border-amber-200/70">
+                              <Lock size={11} className="text-amber-600 shrink-0" />
+                              Prerequisite: Must fulfill "{prereq}" before entering
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-50 text-[11px] font-medium text-slate-500 border border-slate-200">
+                              No prerequisite requirements
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                            Advances To:
+                          </span>
+                          {allowedList.length > 0 ? (
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {allowedList.slice(0, 4).map((targetName) => {
+                                const targetObj = activeWorkflowStatuses.find((s) => s.name === targetName);
+                                return (
+                                  <span
+                                    key={targetName}
+                                    className="px-2 py-0.5 rounded text-[10px] font-bold border"
+                                    style={{
+                                      backgroundColor: targetObj?.bgColor || '#F1F5F9',
+                                      color: targetObj?.textColor || '#334155',
+                                      borderColor: 'rgba(0,0,0,0.06)',
+                                    }}
+                                  >
+                                    {targetName}
+                                  </span>
+                                );
+                              })}
+                              {allowedList.length > 4 && (
+                                <span className="text-[10px] font-semibold text-slate-500">
+                                  +{allowedList.length - 4} more
+                                </span>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedTransitionStatus(status.name);
+                                  handleSelectSubTab(TAB_TRANSITIONS);
+                                }}
+                                className="text-[#252578] font-bold hover:underline inline-flex items-center gap-0.5 text-[10px] ml-1 cursor-pointer"
+                              >
+                                <span>Configure</span>
+                                <ArrowRight size={10} />
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-[11px] text-slate-400 italic">No transitions configured</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {!isLast && (
+                      <div className="flex items-center justify-center my-0.5">
+                        <div className="flex items-center justify-center w-7 h-7 rounded-full bg-slate-100 text-slate-400 border border-slate-200/80 shadow-2xs">
+                          <ChevronDown size={14} />
+                        </div>
+                      </div>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+
+            {/* Bottom Transition Matrix Banner */}
+            <div className="rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50/70 via-indigo-50/40 to-white p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+              <div className="flex items-start sm:items-center gap-3.5">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#252578] text-white shadow-xs">
+                  <Sliders size={20} />
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-gray-900">Configure Transition Rules & Permission Guardrails</h4>
+                  <p className="text-xs text-gray-600 mt-0.5">
+                    Fine-tune role authorizations, prerequisite validations, and state jump rules in the Transition Matrix.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleSelectSubTab(TAB_TRANSITIONS)}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#252578] px-4 py-2.5 text-xs font-semibold text-white hover:bg-[#1e1e62] transition-all shrink-0 cursor-pointer shadow-xs"
+              >
+                <span>Open Transition Matrix</span>
+                <ArrowRight size={14} />
+              </button>
+            </div>
           </div>
-        </div>
       ) : tab === TAB_TRANSITIONS ? (
         <div className="flex flex-col gap-6">
           {/* Header */}
@@ -8981,8 +9238,8 @@ export default function SuperAdminTicketConfig() {
             </div>
 
             {/* 3. Default SLA Policy (Editable Dropdown) */}
-            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs flex flex-col justify-between">
-              <div>
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs flex flex-col justify-between min-w-0 max-w-full overflow-hidden">
+              <div className="min-w-0 max-w-full">
                 <div className="flex items-center justify-between pb-3 border-b border-gray-100">
                   <div className="flex items-center gap-2">
                     <h3 className="text-base font-bold text-gray-900">Default SLA Policy</h3>
@@ -9005,11 +9262,11 @@ export default function SuperAdminTicketConfig() {
                   </span>
                 </div>
 
-                <div className="mt-5 space-y-2">
+                <div className="mt-5 space-y-2 min-w-0 max-w-full">
                   <label htmlFor="default-sla-select" className="text-xs font-semibold text-gray-700 uppercase tracking-wider block">
                     Response & Resolution Policy
                   </label>
-                  <div className="relative">
+                  <div className="relative min-w-0 max-w-full">
                     <select
                       id="default-sla-select"
                       value={(() => {
@@ -9021,14 +9278,14 @@ export default function SuperAdminTicketConfig() {
                         return found?.sla_name || policy;
                       })()}
                       onChange={(e) => handleSlaPolicyChange(e.target.value)}
-                      className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-[#252578] cursor-pointer appearance-none pr-10 shadow-2xs"
+                      className="w-full truncate rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-800 outline-none focus:ring-2 focus:ring-[#252578] cursor-pointer appearance-none pr-10 shadow-2xs max-w-full"
                     >
                       <option value="dynamic">
-                        Dynamic (Department & Priority Rule) [Current Behavior]
+                        Dynamic (Department & Priority Rule)
                       </option>
                       {(items.slas || []).map((sla) => (
                         <option key={sla.sla_ID} value={sla.sla_name}>
-                          {sla.sla_name} (Fixed override: {sla.response_time_minutes ? `${sla.response_time_minutes}m` : 'N/A'} resp / {sla.resolution_time_minutes ? `${Math.round(sla.resolution_time_minutes / 60)}h` : 'N/A'} res)
+                          {sla.sla_name} ({sla.response_time_minutes ? `${sla.response_time_minutes}m` : 'N/A'} resp / {sla.resolution_time_minutes ? `${Math.round(sla.resolution_time_minutes / 60)}h` : 'N/A'} res)
                         </option>
                       ))}
                       {(() => {
@@ -9517,9 +9774,9 @@ export default function SuperAdminTicketConfig() {
           </div>
 
           {/* Configuration Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-            {/* Left Card: Threshold Settings */}
-            <div className="lg:col-span-2 rounded-2xl border border-gray-200 bg-white p-6 shadow-xs space-y-6">
+          <div className="w-full">
+            {/* Threshold Settings Card */}
+            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs space-y-6 w-full">
               <div className="pb-3 border-b border-gray-100 flex items-center justify-between">
                 <div>
                   <h3 className="text-base font-bold text-gray-900">Requester Ticket Limit</h3>
@@ -9592,53 +9849,6 @@ export default function SuperAdminTicketConfig() {
               <div className="pt-4 border-t border-gray-100 text-xs text-gray-500 flex items-center justify-between flex-wrap gap-2">
                 <span>Customer tickets and Employee internal tickets are counted separately.</span>
                 <span className="font-semibold text-indigo-700">Enforced atomically by ticket-service</span>
-              </div>
-            </div>
-
-            {/* Right Card: Status Inclusion Legend */}
-            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs space-y-4">
-              <div className="pb-3 border-b border-gray-100">
-                <h4 className="text-sm font-bold text-gray-900">What Counts as "Open"?</h4>
-                <p className="text-xs text-gray-500 mt-0.5">Statuses evaluated by the quota guard.</p>
-              </div>
-
-              <div className="space-y-3">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 block">
-                  Counts Toward Limit (8 Statuses)
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {OPEN_STATUS_SET.map((st) => (
-                    <span key={st} className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-800 border border-emerald-200/70">
-                      <Check size={11} className="text-emerald-600" />
-                      {st}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="pt-3 border-t border-gray-100 space-y-2">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 block">
-                  Conditionally Counts
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-1 text-[11px] font-medium text-amber-800 border border-amber-200">
-                    <Clock size={11} /> Closed — inside reopen window
-                  </span>
-                </div>
-              </div>
-
-              <div className="pt-3 border-t border-gray-100 space-y-2">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-400 block">
-                  Exempt / Terminal (Do Not Count)
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {['Resolved', 'Discarded / Cancelled', 'Closed — outside reopen window'].map((st) => (
-                    <span key={st} className="inline-flex items-center gap-1 rounded-md bg-gray-50 px-2 py-1 text-[11px] font-medium text-gray-500 border border-gray-200">
-                      <span className="h-1.5 w-1.5 rounded-full bg-gray-300" />
-                      {st}
-                    </span>
-                  ))}
-                </div>
               </div>
             </div>
           </div>
@@ -11089,7 +11299,6 @@ export default function SuperAdminTicketConfig() {
         </>
       )}
         </div>
-      </div>
 
       {openMenuId && menuPos && createPortal(
         (() => {

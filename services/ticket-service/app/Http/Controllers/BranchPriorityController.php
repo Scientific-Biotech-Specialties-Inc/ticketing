@@ -34,8 +34,8 @@ class BranchPriorityController extends Controller
         if (!$user) {
             return response()->json(['message' => 'Unauthorized'], 401);
         }
-        $role = strtolower(str_replace(' ', '', $user->role ?? ''));
-        if (!in_array($role, ['superadmin', 'admin', 'systemadministrator'])) {
+        $role = strtolower(str_replace([' ', '_', '-'], '', $user->role ?? ''));
+        if (!in_array($role, ['superadmin', 'admin', 'systemadministrator', 'branchadmin'], true)) {
             return response()->json(['message' => 'Forbidden'], 403);
         }
 

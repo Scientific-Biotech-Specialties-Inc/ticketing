@@ -398,6 +398,9 @@ function App() {
               >
                 <Route index element={<Navigate to="dashboard" replace />} />
                 <Route path="dashboard" element={<AdminDashboard />} />
+                <Route path="departments" element={<AdminDashboard initialTab="departments" />} />
+                <Route path="employees" element={<AdminDashboard initialTab="employees" />} />
+                <Route path="predictive" element={<AdminDashboard initialTab="predictive" />} />
                 <Route path="reports" element={<AdminReports />} />
                 <Route path="config" element={<SuperAdminTicketConfig />} />
                 <Route path="config/:subtab" element={<SuperAdminTicketConfig />} />

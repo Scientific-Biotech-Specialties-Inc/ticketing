@@ -128,7 +128,8 @@ Route::middleware('auth.subsystem')->group(function () {
             return response()->json(['message' => 'Unauthorized'], 401);
         }
         $role = strtolower(trim((string) ($user->role ?? '')));
-        if (!in_array($role, ['superadmin', 'super admin', 'admin'], true)) {
+        $roleClean = strtolower(str_replace([' ', '_', '-'], '', (string) ($user->role ?? '')));
+        if (!in_array($role, ['superadmin', 'super admin', 'admin', 'branch admin', 'branchadmin', 'branch_admin'], true) && !in_array($roleClean, ['superadmin', 'admin', 'branchadmin'], true)) {
             return response()->json(['message' => 'Access denied: Admin role required to review security incident records.'], 403);
         }
 

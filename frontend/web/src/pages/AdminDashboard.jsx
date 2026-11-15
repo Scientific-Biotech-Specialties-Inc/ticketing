@@ -1139,8 +1139,12 @@ export default function AdminDashboard({ initialTab = 'overview' }) {
       <PageHeader
         pattern="A"
         className="print:hidden"
-        title="Admin Dashboard"
-        subtitle="Operational analytics, SLA performance, and recurring issue insights"
+        title={isSuperAdmin ? "Admin Dashboard" : "Branch Admin Dashboard"}
+        subtitle={
+          isSuperAdmin
+            ? "Operational analytics, SLA performance, and recurring issue insights"
+            : `Operational analytics, SLA performance, and recurring issue insights • ${selectedBranch?.name || 'Local Facility'}`
+        }
         actions={
           <div className="flex flex-wrap items-center gap-2 print:hidden">
             {syncStatusMsg && (

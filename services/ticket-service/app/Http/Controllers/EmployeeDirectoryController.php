@@ -471,7 +471,7 @@ class EmployeeDirectoryController extends Controller
         $empRoleNorm = strtolower(trim((string) ($employee->role ?? '')));
         $empEmailNorm = strtolower(trim((string) ($employee->email ?? '')));
         $isAdminOrSuperAdmin = in_array($empEmailNorm, ['admin@example.com', 'superadmin@example.com'], true)
-            || in_array($empRoleNorm, ['superadmin', 'super admin', 'admin', 'it admin'], true);
+            || in_array($empRoleNorm, ['superadmin', 'super admin', 'admin', 'it admin', 'branch admin', 'branchadmin', 'branch_admin'], true);
 
         $hasBranch = \Illuminate\Support\Facades\Schema::hasColumn('employees', 'branch');
         $hasBranchId = \Illuminate\Support\Facades\Schema::hasColumn('employees', 'branch_id');

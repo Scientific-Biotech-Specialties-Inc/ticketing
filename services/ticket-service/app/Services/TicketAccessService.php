@@ -88,7 +88,7 @@ class TicketAccessService
         $role = strtolower((string) ($user->role ?? ''));
         $isCS = str_contains($dept, 'customer service') || str_contains($dept, 'support') || $dept === 'cs' || str_contains($role, 'cs');
         $cleanRole = str_replace([' ', '_', '-'], '', $role);
-        $isAdmin = in_array($cleanRole, ['superadmin', 'admin', 'itadmin'], true);
+        $isAdmin = in_array($cleanRole, ['superadmin', 'admin', 'itadmin', 'branchadmin'], true);
 
         return $isCS || $isAdmin;
     }

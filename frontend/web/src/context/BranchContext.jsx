@@ -53,8 +53,12 @@ export function BranchProvider({ children }) {
     return (
       role === 'superadmin' ||
       role === 'admin' ||
+      role === 'branch admin' ||
+      role === 'branchadmin' ||
+      role === 'branch_admin' ||
       email === 'superadmin@example.com' ||
-      email === 'admin@example.com'
+      email === 'admin@example.com' ||
+      email === 'branchadmin@example.com'
     );
   }, [authUser]);
 

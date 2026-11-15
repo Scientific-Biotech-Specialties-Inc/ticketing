@@ -219,7 +219,15 @@ class VerifyEmployeeJwt
             $mappedRole = 'customer service';
         } elseif ($normRole === 'superadmin' || $normRole === 'super admin' || $normDept === 'superadmin' || $normDept === 'super admin') {
             $mappedRole = 'superadmin';
-        } elseif ($normRole === 'it admin' || $normRole === 'admin' || ($normDept === 'admin' && $normRole !== 'superadmin')) {
+        } elseif (
+            $normRole === 'it admin' ||
+            $normRole === 'admin' ||
+            $normRole === 'branch admin' ||
+            $normRole === 'branchadmin' ||
+            $normRole === 'branch_admin' ||
+            $normRole === 'branch-admin' ||
+            ($normDept === 'admin' && $normRole !== 'superadmin' && $normRole !== 'super admin')
+        ) {
             $mappedRole = 'admin';
         } elseif (str_contains($normDept, 'service') || str_contains($normDept, 'engineer') ||
                   str_contains($normRole, 'service') || str_contains($normRole, 'engineer') || $normRole === 'employee') {
@@ -235,7 +243,7 @@ class VerifyEmployeeJwt
         }
 
         $isAdminOrSuperAdmin = in_array(strtolower($email), ['admin@example.com', 'superadmin@example.com'], true)
-            || in_array($normRole, ['superadmin', 'super admin', 'admin', 'it admin'], true)
+            || in_array($normRole, ['superadmin', 'super admin', 'admin', 'it admin', 'branch admin', 'branchadmin', 'branch_admin', 'branch-admin'], true)
             || in_array($normDept, ['superadmin', 'super admin', 'admin'], true);
 
         if (!$isAdminOrSuperAdmin && empty($payloadBranch) && empty($payloadBranchId)) {
@@ -270,32 +278,16 @@ class VerifyEmployeeJwt
             ? \App\Models\Employee::where('email', $email)->first()
             : null;
 
-        if (empty($payloadBranch) && empty($payloadBranchId)) {
+        if (!$isAdminOrSuperAdmin && empty($payloadBranch) && empty($payloadBranchId)) {
             if ($existingEmployee && (!empty($existingEmployee->branch) || !empty($existingEmployee->branch_id))) {
                 $payloadBranch = $existingEmployee->branch ?: 'Main Branch';
                 $payloadBranchId = $existingEmployee->branch_id ?: 1;
-            } else {
-                $defaultBranchName = 'Main Branch';
-                $defaultBranchId = 1;
-                if (class_exists('App\Models\Branch')) {
-                    try {
-                        $activeBranch = \App\Models\Branch::where('is_active', true)->orderBy('id')->first();
-                        if ($activeBranch) {
-                            $defaultBranchName = $activeBranch->name ?: 'Main Branch';
-                            $defaultBranchId = (int) $activeBranch->id;
-                        }
-                    } catch (\Throwable $e) {
-                        // ignore and use fallback
-                    }
-                }
-                $payloadBranch = $defaultBranchName;
-                $payloadBranchId = $defaultBranchId;
-                Log::info('VerifyEmployeeJwt: Defaulted branch assignment for operational account', [
-                    'email' => $email,
-                    'role' => $mappedRole,
-                    'branch' => $payloadBranch,
-                    'branch_id' => $payloadBranchId,
-                ]);
+            } elseif (!$existingEmployee) {
+                Log::warning('VerifyEmployeeJwt: Branch required for new operational account', ['email' => $email, 'role' => $mappedRole]);
+                return response()->json([
+                    'message' => 'Unprocessable Entity: Branch assignment is required for new operational accounts.',
+                    'error_code' => 'BRANCH_REQUIRED_FOR_NEW_ACCOUNT'
+                ], 422);
             }
         }
 

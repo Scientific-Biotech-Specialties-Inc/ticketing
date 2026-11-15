@@ -364,7 +364,7 @@ export default function Header({ sidebarHovered }) {
       )}
       <header className={`fixed ${systemStatus === 'Under Maintenance' ? 'top-6' : 'top-0'} left-0 w-full bg-white/90 backdrop-blur-md border-b border-slate-200 z-30 px-6 py-3.5 flex items-center justify-between shadow-sm transition-all font-sans`}>
         {/* Left Section */}
-        <div className="flex items-center sm:ml-20 ml-12">
+        <div className={`flex items-center transition-all duration-200 ${sidebarHovered ? 'sm:ml-64 ml-12' : 'sm:ml-20 ml-12'}`}>
           <button
             type="button"
             className="p-1.5 rounded-lg text-dark-slate hover:bg-slate-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"

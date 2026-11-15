@@ -104,12 +104,17 @@ export default function BranchSelector({
     if (!isSuperAdminUser) {
       return (
         <div
-          className={`inline-flex items-center gap-1.5 px-1 text-xs text-slate-600 cursor-default ${className}`}
+          className={`inline-flex items-center gap-2 rounded-xl border border-blue-200/80 bg-blue-50/70 px-3 py-1.5 text-xs text-[#252578] font-semibold shadow-2xs ${className}`}
           title={`Assigned Facility: ${branchDisplayName}${branchRegion ? ` (${branchRegion})` : ''}`}
         >
-          <Building2 size={14} className="text-slate-500 shrink-0" />
-          {showBranchLabel && <span className="text-slate-400 font-normal">Branch:</span>}
-          <span className="font-semibold text-slate-800">{branchDisplayName}</span>
+          <Building2 size={14} className="text-[#2E85D8] shrink-0" />
+          <span className="text-slate-500 font-medium text-[11px]">Facility:</span>
+          <span className="font-bold text-[#252578]">{branchDisplayName}</span>
+          {(selectedBranch?.code || activeBranch.code) && (
+            <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-bold text-[#2E85D8] border border-blue-200/60 shadow-2xs">
+              {selectedBranch?.code || activeBranch.code}
+            </span>
+          )}
         </div>
       );
     }
@@ -141,7 +146,7 @@ export default function BranchSelector({
 
         {/* Dropdown Menu */}
         {isOpen && (
-          <div className="absolute right-0 mt-1 z-50 w-72 sm:w-80 rounded-lg border border-slate-200 bg-white p-2 shadow-md animate-fade-slide-in">
+          <div className="absolute left-0 mt-1 z-50 w-72 sm:w-80 rounded-lg border border-slate-200 bg-white p-2 shadow-md animate-fade-slide-in">
             <div className="px-3 py-2 border-b border-slate-100 mb-1">
               <div className="flex items-center justify-between">
                 <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
@@ -403,7 +408,7 @@ export default function BranchSelector({
 
       {/* Dropdown Menu */}
       {isOpen && (
-        <div className="absolute left-0 sm:right-0 sm:left-auto mt-1 z-50 w-72 sm:w-80 rounded-lg border border-slate-200 bg-white p-2 shadow-md animate-fade-slide-in">
+        <div className="absolute left-0 mt-1 z-50 w-72 sm:w-80 rounded-lg border border-slate-200 bg-white p-2 shadow-md animate-fade-slide-in">
           <div className="px-3 py-2 border-b border-slate-100 mb-1">
             <div className="flex items-center justify-between">
               <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">

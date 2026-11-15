@@ -43,15 +43,16 @@ class AdminReportsTest extends TestCase
             'rachel.regular@example.com',
             'inactive.tech@example.com',
             'cs.agent@example.com',
+            'brian.branchadmin@example.com',
         ];
         DB::table('reassignment_requests')->whereIn('employee_id', function ($q) use ($testEmails) {
             $q->select('emp_id')->from('employees')->whereIn('email', $testEmails);
         })->delete();
-        DB::table('tickets')->whereIn('branch_id', [901, 902])->delete();
-        DB::table('branch_ticket_forecasts')->whereIn('branch_id', [901, 902])->delete();
-        DB::table('branch_recurring_issue_trends')->whereIn('branch_id', [901, 902])->delete();
-        DB::table('forecast_job_runs')->whereIn('branch_id', [901, 902])->delete();
-        DB::table('daily_employee_performance')->whereIn('branch_id', [901, 902])->delete();
+        DB::table('tickets')->whereIn('branch_id', ['901', '902'])->delete();
+        DB::table('branch_ticket_forecasts')->whereIn('branch_id', ['901', '902'])->delete();
+        DB::table('branch_recurring_issue_trends')->whereIn('branch_id', ['901', '902'])->delete();
+        DB::table('forecast_job_runs')->whereIn('branch_id', ['901', '902'])->delete();
+        DB::table('daily_employee_performance')->whereIn('branch_id', ['901', '902'])->delete();
         DB::table('employees')->whereIn('email', $testEmails)->delete();
 
         // Setup test branch
@@ -938,6 +939,42 @@ class AdminReportsTest extends TestCase
 
         $this->actingAs($this->admin, 'api')
             ->getJson('/api/admin-reports/employees?preset=Last 7 Days&sort_by=not_a_column&force_refresh=true')
+            ->assertOk();
+    }
+
+    public function test_branch_admin_with_explicit_branch_admin_role_can_access_operational_reports_and_dashboard(): void
+    {
+        $branchAdmin = Employee::create([
+            'emp_id' => 88099,
+            'first_name' => 'Brian',
+            'last_name' => 'BranchAdmin',
+            'email' => 'brian.branchadmin@example.com',
+            'role' => 'Branch Admin',
+            'department' => 'Operations',
+            'branch_id' => 901,
+            'branch' => 'test-branch-901',
+            'is_active' => 1,
+            'password_hash' => bcrypt('password'),
+        ]);
+
+        $this->actingAs($branchAdmin, 'api')
+            ->getJson('/api/admin/dashboard?preset=Last 7 Days')
+            ->assertOk();
+
+        $this->actingAs($branchAdmin, 'api')
+            ->getJson('/api/admin-reports/predictive-insights')
+            ->assertOk();
+
+        $this->actingAs($branchAdmin, 'api')
+            ->getJson('/api/admin/reports?report_type=ticket_volume&preset=Last+30+Days')
+            ->assertOk();
+
+        $this->actingAs($branchAdmin, 'api')
+            ->getJson('/api/admin-reports/departments?preset=Last+7+Days')
+            ->assertOk();
+
+        $this->actingAs($branchAdmin, 'api')
+            ->getJson('/api/admin-reports/employees?preset=Last+7+Days')
             ->assertOk();
     }
 }

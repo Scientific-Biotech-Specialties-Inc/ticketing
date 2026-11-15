@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useContext } from 'react';
 import {
   Building2,
   Users,
@@ -25,6 +25,7 @@ import { adaptDepartmentPerformance, METRIC_DEFINITIONS } from '@/services/dashb
 import { getAdminDepartmentPerformance } from '@/services/ticketService';
 import { cn } from '@/lib/utils';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
+import BranchContext from '@/context/BranchContext';
 
 export default function DepartmentPerformanceView({
   branchName = 'your branch',
@@ -34,6 +35,8 @@ export default function DepartmentPerformanceView({
   onSelectEmployee = null,
 }) {
   const navigate = useNavigate();
+  const branchCtx = useContext(BranchContext);
+  const isSuperAdmin = Boolean(branchCtx?.isSuperAdmin || (typeof window !== 'undefined' && window.location?.pathname?.includes('/superadmin')));
   const [searchQuery, setSearchQuery] = useState('');
   const [sortField, setSortField] = useState('totalTicketsHandled');
   const [sortDirection, setSortDirection] = useState('desc');
@@ -119,8 +122,8 @@ export default function DepartmentPerformanceView({
             d.imbalanceLevel === 'High Imbalance'
               ? 'rgba(244, 63, 94, 0.8)'
               : d.imbalanceLevel === 'Moderate'
-              ? 'rgba(245, 158, 11, 0.8)'
-              : 'rgba(37, 37, 120, 0.8)'
+                ? 'rgba(245, 158, 11, 0.8)'
+                : 'rgba(37, 37, 120, 0.8)'
           ),
           borderRadius: 6,
           barThickness: 22,
@@ -369,8 +372,8 @@ export default function DepartmentPerformanceView({
                               dept.slaCompliance >= 92
                                 ? 'text-emerald-600'
                                 : dept.slaCompliance >= 85
-                                ? 'text-amber-600'
-                                : 'text-rose-600'
+                                  ? 'text-amber-600'
+                                  : 'text-rose-600'
                             )}
                           >
                             {dept.slaCompliance != null ? `${dept.slaCompliance}%` : '—'}
@@ -397,8 +400,8 @@ export default function DepartmentPerformanceView({
                               dept.imbalanceLevel === 'High Imbalance'
                                 ? 'medium-destructive'
                                 : dept.imbalanceLevel === 'Moderate'
-                                ? 'medium-warning'
-                                : 'medium-success'
+                                  ? 'medium-warning'
+                                  : 'medium-success'
                             }
                             size="sm"
                           >
@@ -532,9 +535,9 @@ export default function DepartmentPerformanceView({
                             setSelectedDeptDetail(null);
                             if (typeof onSelectEmployee === 'function') {
                               onSelectEmployee(emp);
-                            } else {
-                              navigate('/admin/dashboard?tab=employees', { state: { tab: 'employees', selectedEmployee: emp } });
                             }
+                            const basePath = isSuperAdmin ? '/superadmin' : '/admin';
+                            navigate(`${basePath}/dashboard?tab=employees`, { state: { tab: 'employees', selectedEmployee: emp } });
                           }}
                           className="h-7 px-2.5 text-xs text-[#252578] hover:text-[#1d1d60] hover:bg-blue-50 font-semibold rounded-lg transition-colors cursor-pointer shrink-0"
                         >

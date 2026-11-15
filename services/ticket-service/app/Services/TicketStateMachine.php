@@ -429,8 +429,8 @@ class TicketStateMachine
         } elseif ($actor && (isset($actor->emp_id) || isset($actor->id))) {
             $actorId = (int) ($actor->emp_id ?? $actor->id);
             $roleClean = strtolower(str_replace([' ', '_', '-'], '', (string) ($actor->role ?? '')));
-            if (in_array($roleClean, ['superadmin', 'admin', 'cs', 'customerservice'], true)) {
-                $actorType = $roleClean;
+            if (in_array($roleClean, ['superadmin', 'admin', 'cs', 'customerservice', 'branchadmin'], true)) {
+                $actorType = $roleClean === 'branchadmin' ? 'admin' : $roleClean;
             } else {
                 $actorType = 'employee';
             }

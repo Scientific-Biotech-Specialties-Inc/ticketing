@@ -2559,7 +2559,7 @@ class TicketService
 
         $actorId = $user->emp_id ?? $user->id ?? 1;
         $actorType = 'employee';
-        if (isset($user->role) && in_array(strtolower(str_replace(' ', '', (string)$user->role)), ['superadmin', 'admin'], true)) {
+        if (isset($user->role) && in_array(strtolower(str_replace([' ', '_', '-'], '', (string)$user->role)), ['superadmin', 'admin', 'branchadmin'], true)) {
             $actorType = strtolower(str_replace(' ', '', (string)$user->role));
         }
 
@@ -2709,7 +2709,7 @@ class TicketService
             }
         } else {
             $role = strtolower(trim((string) ($user->role ?? '')));
-            $isCSOrAdmin = in_array($role, ['customer service', 'customer support', 'cs', 'head of cs', 'head of customer service', 'admin', 'superadmin', 'super admin'], true);
+            $isCSOrAdmin = in_array($role, ['customer service', 'customer support', 'cs', 'head of cs', 'head of customer service', 'admin', 'superadmin', 'super admin', 'branch admin', 'branchadmin', 'branch_admin'], true);
 
             $empId = $user->emp_id ?? $user->id ?? null;
             $isAssigned = ((int) $ticket->assigned_to === (int) $empId);

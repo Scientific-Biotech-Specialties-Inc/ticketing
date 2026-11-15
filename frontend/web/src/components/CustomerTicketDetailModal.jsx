@@ -77,6 +77,7 @@ export default function CustomerTicketDetailModal({
   const { user } = useAuth();
 
   const isCSSide = useMemo(() => {
+    if (import.meta.env.VITE_APP_MODE === 'employee') return true;
     if (checkUserIsCS(user)) return true;
     const role = String(user?.role || '').toLowerCase();
     const dept = String(user?.department || '').toLowerCase();
@@ -94,6 +95,8 @@ export default function CustomerTicketDetailModal({
       'it_manager',
       'it manager',
       'admin',
+      'branch admin',
+      'branchadmin',
       'super_admin',
       'superadmin',
       'super admin',
@@ -111,13 +114,15 @@ export default function CustomerTicketDetailModal({
       return true;
     }
     if (typeof window !== 'undefined') {
-      const p = window.location.pathname;
+      const p = window.location.pathname.toLowerCase();
       return (
-        p.startsWith('/cs') ||
-        p.startsWith('/it-manager') ||
-        p.startsWith('/service-manager') ||
-        p.startsWith('/employee') ||
-        p.startsWith('/superadmin')
+        p.includes('/cs') ||
+        p.includes('/it-manager') ||
+        p.includes('/service-manager') ||
+        p.includes('/employee') ||
+        p.includes('/superadmin') ||
+        p.includes('/admin') ||
+        p.includes('/ticketing')
       );
     }
     return false;
