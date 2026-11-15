@@ -35,4 +35,10 @@ return [
         'url' => env('ATTACHMENT_SERVICE_URL', 'http://attachment-service:8000'),
     ],
 
+
+    // Spec 0044: refuse customer tokens on staff gateway traffic (X-Ticketing-Edge: staff).
+    'edge' => [
+        'enforce' => (bool) env('TICKETING_EDGE_ENFORCE', false),
+    ],
+
 ];

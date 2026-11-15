@@ -478,7 +478,9 @@ export function AuthProvider({ children }) {
       }
       return true;
     } catch (err) {
-      if (err.response?.status === 401) {
+      // Only the customer portal has a customer-service refresh token. Staff sessions come from the
+      // central SSO, and the staff gateway closes auth/refresh (spec 0044, AC-14).
+      if (err.response?.status === 401 && IS_CUSTOMER_SITE) {
         try {
           const resp = await axiosInstance.post(AUTH_ENDPOINTS.REFRESH_TOKEN, {}, { withCredentials: true });
           const newToken = resp.data?.token;
@@ -556,7 +558,10 @@ export function AuthProvider({ children }) {
 
 
   // Login with email and password
-  const login = useCallback(async (email, password, mode = 'customer') => {
+  const login = useCallback(async (email, password, requestedMode = 'customer') => {
+    // The customer site only ever authenticates against customer-service; it can never hand off
+    // to the central SSO / auth module, whatever mode a caller asks for.
+    const mode = IS_CUSTOMER_SITE ? 'customer' : requestedMode;
     if (mode === 'employee') {
       if (typeof window !== 'undefined') {
         window.location.href = '/';

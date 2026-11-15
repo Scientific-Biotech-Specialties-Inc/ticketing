@@ -16,7 +16,8 @@ use App\Http\Controllers\ProvisionController;
 |
 */
 
-Route::post('/customers/provision', [ProvisionController::class, 'provision']);
+// Internal only: callers must send X-Internal-Secret (spec 0044, AC-8). Never exposed on the customer portal.
+Route::post('/customers/provision', [ProvisionController::class, 'provision'])->middleware('internal.secret');
 
 Route::get('/encryption-key', [AuthController::class, 'getEncryptionKey']);
 Route::post('/login', [AuthController::class, 'login'])->middleware(['throttle:ip_auth', 'decrypt.rsa:password']);
