@@ -199,7 +199,8 @@ export default function Profile() {
         <PreferencesCard role={profile.role} />
       </div>
 
-      <SecurityCard />
+      {/* Password changes for SSO staff happen in the central auth module, not customer-service (spec 0044, AC-14) */}
+      {import.meta.env.VITE_APP_MODE === 'customer' && <SecurityCard />}
     </div>
   );
 }

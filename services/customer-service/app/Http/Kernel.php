@@ -67,5 +67,6 @@ class Kernel extends HttpKernel
         'auth.employee' => \App\Http\Middleware\VerifyEmployeeJwt::class,
         'auth.subsystem' => \App\Http\Middleware\AuthenticateSubsystem::class,
         'decrypt.rsa' => \App\Http\Middleware\DecryptRsaPayload::class,
+        'internal.secret' => \App\Http\Middleware\VerifyInternalSecret::class,
     ];
 }
