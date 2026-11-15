@@ -533,7 +533,7 @@ export default function SuperAdminAuditLogs({ defaultTab = 'logs' }) {
               <select
                 value={filterBranch}
                 onChange={(e) => setFilterBranch(e.target.value)}
-                className="h-9 rounded-lg border border-border bg-card px-3 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+                className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs text-[#1E293B] outline-none focus:ring-2 focus:ring-[#2E85D8]/20 focus:border-[#2E85D8] cursor-pointer"
               >
                 <option value="">All Branches</option>
                 {branchOptions.map((b) => (

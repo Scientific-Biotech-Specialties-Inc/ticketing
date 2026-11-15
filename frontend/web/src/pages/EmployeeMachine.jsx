@@ -699,7 +699,14 @@ export default function EmployeeMachine() {
       ) : infoTicket && (
         <TicketInfoModal
           ticket={infoTicket}
-          onClose={() => setInfoTicket(null)}
+          onClose={() => {
+            const isApproved = infoTicket?.reassignmentStatus === 'Approved' ||
+              infoTicket?.notificationData?.type === 'reassignment_approved';
+            setInfoTicket(null);
+            if (isApproved) {
+              navigate('/employee/assigned?tab=incoming', { state: { tab: 'incoming' } });
+            }
+          }}
           onReassignSuccess={(id, reason) => {
             setTickets((prev) =>
               prev.map((t) =>

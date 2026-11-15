@@ -281,6 +281,14 @@ export default function PredictiveAnalytics({
     ? `${topRecItem.share}% Share`
     : '+12% Frequency Growth';
 
+  const rootCauses = useMemo(() => {
+    const live = analyticsData?.predictive?.root_causes?.[activePeriod];
+    if (Array.isArray(live) && live.length > 0) return live;
+    return defaultRootCause;
+  }, [analyticsData, activePeriod]);
+
+  const topPredictedIssue = rootCauses[0]?.name || 'Network Config';
+
   // ─── 1. Underlying Data Table Rows ─────────────────────────────────────
   const underlyingRows = useMemo(() => {
     return trendData.labels.map((lbl, idx) => {
@@ -403,13 +411,15 @@ export default function PredictiveAnalytics({
         />
         <MetricCard
           title="Top Predicted Issue"
-          value={<span className="text-xl sm:text-2xl font-bold text-dark-slate block truncate" title="Network Config">Network Config</span>}
+          value={topPredictedIssue}
+          wrapValue
+          valueClassName="text-sm sm:text-base lg:text-lg font-bold text-dark-slate leading-tight line-clamp-2"
           icon={<Search className="w-5 h-5 text-accent" />}
           iconBg="bg-blue-50 text-accent"
         />
         <MetricCard
           title="Projected Peak"
-          value={<span className="text-xl sm:text-2xl font-bold text-dark-slate block truncate" title={trendData.peak}>{trendData.peak}</span>}
+          value={trendData.peak}
           icon={<Activity className="w-5 h-5 text-emerald-600" />}
           iconBg="bg-emerald-50 text-emerald-600"
         />
@@ -753,7 +763,7 @@ export default function PredictiveAnalytics({
           </div>
 
           <div className="space-y-2 py-1">
-            {defaultRootCause.map((c) => (
+            {rootCauses.map((c) => (
               <div key={c.name} className="space-y-1 text-xs">
                 <div className="flex justify-between text-foreground font-medium">
                   <span>{c.name}</span>

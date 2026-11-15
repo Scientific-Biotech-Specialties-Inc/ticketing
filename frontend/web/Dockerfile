@@ -14,9 +14,6 @@ ARG VITE_REVERB_HOST=localhost
 ARG VITE_REVERB_PORT=6001
 ARG VITE_BASE_PATH=/
 ARG VITE_APP_MODE=customer
-# Public URL of the customer portal. The employee build uses it to send customer accounts to their own
-# portal. Empty keeps the localhost port fallback (5005 -> 5006) in WrongPortal/AuthContext.
-ARG VITE_CUSTOMER_PORTAL_URL=
 
 # Expose them to the build process
 ENV VITE_API_URL=$VITE_API_URL
@@ -27,15 +24,12 @@ ENV VITE_REVERB_HOST=$VITE_REVERB_HOST
 ENV VITE_REVERB_PORT=$VITE_REVERB_PORT
 ENV VITE_BASE_PATH=$VITE_BASE_PATH
 ENV VITE_APP_MODE=$VITE_APP_MODE
-ENV VITE_CUSTOMER_PORTAL_URL=$VITE_CUSTOMER_PORTAL_URL
 
 RUN npm run build
 
 # Stage 2: Serve the built static assets with Nginx
 FROM nginx:alpine
 ARG VITE_BASE_PATH=/
-# Build args do not cross stages, so the mode is declared again here to pick the nginx template.
-ARG VITE_APP_MODE=customer
 # Copy dist to a temporary location first
 COPY --from=build /app/dist /tmp/dist
 # Move files into the correct subdirectory matching the Vite base path
@@ -45,27 +39,9 @@ RUN mkdir -p /usr/share/nginx/html${VITE_BASE_PATH} && \
     cp -r /tmp/dist/* /usr/share/nginx/html${VITE_BASE_PATH}/ && \
     cp -r /tmp/dist/* /usr/share/nginx/html/ && \
     rm -rf /tmp/dist
-# Customer build: the customer edge (spec 0044) proxies an allowlist straight to the services.
-# Employee build: the existing template proxies /api/ to ticketing-gateway.
-COPY nginx.template.conf nginx.customer.template.conf /tmp/nginx/
-RUN mkdir -p /etc/nginx/templates && \
-    if [ "$VITE_APP_MODE" = "customer" ]; then \
-      cp /tmp/nginx/nginx.customer.template.conf /etc/nginx/templates/default.conf.template; \
-    else \
-      cp /tmp/nginx/nginx.template.conf /etc/nginx/templates/default.conf.template; \
-    fi && \
-    rm -rf /tmp/nginx
+COPY nginx.template.conf /etc/nginx/templates/default.conf.template
 ENV NGINX_PORT=5005
 ENV GATEWAY_HOST=ticketing-gateway
 ENV GATEWAY_URL=http://ticketing-gateway:80
-# Service URL defaults (Docker Compose names) so nginx never starts with an unsubstituted value.
-# Azure overrides these with the internal FQDNs from ticketing.bicep.
-ENV CUSTOMER_SERVICE_URL=http://customer-service:8000 \
-    TICKET_SERVICE_URL=http://ticket-service:8000 \
-    ATTACHMENT_SERVICE_URL=http://attachment-service:8000 \
-    MESSAGING_SERVICE_URL=http://messaging-service:8000 \
-    AI_SERVICE_URL=http://ai-service:8000 \
-    CONFIGURATION_SERVICE_URL=http://configuration-service:8000 \
-    ANALYTICS_SERVICE_URL=http://analytics-service:8000
 EXPOSE 5005
 CMD ["nginx", "-g", "daemon off;"]

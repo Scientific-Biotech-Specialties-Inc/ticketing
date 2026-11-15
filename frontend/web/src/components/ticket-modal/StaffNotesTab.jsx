@@ -62,7 +62,7 @@ export default function StaffNotesTab({
               type="submit"
               disabled={!newNote.trim() || isAdding}
               title={!newNote.trim() ? 'Enter note text to enable adding note' : 'Add internal staff note'}
-              className="min-h-[44px] px-4 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
+              className="h-9 px-4 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
             >
               {isAdding ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               <span>Add Note</span>

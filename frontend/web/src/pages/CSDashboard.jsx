@@ -217,6 +217,33 @@ export default function CSDashboard() {
     deferRefresh: false,
   });
 
+  const isTicketAssigned = useCallback((t) => {
+    if (!t) return false;
+    if (t.reassignmentRequested || t.attentionType === 'reassign') return true;
+    const rawStatus = String(t.status || '').toLowerCase().trim();
+    if (rawStatus === 'pending assignment' || rawStatus === 'open') return false;
+    if (Array.isArray(t.assigned_employees) && t.assigned_employees.length > 0) return true;
+    if (Array.isArray(t.assigned) && t.assigned.length > 0) return true;
+    if (t.assigned_to && String(t.assigned_to).toLowerCase() !== 'unassigned') return true;
+    if (t.assigned_employee && String(t.assigned_employee).toLowerCase() !== 'unassigned') return true;
+    if (t.assigned_to_name && String(t.assigned_to_name).toLowerCase() !== 'unassigned') return true;
+    return false;
+  }, []);
+
+  // Direct assignment modal opener
+  const handleAssignTicket = useCallback(async (t) => {
+    setModalLoading(true);
+    try {
+      const ticketId = t.ticket_ID || parseInt(String(t.id || '').replace(/\D/g, ''), 10);
+      const full = await getTicketDetails(ticketId);
+      setAssignModalTicket({ ...t, ...full, description: full?.description || t.description || '' });
+    } catch {
+      setAssignModalTicket(t);
+    } finally {
+      setModalLoading(false);
+    }
+  }, []);
+
   // Contextual ticket details modal viewer with assignment dispatch
   const handleViewTicket = useCallback(async (t) => {
     setModalLoading(true);
@@ -440,7 +467,13 @@ export default function CSDashboard() {
                   {attentionTickets.map((t) => (
                     <TableRow
                       key={t.id}
-                      onClick={() => handleViewTicket(t)}
+                      onClick={() => {
+                        if (!isTicketAssigned(t)) {
+                          handleAssignTicket(t);
+                        } else {
+                          handleViewTicket(t);
+                        }
+                      }}
                       className="hover:bg-muted/40 transition-colors cursor-pointer"
                     >
                       <TableCell className="font-semibold text-primary text-xs whitespace-nowrap">
@@ -590,7 +623,13 @@ export default function CSDashboard() {
                     {queuedTickets.map((t) => (
                       <TableRow
                         key={t.id}
-                        onClick={() => handleViewTicket(t)}
+                        onClick={() => {
+                          if (!isTicketAssigned(t)) {
+                            handleAssignTicket(t);
+                          } else {
+                            handleViewTicket(t);
+                          }
+                        }}
                         className="hover:bg-muted/40 transition-colors cursor-pointer"
                       >
                         <TableCell className="font-semibold text-primary text-xs whitespace-nowrap">

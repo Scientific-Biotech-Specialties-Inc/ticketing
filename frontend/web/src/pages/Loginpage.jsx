@@ -42,7 +42,12 @@ const checkIsAdmin = (user) => {
   if (!user) return false;
   const role = resolveUserRole(user).toLowerCase();
   const dept = resolveUserDepartment(user).toLowerCase();
-  return role === 'admin' || role === 'it admin' || (dept === 'admin' && role !== 'superadmin' && role !== 'super admin');
+  return (
+    role === 'admin' ||
+    role === 'it admin' ||
+    role === 'branch admin' ||
+    (dept === 'admin' && role !== 'superadmin' && role !== 'super admin')
+  );
 };
 
 const checkIsEmployee = (user) => {

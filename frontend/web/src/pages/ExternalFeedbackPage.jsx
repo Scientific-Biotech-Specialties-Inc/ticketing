@@ -112,7 +112,7 @@ export default function ExternalFeedbackPage() {
                 id: effectiveTicketId,
                 ticket_ID: effectiveTicketId,
                 title: `Service Ticket #${effectiveTicketId}`,
-                category: 'Others',
+                category: 'IT',
                 status: 'Closed',
               });
             }
@@ -123,7 +123,7 @@ export default function ExternalFeedbackPage() {
               id: effectiveTicketId,
               ticket_ID: effectiveTicketId,
               title: `Service Ticket #${effectiveTicketId}`,
-              category: 'Others',
+              category: 'IT',
               status: 'Closed',
             });
           }
@@ -140,9 +140,7 @@ export default function ExternalFeedbackPage() {
   }, [effectiveTicketId]);
 
   // Derive ticket category
-  // Spec 0043 (AC-12): questions follow the ticket's live problem category name. A missing or
-  // unclassified category loads the general `Others` set; `IT` is never a fallback.
-  const ticketCategory = ticket?.category && ticket.category !== 'Unclassified' ? ticket.category : 'Others';
+  const ticketCategory = ticket?.category || ticket?.department?.name || ticket?.department || 'IT';
 
   // 2. Fetch category questions
   useEffect(() => {
@@ -160,14 +158,13 @@ export default function ExternalFeedbackPage() {
         if (isMounted) setQuestionsLoading(false);
       }
     }
-    // Wait for the ticket so the questions match its real category (spec 0043 AC-12).
-    if (ticket && ticketCategory) {
+    if (ticketCategory) {
       fetchQuestions();
     }
     return () => {
       isMounted = false;
     };
-  }, [ticket, ticketCategory]);
+  }, [ticketCategory]);
 
   const employees = useMemo(() => getTicketEmployees(ticket), [ticket]);
 

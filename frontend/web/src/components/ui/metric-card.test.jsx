@@ -51,4 +51,21 @@ describe('MetricCard KPI definition (spec 0028 AC-5)', () => {
     expect(noDataEl.className).toContain('text-base');
     expect(noDataEl.className).toContain('truncate');
   });
+
+  it('supports wrapValue and valueClassName for multi-word values without truncation', () => {
+    const { container } = render(
+      <MetricCard
+        title="Top Predicted Issue"
+        value="Network Config"
+        wrapValue
+        valueClassName="text-sm sm:text-base font-bold leading-tight line-clamp-2"
+      />
+    );
+    const valEl = container.querySelector('p.font-bold');
+    expect(valEl).toBeInTheDocument();
+    expect(valEl.className).not.toContain('truncate');
+    expect(valEl.className).toContain('break-words');
+    expect(valEl.className).toContain('line-clamp-2');
+    expect(valEl).toHaveAttribute('title', 'Network Config');
+  });
 });

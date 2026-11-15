@@ -11,7 +11,9 @@ export default function AdminLayout() {
       <Header sidebarHovered={sidebarHovered} />
       <SidebarAdmin collapsed={true} onHoverChange={setSidebarHovered} />
 
-      <main className="pt-24 pb-8 px-4 sm:px-6 lg:px-8 flex-1 sm:ml-20 ml-0 sm:w-[calc(100%-5rem)] w-full min-w-0 max-w-full transition-all">
+      <main className={`pt-24 pb-8 px-4 sm:px-6 lg:px-8 flex-1 ml-0 min-w-0 max-w-full transition-all duration-200 ${
+        sidebarHovered ? 'sm:ml-64 sm:w-[calc(100%-16rem)]' : 'sm:ml-20 sm:w-[calc(100%-5rem)]'
+      } w-full`}>
         <div className="w-full min-w-0 max-w-full">
           <Outlet />
         </div>

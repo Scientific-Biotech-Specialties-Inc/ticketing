@@ -227,4 +227,19 @@ describe('PredictiveAnalytics Component Tests', () => {
     expect(screen.getByText(/Analyzer Calibration issues have the highest statistical recurrence rate/i)).toBeInTheDocument();
     expect(screen.getByText(/Sysmex CA-660 exhibits the highest recurrence or failure indicator/i)).toBeInTheDocument();
   });
+
+  it('renders Top Predicted Issue KPI card with full text and wrapping enabled', () => {
+    render(
+      <PredictiveAnalytics
+        selectedPreset="Next 7 Days"
+        branch={mockBranch}
+      />
+    );
+
+    expect(screen.getByText('Top Predicted Issue')).toBeInTheDocument();
+    const [issueValue] = screen.getAllByText('Network Config');
+    expect(issueValue).toBeInTheDocument();
+    expect(issueValue.className).toContain('break-words');
+    expect(issueValue.className).not.toContain('truncate');
+  });
 });

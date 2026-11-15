@@ -36,17 +36,17 @@ export default function TechnicianDecisionCard({
       </p>
 
       {/* Decision Buttons: desktop row, mobile column with Accept first */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 pt-1">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 pt-1">
         <button
           type="button"
           disabled={isBusy}
           onClick={onAccept}
           aria-label="Accept"
-          className="min-h-[44px] px-6 py-2.5 bg-[#1E2A78] hover:bg-[#151E56] text-white font-semibold text-sm rounded-lg shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="h-9 px-4 bg-[#1E2A78] hover:bg-[#151E56] text-white font-semibold text-xs rounded-lg shadow-xs transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isAccepting ? (
             <>
-              <Loader2 className="w-4 h-4 animate-spin text-white" />
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
               <span>Accepting...</span>
             </>
           ) : (
@@ -59,7 +59,7 @@ export default function TechnicianDecisionCard({
           disabled={isBusy}
           onClick={onRequestReassign}
           aria-label={isDeclined ? 'Request reassignment again' : 'Request reassignment'}
-          className="min-h-[44px] px-6 py-2.5 border border-[#1E2A78] bg-white text-[#1E2A78] hover:bg-[#F5F6FA] font-semibold text-sm rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="h-9 px-4 border border-[#1E2A78] bg-white text-[#1E2A78] hover:bg-[#F5F6FA] font-semibold text-xs rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isDeclined ? 'Request reassignment again' : 'Request reassignment'}
         </button>
