@@ -31,4 +31,15 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    // Shared service to service secret sent as X-Internal-Secret (spec 0044).
+    'internal' => [
+        'secret' => env('INTERNAL_SERVICE_SECRET', env('INTERNAL_TOKEN', '')),
+    ],
+
+
+    // Spec 0044: refuse customer tokens on staff gateway traffic (X-Ticketing-Edge: staff).
+    'edge' => [
+        'enforce' => (bool) env('TICKETING_EDGE_ENFORCE', false),
+    ],
+
 ];

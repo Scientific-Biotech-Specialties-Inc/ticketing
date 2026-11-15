@@ -478,7 +478,9 @@ export function AuthProvider({ children }) {
       }
       return true;
     } catch (err) {
-      if (err.response?.status === 401) {
+      // Only the customer portal has a customer-service refresh token. Staff sessions come from the
+      // central SSO, and the staff gateway closes auth/refresh (spec 0044, AC-14).
+      if (err.response?.status === 401 && IS_CUSTOMER_SITE) {
         try {
           const resp = await axiosInstance.post(AUTH_ENDPOINTS.REFRESH_TOKEN, {}, { withCredentials: true });
           const newToken = resp.data?.token;

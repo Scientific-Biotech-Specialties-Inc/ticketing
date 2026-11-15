@@ -34,6 +34,8 @@ RUN npm run build
 # Stage 2: Serve the built static assets with Nginx
 FROM nginx:alpine
 ARG VITE_BASE_PATH=/
+# Build args do not cross stages, so the mode is declared again here to pick the nginx template.
+ARG VITE_APP_MODE=customer
 # Copy dist to a temporary location first
 COPY --from=build /app/dist /tmp/dist
 # Move files into the correct subdirectory matching the Vite base path
@@ -43,9 +45,27 @@ RUN mkdir -p /usr/share/nginx/html${VITE_BASE_PATH} && \
     cp -r /tmp/dist/* /usr/share/nginx/html${VITE_BASE_PATH}/ && \
     cp -r /tmp/dist/* /usr/share/nginx/html/ && \
     rm -rf /tmp/dist
-COPY nginx.template.conf /etc/nginx/templates/default.conf.template
+# Customer build: the customer edge (spec 0044) proxies an allowlist straight to the services.
+# Employee build: the existing template proxies /api/ to ticketing-gateway.
+COPY nginx.template.conf nginx.customer.template.conf /tmp/nginx/
+RUN mkdir -p /etc/nginx/templates && \
+    if [ "$VITE_APP_MODE" = "customer" ]; then \
+      cp /tmp/nginx/nginx.customer.template.conf /etc/nginx/templates/default.conf.template; \
+    else \
+      cp /tmp/nginx/nginx.template.conf /etc/nginx/templates/default.conf.template; \
+    fi && \
+    rm -rf /tmp/nginx
 ENV NGINX_PORT=5005
 ENV GATEWAY_HOST=ticketing-gateway
 ENV GATEWAY_URL=http://ticketing-gateway:80
+# Service URL defaults (Docker Compose names) so nginx never starts with an unsubstituted value.
+# Azure overrides these with the internal FQDNs from ticketing.bicep.
+ENV CUSTOMER_SERVICE_URL=http://customer-service:8000 \
+    TICKET_SERVICE_URL=http://ticket-service:8000 \
+    ATTACHMENT_SERVICE_URL=http://attachment-service:8000 \
+    MESSAGING_SERVICE_URL=http://messaging-service:8000 \
+    AI_SERVICE_URL=http://ai-service:8000 \
+    CONFIGURATION_SERVICE_URL=http://configuration-service:8000 \
+    ANALYTICS_SERVICE_URL=http://analytics-service:8000
 EXPOSE 5005
 CMD ["nginx", "-g", "daemon off;"]

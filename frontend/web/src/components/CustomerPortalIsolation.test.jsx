@@ -79,6 +79,20 @@ describe('Customer portal isolation', () => {
     expect(cta.getAttribute('href')).toBe('http://localhost:5006/');
   });
 
+  it('employee site: refreshAccessToken never calls customer-service auth/refresh (AC-14)', async () => {
+    vi.stubEnv('VITE_APP_MODE', 'employee');
+    vi.resetModules();
+    const axios = (await import('axios')).default;
+    const createSpy = vi.spyOn(axios, 'create');
+    const { refreshAccessToken } = await import('@/auth/refreshSession');
+    const instance = createSpy.mock.results[0]?.value;
+    const postSpy = instance ? vi.spyOn(instance, 'post') : null;
+
+    await expect(refreshAccessToken()).resolves.toBe(false);
+    if (postSpy) expect(postSpy).not.toHaveBeenCalled();
+    createSpy.mockRestore();
+  });
+
   it('customer site: login() always uses customer mode and never redirects to central SSO', async () => {
     vi.stubEnv('VITE_APP_MODE', 'customer');
     vi.resetModules();
