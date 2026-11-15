@@ -139,14 +139,14 @@ class GeminiService
             $systemInstruction = "You are an expert enterprise technical support AI assistant for an industrial, equipment, and IT ticketing platform. " .
                 "Your objective is to guide customers through clear, step-by-step diagnostic and troubleshooting actions for their machines, hardware, or software problems.\n\n" .
                 "Key Guidelines:\n" .
-                "1. Keep troubleshooting steps concise and direct (maximum 3 to 4 short bullet points, under 150 words total). Avoid unnecessary filler text.\n" .
+                "1. Format all troubleshooting steps clearly using numbered step headers: `Step 1: **[Short Action Title]** — [Clear, actionable instruction]`, `Step 2: **[Short Action Title]** — [Instruction]`, etc. (3 to 5 concise steps, under 180 words total). Always include expected outcome or verification at the final step.\n" .
                 "2. Base your guidance strictly on the approved published documentation provided below. If multiple articles or procedures are provided, prioritize the most recently updated procedure and provide the numbered troubleshooting steps in chronological order. Never invent, hallucinate, or reference draft or archived procedures.\n" .
                 "3. If the user indicates that basic troubleshooting failed, or if the issue involves dangerous high-voltage electrical, jammed heavy machinery, broken hardware, or requires an on-site technician dispatch, you MUST recommend escalating to a support ticket.\n" .
                 "4. When escalating, append a structured JSON block at the very end of your response exactly like this:\n" .
                 "```json\n" .
                 "{\n" .
                 '  "escalate": true,' . "\n" .
-                '  "ticket_title": "Concise natural summary of the problem (e.g. CGI Machine Paper Jam Error, NEVER include numbers or bullets like 1. or 2.)",' . "\n" .
+                '  "ticket_title": "Concise natural summary of the problem (e.g. Ultrasound System Calibration Error, NEVER include numbers or bullets like 1. or 2.)",' . "\n" .
                 '  "ticket_description": "Detailed human-readable summary of the problem and troubleshooting attempted",' . "\n" .
                 '  "suggested_category": "Classified category name or null if not confident (e.g. Hardware, Software, Network)",' . "\n" .
                 '  "category_confidence": 0.85,' . "\n" .
@@ -199,10 +199,13 @@ class GeminiService
                     ]
                 ],
                 'contents' => $contents,
-                'generationConfig' => [
+                // Thinking tokens count against maxOutputTokens and add seconds of latency, which cut
+                // replies off mid JSON. Troubleshooting steps grounded in KB sources do not need it.
+                'generationConfig' => $this->withThinkingOff([
                     'temperature' => 0.2,
-                    'maxOutputTokens' => 600,
-                ]
+                    // Room for 3 to 5 steps plus the escalation JSON block, so the block is not cut off.
+                    'maxOutputTokens' => 1024,
+                ]),
             ];
 
             $response = Http::withHeaders([
@@ -269,14 +272,24 @@ class GeminiService
         $ticketData = null;
         $cleanText = $rawText;
 
-        // Check for JSON escalation block: ```json { "escalate": true ... } ```
-        if (preg_match('/```json\s*(\{.*?\"escalate\"\s*:\s*true.*?\})\s*```/s', $rawText, $matches)) {
-            $escalate = true;
-            $jsonStr = $matches[1];
-            $cleanText = trim(str_replace($matches[0], '', $rawText));
+        // Find the escalation JSON block wherever it starts. Gemini does not always close it (the
+        // reply can hit the token limit mid block), tag it as json, or fence it at all, so match on
+        // the opening `{ "escalate":` and treat everything from there to the end as machine data.
+        // That data is never shown to the customer, even when it cannot be decoded.
+        if (preg_match('/(?:```[a-zA-Z]*\s*)?\{\s*"escalate"\s*:/', $rawText, $start, PREG_OFFSET_CAPTURE)) {
+            $offset = $start[0][1];
+            $block = substr($rawText, $offset);
+            $cleanText = trim(substr($rawText, 0, $offset));
 
-            $parsed = json_decode($jsonStr, true);
-            if (json_last_error() === JSON_ERROR_NONE && !empty($parsed)) {
+            $jsonStr = preg_replace('/^```[a-zA-Z]*\s*/', '', $block);
+            $lastBrace = strrpos($jsonStr, '}');
+            $parsed = $lastBrace !== false ? json_decode(substr($jsonStr, 0, $lastBrace + 1), true) : null;
+            if (!is_array($parsed)) {
+                $parsed = $this->extractPartialEscalationFields($jsonStr);
+            }
+
+            $escalate = ($parsed['escalate'] ?? false) === true;
+            if ($escalate) {
                 $rawTitle = $parsed['ticket_title'] ?? '';
                 $cleanTitle = preg_replace('/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i', '', $rawTitle);
                 $cleanTitle = trim($cleanTitle);
@@ -315,6 +328,21 @@ class GeminiService
             'escalate' => $escalate,
             'ticket_data' => $ticketData,
         ];
+    }
+
+    /**
+     * Recover the fields that survived from an escalation block that is not valid JSON
+     * (usually cut off by the output token limit). Only complete key/value pairs are kept.
+     */
+    protected function extractPartialEscalationFields(string $text): array
+    {
+        $fields = [];
+        preg_match_all('/"([a-z_]+)"\s*:\s*("(?:[^"\\\\]|\\\\.)*"|-?\d+(?:\.\d+)?|true|false|null)/i', $text, $pairs, PREG_SET_ORDER);
+        foreach ($pairs as $pair) {
+            $fields[$pair[1]] = json_decode($pair[2], true);
+        }
+
+        return $fields;
     }
 
     /**
@@ -380,6 +408,12 @@ class GeminiService
                         $content = ltrim($content, " ,.!?-");
                         break;
                     }
+                }
+
+                // A numbered intake answer ("1. machine 2. model ... 4. symptom") becomes "symptom (model)".
+                $intakeTitle = IntakeTitleBuilder::fromNumberedIntake($content);
+                if ($intakeTitle !== null) {
+                    return $intakeTitle;
                 }
 
                 // Strip question numbers like "1.", "1)", "1 -", "Q1:", "Machine:"
@@ -467,10 +501,10 @@ class GeminiService
                             'parts' => [['text' => "Ticket Title: {$title}\nDescription: {$description}"]]
                         ]
                     ],
-                    'generationConfig' => [
+                    'generationConfig' => $this->withThinkingOff([
                         'temperature' => 0.1,
                         'maxOutputTokens' => 200,
-                    ]
+                    ]),
                 ];
 
                 $response = Http::withHeaders(['Content-Type' => 'application/json', 'x-goog-api-key' => $this->apiKey])
@@ -506,6 +540,96 @@ class GeminiService
 
         // Resilient heuristic classification fallback
         return $this->heuristicClassifyDepartment($title, $description);
+    }
+
+    /**
+     * Turn Gemini thinking off in a way the configured model accepts.
+     *
+     * Full flash models think by default and need `thinkingBudget: 0`, or thinking eats the token
+     * budget (MAX_TOKENS, 10s+). Flash lite models do not think by default and reject
+     * `thinkingBudget: 0` with HTTP 400 INVALID_ARGUMENT, so they get no thinking setting at all.
+     */
+    protected function withThinkingOff(array $generationConfig): array
+    {
+        if (!str_contains(strtolower((string) $this->model), 'lite')) {
+            $generationConfig['thinkingConfig'] = ['thinkingBudget' => 0];
+        }
+
+        return $generationConfig;
+    }
+
+    /**
+     * Suggest which problem category a ticket belongs to, choosing only from the supplied list.
+     *
+     * There is deliberately no keyword fallback: when Gemini is unavailable, errors, or is not
+     * confident, category_id is null and the customer picks manually (no local fallback model).
+     *
+     * @param  array<int, array{id:int|string, name:string}>  $categories
+     * @return array{category_id: int|string|null, confidence: float, reasoning: string, source: string}
+     */
+    public function classifyCategory(string $title, string $description, array $categories, float $minConfidence = 0.6): array
+    {
+        $none = ['category_id' => null, 'confidence' => 0.0, 'reasoning' => '', 'source' => 'none'];
+
+        if (empty($this->apiKey) || empty($categories)) {
+            return $none;
+        }
+
+        $byId = [];
+        $lines = [];
+        foreach ($categories as $c) {
+            $byId[(string) $c['id']] = $c['id'];
+            $lines[] = "{$c['id']}: {$c['name']}";
+        }
+
+        try {
+            $url = "{$this->baseUrl}/{$this->model}:generateContent";
+            $systemInstruction = "You are an enterprise hospital and clinic IT/Service desk triage assistant.\n"
+                . "Choose the single best problem category for the support ticket from this list only (format 'id: name'):\n"
+                . implode("\n", $lines) . "\n\n"
+                . "If none clearly fits, set category_id to null. Never invent an id.\n"
+                . "Output strictly a raw JSON object with no markdown:\n"
+                . "{\"category_id\": <id from the list or null>, \"confidence\": 0.90, \"reasoning\": \"1 concise sentence.\"}";
+
+            $response = Http::withHeaders(['Content-Type' => 'application/json', 'x-goog-api-key' => $this->apiKey])
+                ->timeout(6)
+                ->post($url, [
+                    'systemInstruction' => ['parts' => [['text' => $systemInstruction]]],
+                    'contents' => [[
+                        'role' => 'user',
+                        'parts' => [['text' => "Ticket Title: {$title}\nDescription: {$description}"]],
+                    ]],
+                    // No thinking: it used half the 200 token budget and pushed replies past the 6s timeout.
+                    'generationConfig' => $this->withThinkingOff(['temperature' => 0.1, 'maxOutputTokens' => 200]),
+                ]);
+
+            if (!$response->successful()) {
+                Log::warning('Gemini category classification returned HTTP ' . $response->status() . '; leaving category unclassified.');
+            }
+
+            if ($response->successful()) {
+                $raw = $response->json('candidates.0.content.parts.0.text') ?? '';
+                if (preg_match('/\{[\s\S]*\}/', $raw, $m)) {
+                    $data = json_decode($m[0], true);
+                    $picked = is_array($data) ? ($data['category_id'] ?? null) : null;
+                    $confidence = (float) ($data['confidence'] ?? 0);
+
+                    // Only accept an id that really is in the supplied list, with enough confidence.
+                    if ($picked !== null && isset($byId[(string) $picked]) && $confidence >= $minConfidence) {
+                        return [
+                            'category_id' => $byId[(string) $picked],
+                            'confidence' => $confidence,
+                            'reasoning' => (string) ($data['reasoning'] ?? ''),
+                            'source' => 'gemini',
+                        ];
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Gemini category classification failed; leaving category for manual selection: ' . $e->getMessage());
+        }
+
+        return $none;
     }
 
     /**

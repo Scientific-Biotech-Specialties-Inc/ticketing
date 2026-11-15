@@ -75,12 +75,20 @@ class EmployeeDirectoryController extends Controller
                     $techRole = 'Employee';
                 }
 
+                // Map the Auth Module branch to the local branch by name (ids are numbered independently).
                 $branch = 'Main Branch';
                 $branchId = 1;
-                $branchName = $u['branch'] ?? ($u['branch_details']['name'] ?? '');
-                if (!empty($branchName) && stripos($branchName, 'north') !== false) {
-                    $branch = 'North Luzon Hub';
-                    $branchId = 2;
+                $branchName = trim((string) ($u['branch'] ?? ($u['branch_details']['name'] ?? '')));
+                if ($branchName !== '') {
+                    try {
+                        $localBranch = DB::table('branches')->whereRaw('LOWER(name) = ?', [strtolower($branchName)])->first(['id', 'name']);
+                        if ($localBranch) {
+                            $branch = $localBranch->name;
+                            $branchId = (int) $localBranch->id;
+                        }
+                    } catch (\Throwable $e) {
+                        // branches table unavailable: keep the default branch rather than skip this user
+                    }
                 }
 
                 $uFirstName = trim((string) ($u['first_name'] ?? ''));
@@ -622,10 +630,14 @@ class EmployeeDirectoryController extends Controller
      */
     public function getDepartments(Request $request)
     {
+        // Spec 0043: each department carries its unique code. include_inactive=1 lists every row
+        // for the superadmin departments table; the default stays active only.
         $rows = DB::table('departments')
-            ->where('is_active', true)
+            ->when(!$request->boolean('include_inactive'), fn ($q) => $q->where('is_active', true))
             ->orderBy('name')
-            ->get(['id', 'name']);
+            ->get(['id', 'name', 'code', 'is_active'])
+            ->map(fn ($d) => ['id' => (int) $d->id, 'name' => $d->name, 'code' => $d->code, 'is_active' => (bool) $d->is_active])
+            ->values();
 
         return response()->json([
             'departments' => $rows,

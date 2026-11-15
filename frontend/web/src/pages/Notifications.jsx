@@ -27,6 +27,7 @@ import {
 } from '@/services/ticketService';
 import { useAuth } from '@/context/AuthContext';
 import useRealtimeRefresh from '@/hooks/useRealtimeRefresh';
+import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import SkeletonLoader from '@/components/SkeletonLoader';
 import { formatDisplayDate } from '@/utils/dateUtils';
 import CustomerTicketDetailModal from '@/components/CustomerTicketDetailModal';
@@ -55,6 +56,7 @@ export default function Notifications() {
   const [activeNotificationId, setActiveNotificationId] = useState(null);
   const [activeEmployees, setActiveEmployees] = useState([]);
   const [activeTicketLoading, setActiveTicketLoading] = useState(false);
+  useLockBodyScroll(activeTicketLoading);
   const [activeSecurityIncident, setActiveSecurityIncident] = useState(null);
   const [activeSystemAlert, setActiveSystemAlert] = useState(null);
 
@@ -633,7 +635,7 @@ export default function Notifications() {
                             </span>
                           )}
                           {isSystemIssue && (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 dark:text-amber-300 hover:underline">
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-950 hover:underline">
                               Inspect System Context &amp; Logs →
                             </span>
                           )}

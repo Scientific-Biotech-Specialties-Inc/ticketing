@@ -407,6 +407,12 @@ class AiChatController extends Controller
                     }
                 }
 
+                // A numbered intake answer ("1. machine 2. model ... 4. symptom") becomes "symptom (model)".
+                $intakeTitle = \App\Services\IntakeTitleBuilder::fromNumberedIntake($trimmed);
+                if ($intakeTitle !== null) {
+                    return $intakeTitle;
+                }
+
                 // Strip question numbers like "1.", "1)", "1 -", "Q1:", "Machine:"
                 $trimmed = preg_replace('/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i', '', $trimmed);
                 $trimmed = trim($trimmed);
@@ -536,5 +542,28 @@ class AiChatController extends Controller
             'success' => true,
             'data' => $classification,
         ]);
+    }
+
+    /**
+     * Suggest a problem category from the list the caller supplies.
+     * The caller owns the category list, so ai-service never reads another service's tables.
+     */
+    public function classifyCategory(Request $request)
+    {
+        $validated = $request->validate([
+            'title' => 'nullable|string|max:255',
+            'description' => 'required|string|max:5000',
+            'categories' => 'required|array|min:1|max:100',
+            'categories.*.id' => 'required',
+            'categories.*.name' => 'required|string|max:255',
+        ]);
+
+        $result = $this->geminiService->classifyCategory(
+            (string) ($validated['title'] ?? ''),
+            $validated['description'],
+            $validated['categories']
+        );
+
+        return response()->json(['success' => true, 'data' => $result]);
     }
 }

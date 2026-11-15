@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Badge, getStatusBadgeVariant } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@/components/ui/table';
 import { DataTableSkeleton, DataTableEmptyState } from '@/components/ui/data-table';
+import Pagination from '@/components/Pagination';
 import { useAuth } from '@/context/AuthContext';
 import { useBranch } from '@/context/BranchContext';
 import SlaStatusBadge, { getTicketSlaDueDate, getTicketSlaStatus } from '@/components/sla/SlaStatusBadge';
@@ -389,7 +390,7 @@ export default function ITManagerTickets() {
         title="IT Ticket Queue & Assignment"
         subtitle="Manage assignments, triage incoming service requests, and track technician workload."
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -523,7 +524,11 @@ export default function ITManagerTickets() {
                 </TableRow>
               ) : (
                 paginatedTickets.map((t) => (
-                  <TableRow key={t.id || t.ticket_ID} className="hover:bg-muted/40 transition-colors">
+                  <TableRow
+                    key={t.id || t.ticket_ID}
+                    onClick={() => setSelectedDetailTicket(t)}
+                    className="cursor-pointer hover:bg-slate-50/80 transition-colors duration-150"
+                  >
                     {/* Ticket ID */}
                     <TableCell className="font-mono text-xs font-bold text-primary">
                       {t.ticket_ID || `TKT-${t.id}`}
@@ -588,7 +593,10 @@ export default function ITManagerTickets() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => handleOpenAssignModal(t)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenAssignModal(t);
+                          }}
                           className={cn(
                             'text-[11px] h-7 px-2.5 font-semibold cursor-pointer',
                             t.isUnassigned
@@ -598,16 +606,6 @@ export default function ITManagerTickets() {
                         >
                           <UserCheck className="w-3 h-3 mr-1" />
                           <span>{t.isUnassigned ? 'Assign' : 'Reassign'}</span>
-                        </Button>
-
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setSelectedDetailTicket(t)}
-                          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground cursor-pointer"
-                          title="View Details"
-                        >
-                          <ExternalLink className="w-3.5 h-3.5" />
                         </Button>
                       </div>
                     </TableCell>
@@ -626,29 +624,12 @@ export default function ITManagerTickets() {
               <strong>{Math.min(page * itemsPerPage, filteredTickets.length)}</strong> of{' '}
               <strong>{filteredTickets.length}</strong> tickets
             </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="h-8 text-xs cursor-pointer"
-              >
-                Previous
-              </Button>
-              <span className="font-semibold text-foreground px-2">
-                Page {page} of {totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages}
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                className="h-8 text-xs cursor-pointer"
-              >
-                Next
-              </Button>
-            </div>
+            <Pagination
+              totalItems={filteredTickets.length}
+              itemsPerPage={itemsPerPage}
+              currentPage={page}
+              onPageChange={setPage}
+            />
           </div>
         )}
       </div>

@@ -40,6 +40,23 @@ class TicketDashboardService
     /**
      * Get summary metrics and recent tickets for the customer dashboard with optional combinable filters (TS021).
      */
+    /**
+     * Customer dashboard card for a status name (spec 0038 AC-12), or null when the
+     * status is excluded (Discarded). Every other status lands in exactly one card.
+     */
+    public static function customerSummaryBucket(string $statusName): ?string
+    {
+        $norm = strtolower(trim($statusName));
+        return match ($norm) {
+            'open', 'pending', 'pending assignment' => 'open',
+            'in progress', 'escalated', 'pending evaluation', 'reopened', 'on hold' => 'in_progress',
+            'resolved' => 'resolved',
+            'closed' => 'closed',
+            'discarded', 'discarded by customer', 'cancelled' => null,
+            default => 'open',
+        };
+    }
+
     public function getCustomerDashboard(int $createdBy, int $limit, array $filters = []): array
     {
         $hasFilters = !empty(array_filter($filters, fn($v) => $v !== null && $v !== ''));
@@ -64,9 +81,9 @@ class TicketDashboardService
             ];
 
             foreach ($statusCounts as $row) {
-                $key = str_replace(' ', '_', strtolower($row->status_name));
-                if (array_key_exists($key, $sum)) {
-                    $sum[$key] = (int) $row->total;
+                $key = self::customerSummaryBucket((string) $row->status_name);
+                if ($key !== null) {
+                    $sum[$key] += (int) $row->total;
                 }
             }
             return $sum;
@@ -77,13 +94,22 @@ class TicketDashboardService
                 ->leftJoin('machines as m', 'm.machine_ID', '=', 't.machine_ID')
                 ->leftJoin('machine_categories as mc', 'mc.category_ID', '=', 'm.category_ID')
                 ->join('ticket_statuses as ts', 'ts.ticket_status_ID', '=', 't.ticket_status_ID')
-                ->join('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
+                ->leftJoin('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
                 ->leftJoin('ticket_priorities as tp', 'tp.priority_ID', '=', 't.priority_ID')
                 ->leftJoin('employees as e', 'e.emp_id', '=', 't.assigned_to')
-                ->leftJoin('ticket_assignments as ta', function ($join) {
-                    $join->on('ta.ticket_ID', '=', 't.ticket_ID')
-                         ->whereNull('ta.completed_at');
-                })
+                // Spec 0038 AC-13: join only the first active assignment per ticket, so a
+                // ticket with several assignees appears once in the recent list.
+                ->leftJoinSub(
+                    DB::table('ticket_assignments')
+                        ->whereNull('completed_at')
+                        ->select('ticket_ID', DB::raw('MIN(assignment_ID) as first_assignment_ID'))
+                        ->groupBy('ticket_ID'),
+                    'ta_first',
+                    'ta_first.ticket_ID',
+                    '=',
+                    't.ticket_ID'
+                )
+                ->leftJoin('ticket_assignments as ta', 'ta.assignment_ID', '=', 'ta_first.first_assignment_ID')
                 ->leftJoin('employees as e_ta', 'e_ta.emp_id', '=', 'ta.employee_ID')
                 ->select(
                     't.ticket_ID',
@@ -98,7 +124,7 @@ class TicketDashboardService
                     't.created_at',
                     't.updated_at',
                     't.assigned_to',
-                    'pc.category_name',
+                    DB::raw("COALESCE(pc.category_name, 'Unclassified') as category_name"),
                     'tp.priority_name',
                     DB::raw("COALESCE(CONCAT(e.first_name, ' ', e.last_name), CONCAT(e_ta.first_name, ' ', e_ta.last_name)) as assigned_employee_name")
                 )
@@ -130,7 +156,11 @@ class TicketDashboardService
                 $query->where('t.problem_category_ID', (int) $filters['category_id']);
             } elseif (!empty($filters['category'])) {
                 $catVal = trim($filters['category']);
-                $query->where('pc.category_name', $catVal);
+                if ($catVal === 'Unclassified') {
+                    $query->whereNull('t.problem_category_ID');
+                } else {
+                    $query->where('pc.category_name', $catVal);
+                }
             }
 
             if (!empty($filters['machine_id'])) {
@@ -150,10 +180,10 @@ class TicketDashboardService
             }
 
             return $query->orderByDesc('t.created_at')
-                ->limit($limit * 2)
+                ->orderByDesc('t.ticket_ID')
+                ->limit($limit)
                 ->get()
                 ->unique('ticket_ID')
-                ->take($limit)
                 ->map(fn ($row) => [
                     'id' => TicketNumberGeneratorService::refFor($row->ticket_ID, $row->ticket_number ?? null),
                     'ticket_ID' => $row->ticket_ID,
@@ -208,9 +238,10 @@ class TicketDashboardService
             ]);
 
         $categories = DB::table('tickets as t')
-            ->join('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
+            ->leftJoin('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
             ->where('t.created_by', $createdBy)
             ->where('t.is_internal', false)
+            ->whereNotNull('t.problem_category_ID')
             ->select('pc.problem_category_ID', 'pc.category_name')
             ->distinct()
             ->get();
@@ -377,7 +408,7 @@ class TicketDashboardService
 
         $fetchQuery = function () use ($perPage, $typeFilter, $page, $filters) {
             $query = DB::table('tickets as t')
-                ->join('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
+                ->leftJoin('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
                 ->join('ticket_statuses as ts', 'ts.ticket_status_ID', '=', 't.ticket_status_ID')
                 ->leftJoin('branches as b', 'b.id', '=', 't.branch_id')
                 ->leftJoin('clients as c', 'c.id', '=', 't.created_by')
@@ -410,7 +441,9 @@ class TicketDashboardService
                     't.sla_ID',
                     't.branch_sla_policy_id',
                     't.branch_priority_override_id',
-                    'pc.category_name',
+                    't.problem_category_ID',
+                    't.machine_ID',
+                    DB::raw("COALESCE(pc.category_name, 'Unclassified') as category_name"),
                     'ts.status_name',
                     'tp.priority_name',
                     'e.department',
@@ -485,7 +518,11 @@ class TicketDashboardService
             }
 
             if (!empty($filters['category'])) {
-                $query->where('pc.category_name', trim($filters['category']));
+                if (trim($filters['category']) === 'Unclassified') {
+                    $query->whereNull('t.problem_category_ID');
+                } else {
+                    $query->where('pc.category_name', trim($filters['category']));
+                }
             }
 
             if (!empty($filters['customer_id'])) {
@@ -597,6 +634,8 @@ class TicketDashboardService
                         DB::raw("CONCAT(e.first_name, ' ', e.last_name) as employee_name"),
                         'e.department as employee_department'
                     )
+                    ->orderBy('ta.assigned_at')
+                    ->orderBy('ta.assignment_ID')
                     ->get()
                     ->groupBy('ticket_ID');
 
@@ -631,6 +670,9 @@ class TicketDashboardService
                         'assignment_status' => $a->assignment_status ?: 'assigned',
                         'assigned_at' => $a->assigned_at ? Carbon::parse($a->assigned_at)->toIso8601String() : null,
                         'accepted_at' => $a->accepted_at ? Carbon::parse($a->accepted_at)->toIso8601String() : null,
+                        // Spec 0038 AC-7 / AC-8: per assignee activity and reminder cooldown.
+                        'completed_at' => $a->completed_at ? Carbon::parse($a->completed_at)->toIso8601String() : null,
+                        'last_reminder_sent_at' => !empty($a->last_reminder_sent_at) ? Carbon::parse($a->last_reminder_sent_at)->toIso8601String() : null,
                     ];
                 })->values()->all();
 
@@ -656,6 +698,10 @@ class TicketDashboardService
                     'title' => $row->title,
                     'description' => $row->description ?? '',
                     'category' => $row->category_name,
+                    // Spec 0043 (AC-20): NULL category means CS must classify before assigning.
+                    'problem_category_ID' => $row->problem_category_ID !== null ? (int) $row->problem_category_ID : null,
+                    'needs_classification' => $row->problem_category_ID === null,
+                    'machine_ID' => $row->machine_ID !== null ? (int) $row->machine_ID : null,
                     'status' => $row->status_name,
                     'priority' => $row->priority_name,
                     'department' => $row->department,
@@ -869,7 +915,7 @@ class TicketDashboardService
         // Spec 0037: the CS queue pages its rows on the server, so dropdown choices
         // come from here rather than from whichever tickets are on screen.
         $categories = DB::table('tickets as t')
-            ->join('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
+            ->leftJoin('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
             ->distinct()
             ->orderBy('pc.category_name')
             ->pluck('pc.category_name')
@@ -1084,7 +1130,7 @@ class TicketDashboardService
                 't.priority_ID',
                 'tp.priority_name',
                 't.problem_category_ID',
-                'pc.category_name',
+                DB::raw("COALESCE(pc.category_name, 'Unclassified') as category_name"),
                 't.machine_ID',
                 'm.machine_name',
                 'm.serial_number',
@@ -1559,7 +1605,7 @@ class TicketDashboardService
     protected function computeRecurringCategories(object $branch, Carbon $dateFrom, Carbon $dateTo, int $totalTickets): array
     {
         $query = DB::table('tickets as t')
-            ->join('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
+            ->leftJoin('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
             ->join('ticket_statuses as ts', 'ts.ticket_status_ID', '=', 't.ticket_status_ID')
             ->where('ts.status_name', '!=', 'Discarded')
             ->whereBetween('t.created_at', [$dateFrom, $dateTo]);
@@ -1567,7 +1613,7 @@ class TicketDashboardService
         $this->applyBranchTicketFilter($query, $branch);
 
         $results = $query
-            ->select('pc.category_name as name', DB::raw('COUNT(*) as count'))
+            ->select(DB::raw("COALESCE(pc.category_name, 'Unclassified') as name"), DB::raw('COUNT(*) as count'))
             ->groupBy('pc.category_name')
             ->orderByDesc('count')
             ->limit(6)
@@ -1796,11 +1842,18 @@ class TicketDashboardService
             'to' => $dateTo->toDateString(),
             'dept' => $departmentFilter,
             'prio' => $priorityFilter,
+            'sort_by' => $filters['sort_by'] ?? null,
+            'sort_dir' => $filters['sort_dir'] ?? null,
         ]));
 
         if ($forceRefresh) {
             Cache::forget($cacheKey);
         }
+
+        $sort = array_filter([
+            'sort_by' => $filters['sort_by'] ?? null,
+            'sort_dir' => $filters['sort_dir'] ?? null,
+        ]);
 
         return Cache::remember($cacheKey, 60, function () use (
             $branch,
@@ -1809,7 +1862,8 @@ class TicketDashboardService
             $dateFrom,
             $dateTo,
             $departmentFilter,
-            $priorityFilter
+            $priorityFilter,
+            $sort
         ) {
             return $this->computeTabularReportData(
                 $branch,
@@ -1818,13 +1872,55 @@ class TicketDashboardService
                 $dateFrom,
                 $dateTo,
                 $departmentFilter,
-                $priorityFilter
+                $priorityFilter,
+                $sort
             );
         });
     }
 
+    /** Columns of the employee performance report and its exports (spec 0039, AC-19). */
+    public const EMPLOYEE_REPORT_HEADERS = [
+        'Employee',
+        'Department',
+        'Performance Score',
+        'Pending',
+        'Tickets Assigned',
+        'Resolved',
+        'Resolution SLA (%)',
+        'Response SLA (%)',
+        'Avg Response (mins)',
+        'Avg Resolution (hrs)',
+        'CSAT Score',
+    ];
+
     /**
-     * Compute structured tabular report rows for the 6 operational report types.
+     * One employee performance report row. A missing value is "—", never 0 or 100; a score without
+     * enough judged periods reads "Not enough data".
+     */
+    protected function employeeReportRow(array $e): array
+    {
+        $num = fn ($v, string $suffix = '') => $v === null ? '—' : round((float) $v, 1) . $suffix;
+        $score = ($e['score_status'] ?? null) === AssignmentPeriodMetrics::SCORE_NOT_ENOUGH_DATA
+            ? 'Not enough data'
+            : $num($e['performance_score'] ?? null);
+
+        return [
+            'Employee' => $e['name'] ?? '',
+            'Department' => $e['department'] ?? '',
+            'Performance Score' => $score,
+            'Pending' => (int) ($e['pending_count'] ?? 0),
+            'Tickets Assigned' => (int) ($e['tickets_assigned'] ?? 0),
+            'Resolved' => (int) ($e['tickets_resolved'] ?? 0),
+            'Resolution SLA (%)' => $num($e['sla_compliance_rate'] ?? null, '%'),
+            'Response SLA (%)' => $num($e['response_sla_rate'] ?? null, '%'),
+            'Avg Response (mins)' => $num($e['average_response_minutes'] ?? null),
+            'Avg Resolution (hrs)' => $num($e['average_resolution_hours'] ?? null, 'h'),
+            'CSAT Score' => ($e['csat_score'] ?? null) !== null ? number_format((float) $e['csat_score'], 2) . ' / 5.0' : '—',
+        ];
+    }
+
+    /**
+     * Compute structured tabular report rows for the operational report types.
      */
     protected function computeTabularReportData(
         object $branch,
@@ -1833,13 +1929,40 @@ class TicketDashboardService
         Carbon $dateFrom,
         Carbon $dateTo,
         ?string $departmentFilter,
-        ?string $priorityFilter
+        ?string $priorityFilter,
+        array $sort = []
     ): array {
         $headers = [];
         $rows = [];
         $summary = [];
 
-        if ($reportType === 'department_performance') {
+        if ($reportType === 'employee_performance') {
+            // Spec 0039 (AC-19): the same figures as the dashboard Employee Performance table.
+            $headers = self::EMPLOYEE_REPORT_HEADERS;
+
+            $empMetrics = app(AdminPerformanceService::class)->getEmployeePerformanceMetrics(
+                (object) ['role' => 'superadmin'],
+                [
+                    'branch_id' => $branch->id ?? $branch->slug ?? 'all',
+                    'preset' => $preset,
+                    'date_from' => $dateFrom->toDateString(),
+                    'date_to' => $dateTo->toDateString(),
+                    'department' => $departmentFilter,
+                ] + $sort
+            );
+
+            $employees = $empMetrics['employees'] ?? [];
+            foreach ($employees as $e) {
+                $rows[] = $this->employeeReportRow($e);
+            }
+
+            $summary = [
+                'total_employees' => count($rows),
+                'pending_count' => array_sum(array_column($employees, 'pending_count')),
+                'tickets_assigned' => array_sum(array_column($employees, 'tickets_assigned')),
+                'tickets_resolved' => array_sum(array_column($employees, 'tickets_resolved')),
+            ];
+        } elseif ($reportType === 'department_performance') {
             $headers = [
                 'Department',
                 'Staff Count',
@@ -1923,7 +2046,7 @@ class TicketDashboardService
                 'm.machine_ID',
                 'm.machine_name',
                 'm.serial_number',
-                'pc.category_name',
+                DB::raw("COALESCE(pc.category_name, 'Unclassified') as category_name"),
                 'ts.status_name',
                 't.created_at',
                 't.resolved_at',
@@ -2080,7 +2203,7 @@ class TicketDashboardService
                 't.priority_ID',
                 'tp.priority_name',
                 't.problem_category_ID',
-                'pc.category_name',
+                DB::raw("COALESCE(pc.category_name, 'Unclassified') as category_name"),
                 't.machine_ID',
                 'm.machine_name',
                 'm.serial_number',

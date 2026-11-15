@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import EmployeeFeedbackCard from './EmployeeFeedbackCard';
 import StarRating from './StarRating';
 import ThankYouScreen from './ThankYouScreen';
-import { getEmployeeById, getTicketEmployees, saveFeedback, updateFeedback } from '@/data/mockFeedbackData';
+import { getEmployeeById, getTicketEmployees, saveFeedback, updateFeedback, feedbackTicketId } from '@/data/mockFeedbackData';
 import { getCategoryFeedbackQuestions } from '@/services/configurationService';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 
@@ -20,7 +20,9 @@ export default function FeedbackModal({ ticket, onClose, existingFeedback = null
   const modalRef = useRef(null);
 
   // Derive ticket category
-  const ticketCategory = ticket?.category || ticket?.department?.name || ticket?.department || 'IT';
+  // Spec 0043 (AC-12): questions follow the ticket's live problem category name. A missing or
+  // unclassified category loads the general `Others` set; `IT` is never a fallback.
+  const ticketCategory = ticket?.category && ticket.category !== 'Unclassified' ? ticket.category : 'Others';
 
   // Fetch enabled questions for category at form open time and freeze snapshot in state
   useEffect(() => {
@@ -87,7 +89,7 @@ export default function FeedbackModal({ ticket, onClose, existingFeedback = null
     try {
       if (isEditMode) {
         await updateFeedback(
-          ticket.id,
+          feedbackTicketId(ticket),
           ratings,
           comments,
           overallComment,
@@ -97,7 +99,7 @@ export default function FeedbackModal({ ticket, onClose, existingFeedback = null
         );
       } else {
         await saveFeedback(
-          ticket.id,
+          feedbackTicketId(ticket),
           ratings,
           comments,
           overallComment,
@@ -108,13 +110,12 @@ export default function FeedbackModal({ ticket, onClose, existingFeedback = null
       }
     } catch (err) {
       console.error('Failed to submit feedback:', err);
-      setValidationError('Failed to save feedback. Please check your network and try again.');
+      setValidationError(err?.message || 'Failed to save feedback. Please check your network and try again.');
       setIsSubmitting(false);
       return;
-    } finally {
-      setIsSubmitting(false);
-      setStep('thankyou');
     }
+    setIsSubmitting(false);
+    setStep('thankyou');
   };
 
   if (step === 'thankyou') {

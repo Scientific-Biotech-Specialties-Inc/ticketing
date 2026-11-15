@@ -36,7 +36,6 @@ import { useAuth } from '@/context/AuthContext';
 import FilePreviewModal from '@/components/FilePreviewModal';
 import InternalNotesSection from '@/components/InternalNotesSection';
 import TicketFeedbackSection from '@/components/feedback/TicketFeedbackSection';
-import { hasFeedbackBeenSubmitted } from '@/data/mockFeedbackData';
 import { PageHeader } from '@/components/ui/page-header';
 import { Badge, getStatusBadgeVariant } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -133,15 +132,23 @@ export default function EmployeeTicketUpdate() {
     }
   }, [location.pathname, location.search, location.state]);
 
-  const loadTicketData = useCallback(async () => {
+  /**
+   * Load the ticket. `background: true` (work log save, 30s poll, realtime event)
+   * refreshes in place without skeletons (spec 0038 AC-21 / AC-22). Skeletons show
+   * only on the first load of a ticket.
+   */
+  const loadTicketData = useCallback(async ({ background = false } = {}) => {
     if (!numericId) return;
-    setLoading(true);
-    setErrorMessage('');
+    if (!background) setLoading(true);
+    if (!background) setErrorMessage('');
     try {
-      const details = await getTicketDetails(numericId);
+      const details = background
+        ? await getTicketDetails(numericId, { forceRefresh: true })
+        : await getTicketDetails(numericId);
+      // AC-23: server values win, except the four local only reassignment fields.
       setTicket((prev) => ({
-        ...details,
         ...(prev || {}),
+        ...details,
         timeline: details?.timeline || prev?.timeline,
         reassignmentDenyReason: prev?.reassignmentDenyReason || details?.reassignmentDenyReason,
         disapprovalReason: prev?.disapprovalReason || details?.disapprovalReason,
@@ -157,21 +164,22 @@ export default function EmployeeTicketUpdate() {
 
       // TS040: Automatically load complete customer and support conversation thread
       try {
-        setConversationLoading(true);
+        if (!background) setConversationLoading(true);
         const msgs = await getTicketMessages(numericId);
         setConversationMessages(Array.isArray(msgs) ? msgs : []);
         setConversationError('');
       } catch (cErr) {
         console.warn('Could not load real-time conversation messages:', cErr);
-        setConversationError('Unable to load customer conversation messages.');
+        if (!background) setConversationError('Unable to load customer conversation messages.');
       } finally {
-        setConversationLoading(false);
+        if (!background) setConversationLoading(false);
       }
     } catch (err) {
       const msg = err?.response?.data?.message || 'Failed to load ticket details.';
-      setErrorMessage(msg);
+      if (!background) setErrorMessage(msg);
+      else console.warn('Background ticket refresh failed:', msg);
     } finally {
-      setLoading(false);
+      if (!background) setLoading(false);
     }
   }, [numericId, statusDraft]);
 
@@ -190,11 +198,14 @@ export default function EmployeeTicketUpdate() {
   }, [ticket?.status]);
 
   useRealtimeRefresh({
-    refresh: loadTicketData,
+    refresh: () => loadTicketData({ background: true }),
     channels: [{ name: 'ticket-updates', event: 'ticket.changed' }],
     intervalMs: 30000,
-    shouldRefresh: ({ payload }) => {
-      return (
+    // The poll has no payload and always refreshes; a realtime event refreshes
+    // only when it is about this ticket.
+    shouldRefresh: ({ source, payload }) => {
+      if (source === 'poll') return true;
+      return Boolean(
         payload &&
         (Number(payload.ticketId) === numericId || Number(payload.ticket_ID) === numericId)
       );
@@ -323,7 +334,7 @@ export default function EmployeeTicketUpdate() {
 
       setSuccessMessage(`Ticket successfully delegated to ${targetName}.`);
       setShowDelegateModal(false);
-      await loadTicketData();
+      await loadTicketData({ background: true });
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || 'Failed to delegate ticket. Ticket assignment remains unchanged.';
       setErrorMessage(msg);
@@ -412,11 +423,13 @@ export default function EmployeeTicketUpdate() {
       setRemarks('');
       setAttachedFiles([]);
       setShowStatusConfirm(false);
-      await loadTicketData();
+      await loadTicketData({ background: true });
     } catch (err) {
       // Every failed status change opens a modal explaining why.
       const notice = getActionError(err, 'Failed to update status.');
       setShowStatusConfirm(false);
+      // AC-25: return the dropdown to the saved status so nobody thinks it saved.
+      setStatusDraft(ticket.status);
       setActionError(notice);
       setErrorMessage(notice.inline);
     } finally {
@@ -453,7 +466,7 @@ export default function EmployeeTicketUpdate() {
       await updateEmployeeTicket(numericId, formData);
       setSuccessMessage('Internal note added successfully!');
       setTimeout(() => setSuccessMessage(''), 4000);
-      await loadTicketData();
+      await loadTicketData({ background: true });
     } catch (err) {
       // Revert optimistic note
       setTicket((prev) => prev ? {
@@ -491,7 +504,7 @@ export default function EmployeeTicketUpdate() {
   };
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <div className="space-y-6 w-full min-w-0 max-w-full">
       {/* Back button */}
       <div>
         <Button
@@ -1037,7 +1050,7 @@ export default function EmployeeTicketUpdate() {
                               {senderName}
                             </span>
                             {isPriorEmp ? (
-                              <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 rounded-md border border-amber-300">
+                              <span className="px-2 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-950 rounded-md border border-amber-300">
                                 {senderName} (previous Assigned Employee)
                               </span>
                             ) : (
@@ -1142,7 +1155,7 @@ export default function EmployeeTicketUpdate() {
                       setWorkLogDate(new Date().toISOString().split('T')[0]);
                       setWorkLogSuccess('Work log saved successfully.');
                       setTimeout(() => setWorkLogSuccess(''), 3000);
-                      await loadTicketData();
+                      await loadTicketData({ background: true });
                     } catch (err) {
                       setWorkLogError(err?.response?.data?.message || 'Failed to save work log.');
                     } finally {
@@ -1166,7 +1179,7 @@ export default function EmployeeTicketUpdate() {
                       </label>
                       <input
                         type="number"
-                        step="0.5"
+                        step="0.1"
                         min="0.1"
                         max="24"
                         placeholder="e.g. 2.5"
@@ -1230,26 +1243,34 @@ export default function EmployeeTicketUpdate() {
                   {timelineSortOrder === 'asc' ? 'Oldest First' : 'Newest First'}
                 </Button>
               </div>
-              <div className="relative pl-6 space-y-4 border-l border-border ml-3 py-1.5">
-                {sortedTimelineEvents.map((evt, idx) => (
-                  <div key={evt.id || idx} className="relative text-sm">
-                    <div className="absolute -left-[31px] top-1.5 w-2.5 h-2.5 rounded-full border-2 border-card bg-primary" />
-                    <div className="flex justify-between items-center text-xs text-muted-foreground mb-1">
-                      <span className="font-bold text-primary uppercase text-[10px] tracking-wider">
-                        {evt.type === 'system' ? 'System' : evt.type || 'Update'}
-                      </span>
-                      <span>{formatDisplayDate(evt.timestamp)}</span>
+              <div className="space-y-0 ml-1 py-1.5">
+                {sortedTimelineEvents.map((evt, idx) => {
+                  const isLast = idx === sortedTimelineEvents.length - 1;
+                  return (
+                    <div key={evt.id || idx} className="flex items-start gap-3.5 text-sm">
+                      <div className="flex flex-col items-center self-stretch shrink-0 w-3.5">
+                        <div className="w-2.5 h-2.5 rounded-full shrink-0 mt-1 border-2 border-card bg-primary" />
+                        {!isLast && <div className="w-[2px] bg-border flex-1 my-0.5" />}
+                      </div>
+                      <div className={`flex-1 min-w-0 ${!isLast ? 'pb-4' : 'pb-1'}`}>
+                        <div className="flex justify-between items-center text-xs text-muted-foreground mb-1">
+                          <span className="font-bold text-primary uppercase text-[10px] tracking-wider">
+                            {evt.type === 'system' ? 'System' : evt.type || 'Update'}
+                          </span>
+                          <span>{formatDisplayDate(evt.timestamp)}</span>
+                        </div>
+                        <p className="text-foreground leading-relaxed font-normal bg-muted/30 p-2.5 rounded-lg border border-border break-words whitespace-pre-wrap">
+                          {evt.text}
+                        </p>
+                      </div>
                     </div>
-                    <p className="text-foreground leading-relaxed font-normal bg-muted/30 p-2.5 rounded-lg border border-border break-words whitespace-pre-wrap">
-                      {evt.text}
-                    </p>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
 
             {/* Customer Satisfaction Feedback */}
-            {(ticket.status === 'Resolved' || ticket.status === 'Closed' || hasFeedbackBeenSubmitted(ticket.id || ticket.ticket_ID)) && (
+            {(ticket.status === 'Resolved' || ticket.status === 'Closed') && (
               <div className="rounded-xl border border-border bg-card p-6 shadow-xs">
                 <TicketFeedbackSection ticket={ticket} readOnly={true} />
               </div>
@@ -1260,14 +1281,15 @@ export default function EmployeeTicketUpdate() {
 
       {/* Confirmation Modal for status change */}
       <ConfirmationModal
-        open={showStatusConfirm}
-        onOpenChange={setShowStatusConfirm}
+        isOpen={showStatusConfirm}
+        onClose={() => setShowStatusConfirm(false)}
         title="Confirm Status Change"
         description={`Are you sure you want to change the status from "${ticket.status}" to "${statusDraft}"?`}
         confirmLabel={isSaving ? 'Saving...' : 'Yes, Save Changes'}
         cancelLabel="Cancel"
         onConfirm={handleStatusSave}
-        isDestructive={false}
+        loading={isSaving}
+        variant="primary"
       />
 
       {showProofModal && (

@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { MoreVertical, Filter, RotateCcw, Trash2, Edit3, FileText, X, Plus, Search, Calendar, User, Tag, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { MoreVertical, Filter, RotateCcw, Trash2, Edit3, FileText, X, Plus, Search, Calendar, User, Tag, AlertCircle, CheckCircle2, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge, getStatusBadgeVariant } from '@/components/ui/badge';
 import { PageHeader } from '@/components/ui/page-header';
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@/components/ui/table';
 import { DataTableSkeleton, DataTableEmptyState } from '@/components/ui/data-table';
+import Pagination from '@/components/Pagination';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -39,11 +40,25 @@ import { getMaxOpenTicketsLimit, OPEN_STATUS_SET } from '@/data/ticketLimitConfi
 
 import { parseUTCDate } from '@/utils/dateUtils';
 import TitleCasingModal from '@/components/TitleCasingModal';
+import { needsProperCasing, formatProperTitleCase } from '@/utils/titleCaseUtils';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import { hasFeedbackBeenSubmitted, fetchFeedbackForTicket } from '@/data/mockFeedbackData';
+import tokenStore from '@/auth/tokenStore';
 
 const ACTIVE_STATUSES = ['Open', 'Pending Assignment', 'In Progress', 'Pending', 'On Hold', 'Closed'];
 const HISTORY_STATUSES = ['Resolved', 'Closed', 'Discarded by Customer', 'Discarded'];
+const DISCARDED_STATUSES = ['Discarded', 'Discarded by Customer'];
+
+/**
+ * Spec 0043 (AC-19): which My Tickets tab a ticket belongs to.
+ * Closed goes to Closed (including closed tickets still awaiting feedback); Discarded goes to
+ * History only; every other status, Resolved included, stays in Active.
+ */
+export const customerTabFor = (ticket) => {
+  const status = ticket?.status || '';
+  if (DISCARDED_STATUSES.includes(status)) return null;
+  return status === 'Closed' ? 'closed' : 'active';
+};
 
 const getStoredUser = () => {
   try {
@@ -70,14 +85,24 @@ const statusClass = (s) => statusColors[s] ?? (s?.includes('Discarded') ? 'bg-re
 
 export default function MyTickets({ mode = 'all' }) {
   const isHistory = mode === 'history';
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   const effectiveUser = user || getStoredUser();
-  const customerId = effectiveUser?.id || 1;
+  const customerId = effectiveUser?.id || null;
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const urlTicketId = params?.ticketId || searchParams.get('ticketId');
+
+  const isLoggedOut =
+    sessionStorage.getItem('logged_out') === 'true' ||
+    sessionStorage.getItem('is_logged_out') === 'true';
+
+  useEffect(() => {
+    if (!effectiveUser || !isAuthenticated || isLoggedOut) {
+      navigate('/login', { replace: true });
+    }
+  }, [effectiveUser, isAuthenticated, isLoggedOut, navigate]);
 
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -99,7 +124,10 @@ export default function MyTickets({ mode = 'all' }) {
   const [openMenuId, setOpenMenuId] = useState(null);
   const [menuPos, setMenuPos] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
-  const [activeTab, setActiveTab] = useState(location.state?.tab === 'drafts' ? 'drafts' : 'tickets'); // 'tickets' | 'drafts'
+  const initialTab = location.state?.tab || searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState(
+    ['drafts', 'closed'].includes(initialTab) ? initialTab : 'active'
+  ); // 'active' | 'closed' | 'drafts'
   const [feedbackVersion, setFeedbackVersion] = useState(0);
   const [drafts, setDrafts] = useState([]);
   const [loadingDrafts, setLoadingDrafts] = useState(false);
@@ -119,11 +147,30 @@ export default function MyTickets({ mode = 'all' }) {
     date: '',
   });
 
-  useEffect(() => {
-    if (location.state?.tab) {
-      setActiveTab(location.state.tab);
+  const loadDrafts = useCallback(async () => {
+    if (!customerId || !isAuthenticated) return;
+    setLoadingDrafts(true);
+    try {
+      const list = await getTicketDrafts({ client_id: customerId });
+      setDrafts(list || []);
+    } catch (err) {
+      if (err?.response?.status !== 401) {
+        console.warn('Failed to load ticket drafts:', err);
+      }
+    } finally {
+      setLoadingDrafts(false);
     }
-  }, [location.state?.tab]);
+  }, [customerId, isAuthenticated]);
+
+  useEffect(() => {
+    const targetTab = location.state?.tab || searchParams.get('tab');
+    if (targetTab) {
+      setActiveTab(['drafts', 'closed', 'active'].includes(targetTab) ? targetTab : 'active');
+      if (targetTab === 'drafts') {
+        loadDrafts();
+      }
+    }
+  }, [location.state?.tab, location.state?.draftSavedAt, searchParams, loadDrafts]);
 
   // Auto-open ticket modal when navigating with ticketId (e.g. from email links or alerts)
   useEffect(() => {
@@ -138,6 +185,10 @@ export default function MyTickets({ mode = 'all' }) {
       try {
         const fullTicket = await getTicketDetails(Number(cleanId));
         if (isMounted && fullTicket) {
+          if (fullTicket.status === 'Resolved' || fullTicket.status === 'Closed') {
+            navigate(`/history/${cleanId}`, { state: { ticket: fullTicket, backPath: '/my-tickets' }, replace: true });
+            return;
+          }
           setSelectedTicket({
             ...fullTicket,
             id: fullTicket.id || `TKT-${String(cleanId).padStart(4, '0')}`,
@@ -159,19 +210,8 @@ export default function MyTickets({ mode = 'all' }) {
     return () => { isMounted = false; };
   }, [urlTicketId]);
 
-  const loadDrafts = useCallback(async () => {
-    setLoadingDrafts(true);
-    try {
-      const list = await getTicketDrafts();
-      setDrafts(list || []);
-    } catch (err) {
-      console.warn('Failed to load ticket drafts:', err);
-    } finally {
-      setLoadingDrafts(false);
-    }
-  }, [customerId]);
-
   const loadFilterOptions = useCallback(async () => {
+    if (!customerId || !isAuthenticated) return;
     try {
       const opts = await getCustomerFilterOptions(customerId);
       if (opts) {
@@ -185,11 +225,17 @@ export default function MyTickets({ mode = 'all' }) {
         }));
       }
     } catch (err) {
-      console.warn('Failed to load customer filter options:', err);
+      if (err?.response?.status !== 401) {
+        console.warn('Failed to load customer filter options:', err);
+      }
     }
-  }, [customerId]);
+  }, [customerId, isAuthenticated]);
 
   const loadTickets = useCallback(async ({ forceRefresh = false, source = 'manual' } = {}) => {
+    if (!customerId || !isAuthenticated) {
+      setLoading(false);
+      return;
+    }
     // Realtime ticks (websocket/poll) refresh silently instead of flashing the skeleton.
     if (source !== 'websocket' && source !== 'poll') setLoading(true);
     setError('');
@@ -204,21 +250,24 @@ export default function MyTickets({ mode = 'all' }) {
       });
       setTickets(uniqueTickets);
 
-      // Prefetch feedback for completed tickets so feedback status is immediately known
-      uniqueTickets.forEach((t) => {
-        if (t.status === 'Closed' || t.status === 'Resolved') {
+      // Prefetch feedback for completed tickets if authenticated
+      if (tokenStore.getToken()) {
+        const completed = uniqueTickets.filter((t) => t.status === 'Closed' || t.status === 'Resolved').slice(0, 5);
+        completed.forEach((t) => {
           const tId = t.id || t.ticket_ID;
           if (tId && typeof fetchFeedbackForTicket === 'function') {
             fetchFeedbackForTicket(tId).catch(() => {});
           }
-        }
-      });
+        });
+      }
     } catch (err) {
-      setError(err?.response?.data?.message || 'Failed to load tickets.');
+      if (err?.response?.status !== 401) {
+        setError(err?.response?.data?.message || 'Failed to load tickets.');
+      }
     } finally {
       setLoading(false);
     }
-  }, [customerId]);
+  }, [customerId, isAuthenticated]);
 
   useEffect(() => {
     try {
@@ -320,20 +369,35 @@ export default function MyTickets({ mode = 'all' }) {
   }, [filterOptions.categories, tickets]);
 
   const availableStatuses = useMemo(() => {
-    if (filterOptions.statuses && filterOptions.statuses.length > 0) {
-      return filterOptions.statuses.map((s) => (typeof s === 'string' ? s : (s.status_name || s.name || s.label || String(s.ticket_status_ID))));
-    }
-    return isHistory ? HISTORY_STATUSES : ACTIVE_STATUSES;
-  }, [filterOptions.statuses, isHistory]);
+    const all = filterOptions.statuses && filterOptions.statuses.length > 0
+      ? filterOptions.statuses.map((s) => (typeof s === 'string' ? s : (s.status_name || s.name || s.label || String(s.ticket_status_ID))))
+      : (isHistory ? HISTORY_STATUSES : ACTIVE_STATUSES);
+    if (isHistory) return all;
+    // AC-19: each tab's status filter lists only the statuses that tab holds.
+    if (activeTab === 'closed') return ['Closed'];
+    return all.filter((st) => st !== 'Closed' && !DISCARDED_STATUSES.includes(st));
+  }, [filterOptions.statuses, isHistory, activeTab]);
+
+  const tabCounts = useMemo(() => {
+    const counts = { active: 0, closed: 0 };
+    (tickets || []).forEach((t) => {
+      const tab = customerTabFor(t);
+      if (tab) counts[tab] += 1;
+    });
+    return counts;
+  }, [tickets]);
+
+  const isAwaitingFeedback = (ticket) => {
+    const isInternal = ticket.is_internal || ticket.ticket_type === 'Internal';
+    return ticket.status === 'Closed' && !isInternal
+      && !(hasFeedbackBeenSubmitted(ticket.id) || hasFeedbackBeenSubmitted(ticket.ticket_ID));
+  };
 
   const activeFilterList = useMemo(() => {
     const list = [];
-    if (filters.keywords) list.push({ key: 'keywords', label: `Keywords: "${filters.keywords}"` });
+    if (filters.keywords) list.push({ key: 'keywords', label: `Search: "${filters.keywords}"` });
     if (filters.machine) list.push({ key: 'machine', label: `Machine: ${filters.machine}` });
     if (filters.status) list.push({ key: 'status', label: `Status: ${filters.status}` });
-    if (filters.category) list.push({ key: 'category', label: `Category: ${filters.category}` });
-    if (filters.priority) list.push({ key: 'priority', label: `Priority: ${filters.priority}` });
-    if (filters.employee) list.push({ key: 'employee', label: `Employee: ${filters.employee}` });
     if (filters.date) list.push({ key: 'date', label: `Date: ${filters.date}` });
     return list;
   }, [filters]);
@@ -349,26 +413,19 @@ export default function MyTickets({ mode = 'all' }) {
         if (!HISTORY_STATUSES.includes(ticket.status)) return false;
         // Closed tickets pending feedback stay in My Tickets until feedback is submitted
         if (isClosedPendingFeedback) return false;
-      } else {
-        // Active "My Tickets"
-        if (filters.status) {
-          // If the user explicitly selects a status filter like 'Closed' or 'Resolved', respect it
-          if (ticket.status !== filters.status) return false;
-        } else {
-          if (ticket.status === 'Closed') {
-            if (!isClosedPendingFeedback) return false;
-          } else if (HISTORY_STATUSES.includes(ticket.status) || ['Resolved', 'Discarded', 'Discarded by Customer'].includes(ticket.status)) {
-            return false;
-          }
-        }
+      } else if (customerTabFor(ticket) !== activeTab) {
+        // AC-19: Active, Closed, and Drafts tabs; Discarded tickets only appear in History.
+        return false;
       }
 
-      // Keywords filter (matching Ticket ID, Title, Description, Machine/Equipment, Category)
+      // Keywords filter (matching Ticket ID, Title, Description, Machine/Equipment, Category, Assigned Employee, Priority)
       if (filters.keywords) {
         const kw = filters.keywords.trim().toLowerCase();
         const tid = String(ticket.id || '').toLowerCase();
         const numId = String(ticket.ticket_ID || ticket.id || '').replace(/\D/g, '');
         const cleanKw = kw.replace(/\D/g, '');
+        const empName = getTicketAssignedEmployee(ticket).toLowerCase();
+        const priority = String(ticket.priority || '').toLowerCase();
         const matches = (
           tid.includes(kw) ||
           (cleanKw && numId.includes(cleanKw)) ||
@@ -376,7 +433,9 @@ export default function MyTickets({ mode = 'all' }) {
           (ticket.description && ticket.description.toLowerCase().includes(kw)) ||
           (ticket.equipment && ticket.equipment.toLowerCase().includes(kw)) ||
           (ticket.machine_name && ticket.machine_name.toLowerCase().includes(kw)) ||
-          (ticket.category && ticket.category.toLowerCase().includes(kw))
+          (ticket.category && ticket.category.toLowerCase().includes(kw)) ||
+          empName.includes(kw) ||
+          priority.includes(kw)
         );
         if (!matches) return false;
       }
@@ -387,8 +446,14 @@ export default function MyTickets({ mode = 'all' }) {
       }
 
       // Category filter
-      if (filters.category && (ticket.category || '').trim().toLowerCase() !== filters.category.trim().toLowerCase()) {
+      if (filters.category && ticket.category && ticket.category.toLowerCase() !== filters.category.toLowerCase()) {
         return false;
+      }
+
+      // Priority filter
+      if (filters.priority) {
+        const ticketPriority = (typeof ticket.priority === 'object' ? ticket.priority?.priority_name : ticket.priority) || ticket.priority_name || '';
+        if (String(ticketPriority).toLowerCase() !== filters.priority.toLowerCase()) return false;
       }
 
       // Machine filter
@@ -397,26 +462,6 @@ export default function MyTickets({ mode = 'all' }) {
         const ticketMachine = (ticket.equipment || ticket.machine_name || '').trim().toLowerCase();
         if (!ticketMachine.includes(machineFilter)) {
           return false;
-        }
-      }
-
-      // Priority filter
-      if (filters.priority && (ticket.priority || 'Medium').trim().toLowerCase() !== filters.priority.trim().toLowerCase()) {
-        return false;
-      }
-
-      // Employee filter
-      if (filters.employee) {
-        const empFilter = filters.employee.trim().toLowerCase();
-        const empName = getTicketAssignedEmployee(ticket).toLowerCase();
-        if (empFilter === 'unassigned') {
-          if (empName !== 'unassigned' && empName !== '' && empName !== 'null') {
-            return false;
-          }
-        } else {
-          if (!empName.includes(empFilter)) {
-            return false;
-          }
         }
       }
 
@@ -437,7 +482,25 @@ export default function MyTickets({ mode = 'all' }) {
 
       return true;
     });
-  }, [filters, isHistory, tickets]);
+  }, [filters, isHistory, tickets, activeTab]);
+
+  const [page, setPage] = useState(1);
+  const itemsPerPage = 10;
+
+  useEffect(() => {
+    setPage(1);
+  }, [filters, isHistory, activeTab]);
+
+  useEffect(() => {
+    if (!isHistory && filters.status && !availableStatuses.includes(filters.status)) {
+      setFilters((current) => ({ ...current, status: '' }));
+    }
+  }, [availableStatuses, filters.status, isHistory]);
+
+  const paginatedTickets = useMemo(() => {
+    const start = (page - 1) * itemsPerPage;
+    return visibleTickets.slice(start, start + itemsPerPage);
+  }, [visibleTickets, page, itemsPerPage]);
 
   const closeNotif = () => setNotification(null);
   const showSuccess = (title, message) => setNotification({ type: 'success', title, message });
@@ -564,7 +627,23 @@ export default function MyTickets({ mode = 'all' }) {
     }
   };
 
+  const handleGiveFeedback = (t) => {
+    const ticketId = t.ticket_ID || parseInt(String(t.id || '').replace(/\D/g, ''), 10);
+    navigate(`/history/${ticketId}`, { state: { ticket: t, backPath: '/my-tickets?tab=closed', openFeedback: true } });
+  };
+
   const handleViewTicket = async (t) => {
+    if (isHistory || t.status === 'Resolved' || t.status === 'Closed') {
+      const ticketId = t.ticket_ID || parseInt(String(t.id || '').replace(/\D/g, ''), 10);
+      navigate(`/history/${ticketId}`, {
+        state: {
+          ticket: t,
+          backPath: isHistory ? '/history' : (t.status === 'Closed' ? '/my-tickets?tab=closed' : '/my-tickets'),
+        },
+      });
+      return;
+    }
+
     const isMock = !!t.isMock;
     if (isMock) {
       setSelectedTicket({
@@ -599,6 +678,7 @@ export default function MyTickets({ mode = 'all' }) {
         ...t,
         ...localDetails,
         ...fullTicket,
+        openDirectChat: Boolean(t?.openDirectChat),
         status: fullTicket.status || t.status || localDetails.status,
         description: fullTicket.description || localDetails.description || t.description || '',
         last_updated: fullTicket.updated_at || fullTicket.last_updated || localDetails.last_updated || t.last_updated,
@@ -744,6 +824,15 @@ export default function MyTickets({ mode = 'all' }) {
     return s === 'Open' && !hasAssignee;
   };
 
+  /** 'software' | 'service' | 'unclassified', from the category picked in the edit dialog (or the stored one). */
+  const editCategoryKind = (ticket) => {
+    const picked = (editOptions?.problem_categories || []).find((c) => String(c.problem_category_ID) === String(editCategory || ''));
+    const name = String(picked?.category_name || (editCategory ? '' : ticket?.category) || '').trim().toLowerCase();
+    if (name === 'software') return 'software';
+    if (name === 'service') return 'service';
+    return 'unclassified';
+  };
+
   const handleEditTicket = async (ticket) => {
     if (!canEditTicket(ticket)) {
       showError('Cannot Edit Ticket', 'Tickets can only be edited while Open and not yet assigned to an employee.');
@@ -759,6 +848,7 @@ export default function MyTickets({ mode = 'all' }) {
 
     let opts = getCachedTicketFormOptions();
     if (!opts) {
+      try { opts = await getTicketFormOptions(); } catch { opts = null; }
     }
     setEditOptions(opts);
 
@@ -898,9 +988,31 @@ export default function MyTickets({ mode = 'all' }) {
         title: finalTitle,
         description: editDescription,
       };
-      if (editCategory) payload.problem_category_ID = editCategory;
-      if (editEquipment) payload.machine_ID = editEquipment;
-      await updateTicket(payload);
+      // The customer may change the category. Software saves no machine;
+      // Service must keep one of the customer's registered machines.
+      if (editCategory) {
+        payload.problem_category_ID = Number(editCategory);
+      }
+      const editKind = editCategoryKind(ticket);
+      if (editKind === 'software') {
+        payload.machine_ID = null;
+      } else if (editEquipment) {
+        payload.machine_ID = Number(editEquipment);
+      } else if (editKind === 'service') {
+        showError('Validation error', 'Select one of your registered machines for a Service ticket.');
+        setModalLoading(false);
+        return;
+      }
+      const result = await updateTicket(payload);
+      const saved = result?.ticket;
+      if (saved) {
+        // AC-16: refresh the row from the server response, not from local guesses.
+        setTickets((prev) => (prev || []).map((t) => (
+          (t.ticket_ID && Number(t.ticket_ID) === Number(saved.ticket_ID)) || t.id === ticket.id
+            ? { ...t, title: saved.title, description: saved.description, machine_ID: saved.machine_ID, problem_category_ID: saved.problem_category_ID, category: saved.category, equipment: saved.equipment || t.equipment, last_updated: saved.updated_at || t.last_updated }
+            : t
+        )));
+      }
       const timestamp = new Date().toISOString();
       try {
         const existing = JSON.parse(localStorage.getItem('customer_ticket_details') || '{}');
@@ -992,7 +1104,7 @@ export default function MyTickets({ mode = 'all' }) {
   };
 
   return (
-    <div className="flex flex-col gap-6 font-sans text-dark-slate">
+    <div className="flex flex-col gap-6 font-sans text-dark-slate w-full min-w-0 max-w-full">
       <PageHeader
         title={isHistory ? 'Ticket History' : 'My Tickets'}
         subtitle={isHistory ? 'Review completed and discarded tickets.' : 'Track and manage your submitted support tickets.'}
@@ -1010,32 +1122,45 @@ export default function MyTickets({ mode = 'all' }) {
 
       {!isHistory && (
         <div className="flex border-b border-gray-200 gap-2">
+          {[
+            { key: 'active', label: 'Active', count: tabCounts.active },
+            { key: 'closed', label: 'Closed', count: tabCounts.closed },
+          ].map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              onClick={() => {
+                setActiveTab(tab.key);
+                setSearchParams(tab.key === 'active' ? {} : { tab: tab.key });
+              }}
+              className={`pb-3 px-4 text-sm font-bold transition-all border-b-2 -mb-px flex items-center gap-2 cursor-pointer ${
+                activeTab === tab.key
+                  ? 'border-brand-primary text-brand-primary'
+                  : 'border-transparent text-muted-slate hover:text-dark-slate'
+              }`}
+            >
+              {tab.label}
+              <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+                activeTab === tab.key ? 'bg-brand-primary/10 text-brand-primary' : 'bg-page text-muted-slate'
+              }`}>
+                {tab.count}
+              </span>
+            </button>
+          ))}
           <button
             type="button"
-            onClick={() => setActiveTab('tickets')}
-            className={`pb-3 px-4 text-sm font-bold transition-all border-b-2 -mb-px flex items-center gap-2 cursor-pointer ${
-              activeTab === 'tickets'
-                ? 'border-brand-primary text-brand-primary'
-                : 'border-transparent text-muted-slate hover:text-dark-slate'
-            }`}
-          >
-            All Tickets
-            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-              activeTab === 'tickets' ? 'bg-brand-primary/10 text-brand-primary' : 'bg-page text-muted-slate'
-            }`}>
-              {visibleTickets.length}
-            </span>
-          </button>
-          <button
-            type="button"
-            onClick={() => { setActiveTab('drafts'); loadDrafts(); }}
+            onClick={() => {
+              setActiveTab('drafts');
+              setSearchParams({ tab: 'drafts' });
+              loadDrafts();
+            }}
             className={`pb-3 px-4 text-sm font-bold transition-all border-b-2 -mb-px flex items-center gap-2 cursor-pointer ${
               activeTab === 'drafts'
                 ? 'border-brand-primary text-brand-primary'
                 : 'border-transparent text-muted-slate hover:text-dark-slate'
             }`}
           >
-            My Drafts
+            Drafts
             <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
               activeTab === 'drafts' ? 'bg-amber-100 text-amber-800' : 'bg-page text-muted-slate'
             }`}>
@@ -1047,213 +1172,90 @@ export default function MyTickets({ mode = 'all' }) {
 
       {activeTab !== 'drafts' ? (
         <>
-          {/* ─── Search & Filter Bar ─── */}
-          <div className="rounded-2xl border border-gray-150 bg-white p-4 shadow-sm space-y-3">
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
-              {/* 1. Keywords Search */}
-              <div className="relative">
-                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Keywords</label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    aria-label="Search by keywords"
-                    placeholder="Search keywords, ID, title..."
-                    value={filters.keywords}
-                    onChange={(e) => updateFilter('keywords', e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 pl-8 pr-7 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-[#252578] focus:border-transparent transition"
-                  />
-                  <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                  {filters.keywords && (
-                    <button
-                      type="button"
-                      aria-label="Clear keywords filter"
-                      onClick={() => clearFilter('keywords')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5 rounded cursor-pointer"
-                    >
-                      <X size={13} />
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {/* 2. Machine Dropdown */}
-              <div className="relative">
-                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Machine</label>
-                <div className="relative">
-                  <select
-                    aria-label="Filter by machine"
-                    value={filters.machine}
-                    onChange={(e) => updateFilter('machine', e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-[#252578] focus:border-transparent transition bg-white appearance-none pr-7"
+          {/* ─── Search & Filter Bar: Single row, no background container, no "SEARCH" title ─── */}
+          <div className="flex flex-col lg:flex-row items-center gap-2.5 w-full shrink-0">
+            <div className="relative flex-1 w-full min-w-[200px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-slate" />
+              <input
+                type="search"
+                aria-label="Search tickets"
+                placeholder="Search ID, title, or description..."
+                value={filters.keywords}
+                onChange={(e) => updateFilter('keywords', e.target.value)}
+                className="w-full rounded-xl border border-gray-200 bg-surface pl-9 pr-8 py-2 text-sm text-dark-slate outline-none focus:border-transparent focus:ring-2 focus:ring-brand-accent placeholder:text-muted-slate/60 h-10"
+              />
+              {filters.keywords && (
+                <button
+                  type="button"
+                  aria-label="Clear search filter"
+                  onClick={() => clearFilter('keywords')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs px-1 font-bold cursor-pointer"
+                  title="Clear search"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-2.5 w-full lg:w-auto shrink-0">
+              <select
+                aria-label="Filter by status"
+                value={filters.status}
+                onChange={(e) => updateFilter('status', e.target.value)}
+                className="h-10 flex-1 sm:flex-initial min-w-[130px] rounded-xl border border-gray-200 bg-surface px-3 text-sm text-dark-slate outline-none focus:border-transparent focus:ring-2 focus:ring-brand-accent cursor-pointer"
+              >
+                <option value="">All statuses</option>
+                {availableStatuses.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+              <select
+                aria-label="Filter by category"
+                value={filters.category}
+                onChange={(e) => updateFilter('category', e.target.value)}
+                className="h-10 flex-1 sm:flex-initial min-w-[130px] rounded-xl border border-gray-200 bg-surface px-3 text-sm text-dark-slate outline-none focus:border-transparent focus:ring-2 focus:ring-brand-accent cursor-pointer"
+              >
+                <option value="">All categories</option>
+                {availableCategories.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+              <select
+                aria-label="Filter by priority"
+                value={filters.priority}
+                onChange={(e) => updateFilter('priority', e.target.value)}
+                className="h-10 flex-1 sm:flex-initial min-w-[130px] rounded-xl border border-gray-200 bg-surface px-3 text-sm text-dark-slate outline-none focus:border-transparent focus:ring-2 focus:ring-brand-accent cursor-pointer"
+              >
+                <option value="">All priorities</option>
+                {availablePriorities.map((p) => (
+                  <option key={p} value={p}>{p}</option>
+                ))}
+              </select>
+              <div className="relative flex-1 sm:flex-initial">
+                <input
+                  type="date"
+                  aria-label="Filter by date"
+                  value={filters.date}
+                  onChange={(e) => updateFilter('date', e.target.value)}
+                  className="h-10 w-full sm:w-auto min-w-[130px] rounded-xl border border-gray-200 bg-surface px-3 text-sm text-dark-slate outline-none focus:border-transparent focus:ring-2 focus:ring-brand-accent cursor-pointer"
+                />
+                {filters.date && (
+                  <button
+                    type="button"
+                    aria-label="Clear date filter"
+                    onClick={() => clearFilter('date')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs px-1 font-bold cursor-pointer"
+                    title="Clear date"
                   >
-                    <option value="">All Machines</option>
-                    {availableMachines.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                  {filters.machine ? (
-                    <button
-                      type="button"
-                      aria-label="Clear machine filter"
-                      onClick={() => clearFilter('machine')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5 rounded cursor-pointer"
-                    >
-                      <X size={13} />
-                    </button>
-                  ) : (
-                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none text-[10px]">▼</span>
-                  )}
-                </div>
-              </div>
-
-              {/* 3. Status Dropdown */}
-              <div className="relative">
-                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Status</label>
-                <div className="relative">
-                  <select
-                    aria-label="Filter by status"
-                    value={filters.status}
-                    onChange={(e) => updateFilter('status', e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-[#252578] focus:border-transparent transition bg-white appearance-none pr-7"
-                  >
-                    <option value="">All Statuses</option>
-                    {availableStatuses.map((s) => (
-                      <option key={s} value={s}>{s}</option>
-                    ))}
-                  </select>
-                  {filters.status ? (
-                    <button
-                      type="button"
-                      aria-label="Clear status filter"
-                      onClick={() => clearFilter('status')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5 rounded cursor-pointer"
-                    >
-                      <X size={13} />
-                    </button>
-                  ) : (
-                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none text-[10px]">▼</span>
-                  )}
-                </div>
-              </div>
-
-              {/* 4. Category Dropdown */}
-              <div className="relative">
-                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Category</label>
-                <div className="relative">
-                  <select
-                    aria-label="Filter by category"
-                    value={filters.category}
-                    onChange={(e) => updateFilter('category', e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-[#252578] focus:border-transparent transition bg-white appearance-none pr-7"
-                  >
-                    <option value="">All Categories</option>
-                    {availableCategories.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                  {filters.category ? (
-                    <button
-                      type="button"
-                      aria-label="Clear category filter"
-                      onClick={() => clearFilter('category')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5 rounded cursor-pointer"
-                    >
-                      <X size={13} />
-                    </button>
-                  ) : (
-                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none text-[10px]">▼</span>
-                  )}
-                </div>
-              </div>
-
-              {/* 5. Priority Dropdown */}
-              <div className="relative">
-                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Priority</label>
-                <div className="relative">
-                  <select
-                    aria-label="Filter by priority"
-                    value={filters.priority}
-                    onChange={(e) => updateFilter('priority', e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-[#252578] focus:border-transparent transition bg-white appearance-none pr-7"
-                  >
-                    <option value="">All Priorities</option>
-                    {availablePriorities.map((p) => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
-                  </select>
-                  {filters.priority ? (
-                    <button
-                      type="button"
-                      aria-label="Clear priority filter"
-                      onClick={() => clearFilter('priority')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5 rounded cursor-pointer"
-                    >
-                      <X size={13} />
-                    </button>
-                  ) : (
-                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none text-[10px]">▼</span>
-                  )}
-                </div>
-              </div>
-
-              {/* 6. Employee Dropdown */}
-              <div className="relative">
-                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Employee</label>
-                <div className="relative">
-                  <select
-                    aria-label="Filter by employee"
-                    value={filters.employee}
-                    onChange={(e) => updateFilter('employee', e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-[#252578] focus:border-transparent transition bg-white appearance-none pr-7"
-                  >
-                    <option value="">All Employees</option>
-                    <option value="Unassigned">Unassigned</option>
-                    {availableEmployees.map((emp) => (
-                      <option key={emp} value={emp}>{emp}</option>
-                    ))}
-                  </select>
-                  {filters.employee ? (
-                    <button
-                      type="button"
-                      aria-label="Clear employee filter"
-                      onClick={() => clearFilter('employee')}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5 rounded cursor-pointer"
-                    >
-                      <X size={13} />
-                    </button>
-                  ) : (
-                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none text-[10px]">▼</span>
-                  )}
-                </div>
-              </div>
-
-              {/* 7. Date Picker */}
-              <div className="relative">
-                <label className="block text-[11px] font-bold text-gray-500 uppercase tracking-wider mb-1">Date</label>
-                <div className="relative">
-                  <input
-                    type="date"
-                    aria-label="Filter by date"
-                    value={filters.date}
-                    onChange={(e) => updateFilter('date', e.target.value)}
-                    className="w-full rounded-xl border border-gray-200 px-3 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-[#252578] focus:border-transparent transition bg-white"
-                  />
-                  {filters.date && (
-                    <button
-                      type="button"
-                      aria-label="Clear date filter"
-                      onClick={() => clearFilter('date')}
-                      className="absolute right-7 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5 rounded cursor-pointer"
-                    >
-                      <X size={13} />
-                    </button>
-                  )}
-                </div>
+                    ✕
+                  </button>
+                )}
               </div>
             </div>
+          </div>
 
-            {/* Active Filter Badges + Reset Actions */}
-            <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-gray-100 text-xs">
+          {/* Active Filter Badges + Reset Actions */}
+          {activeFilterList.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
               <div className="flex flex-wrap items-center gap-1.5 flex-1 min-w-[240px]">
                 {activeFilterList.map((item) => (
                   <span
@@ -1271,27 +1273,16 @@ export default function MyTickets({ mode = 'all' }) {
                     </button>
                   </span>
                 ))}
-                {activeFilterList.length === 0 && (
-                  <span className="text-gray-400 text-xs">No active filters</span>
-                )}
               </div>
-
-              <div className="flex items-center gap-2 ml-auto shrink-0">
-                <span className="text-gray-400 text-[11px]">
-                  Showing <strong className="text-gray-700">{visibleTickets.length}</strong> of {tickets.length}
-                </span>
-                {activeFilterList.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={resetFilters}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition cursor-pointer"
-                  >
-                    <RotateCcw size={12} /> Reset all filters
-                  </button>
-                )}
-              </div>
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition cursor-pointer"
+              >
+                <RotateCcw size={12} /> Reset all filters
+              </button>
             </div>
-          </div>
+          )}
 
           {error && (
             <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-sm font-semibold flex items-center justify-between">
@@ -1310,24 +1301,22 @@ export default function MyTickets({ mode = 'all' }) {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-[110px]">Ticket ID</TableHead>
+                  {isHistory && <TableHead className="w-[110px]">Ticket ID</TableHead>}
                   <TableHead className="min-w-[220px]">Title & Summary</TableHead>
                   <TableHead className="min-w-[140px]">Equipment</TableHead>
-                  <TableHead className="w-[100px]">Priority</TableHead>
                   <TableHead className="w-[170px] min-w-[155px]">Status</TableHead>
                   <TableHead className="min-w-[140px]">Assigned Employee</TableHead>
                   <TableHead className="w-[130px]">Date Created</TableHead>
-                  <TableHead className="w-[130px]">Last Updated</TableHead>
                   <TableHead className="w-[70px] text-center">Action</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {visibleTickets.length === 0 && loading && (
-                  <DataTableSkeleton columns={9} rows={5} />
+                  <DataTableSkeleton columns={isHistory ? 7 : 6} rows={5} />
                 )}
                 {visibleTickets.length === 0 && !loading && (
                   <DataTableEmptyState
-                    colSpan={9}
+                    colSpan={isHistory ? 7 : 6}
                     title="No tickets match your criteria"
                     description="Try adjusting your search keywords or clearing active filters."
                     action={
@@ -1339,7 +1328,7 @@ export default function MyTickets({ mode = 'all' }) {
                     }
                   />
                 )}
-                {visibleTickets.map((ticket, idx) => {
+                {paginatedTickets.map((ticket, idx) => {
                   const assignedEmpDisplay = getTicketAssignedEmployee(ticket);
 
                   return (
@@ -1348,20 +1337,17 @@ export default function MyTickets({ mode = 'all' }) {
                       className="cursor-pointer"
                       onClick={() => handleViewTicket(ticket)}
                     >
-                      <TableCell className="font-semibold text-brand-primary whitespace-nowrap">
-                        {ticket.id}
-                      </TableCell>
+                      {isHistory && (
+                        <TableCell className="font-semibold text-brand-primary whitespace-nowrap">
+                          {ticket.id}
+                        </TableCell>
+                      )}
                       <TableCell className="max-w-[260px]">
                         <div className="truncate font-medium text-dark-slate" title={ticket.title}>{ticket.title}</div>
                         <div className="truncate max-w-[240px] text-xs text-muted-slate md:hidden" title={ticket.description}>{ticket.description}</div>
                       </TableCell>
                       <TableCell className="text-muted-slate max-w-[160px] truncate" title={ticket.equipment || ticket.category}>
                         {ticket.equipment || ticket.category || '—'}
-                      </TableCell>
-                      <TableCell>
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap ${priorityColors[ticket.priority] ?? 'bg-gray-100 text-gray-700'}`}>
-                          {ticket.priority || 'Low'}
-                        </span>
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-col items-start gap-1">
@@ -1375,17 +1361,14 @@ export default function MyTickets({ mode = 'all' }) {
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="text-muted-slate max-w-[150px] truncate" title={assignedEmpDisplay}>
-                        <div className="flex items-center gap-1.5 text-xs">
+                      <TableCell className="text-muted-slate max-w-[200px]" title={assignedEmpDisplay}>
+                        <div className="flex items-center gap-1.5 text-xs min-w-0">
                           <User size={13} className="text-muted-slate shrink-0" />
                           <span className="truncate">{assignedEmpDisplay}</span>
                         </div>
                       </TableCell>
                       <TableCell className="text-muted-slate text-xs whitespace-nowrap">
                         {formatDisplayDate(ticket.date_created)}
-                      </TableCell>
-                      <TableCell className="text-muted-slate text-xs whitespace-nowrap">
-                        {formatDisplayDate(ticket.last_updated)}
                       </TableCell>
                       <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
                         <DropdownMenu>
@@ -1416,6 +1399,11 @@ export default function MyTickets({ mode = 'all' }) {
                               </>
                             ) : (
                               <>
+                                {isAwaitingFeedback(ticket) && (
+                                  <DropdownMenuItem onClick={() => handleGiveFeedback(ticket)}>
+                                    Give Feedback
+                                  </DropdownMenuItem>
+                                )}
                                 {canEditTicket(ticket) && (
                                   <DropdownMenuItem onClick={() => handleEditTicket(ticket)}>
                                     Edit
@@ -1437,6 +1425,20 @@ export default function MyTickets({ mode = 'all' }) {
                 })}
               </TableBody>
             </Table>
+            {!loading && visibleTickets.length > 0 && (
+              <div className="px-4 py-3 border-t border-slate-200 bg-surface flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-slate">
+                <span>
+                  Showing {(page - 1) * itemsPerPage + 1} to{' '}
+                  {Math.min(page * itemsPerPage, visibleTickets.length)} of {visibleTickets.length} tickets
+                </span>
+                <Pagination
+                  totalItems={visibleTickets.length}
+                  itemsPerPage={itemsPerPage}
+                  currentPage={page}
+                  onPageChange={setPage}
+                />
+              </div>
+            )}
           </div>
         </>
       ) : (
@@ -1457,14 +1459,6 @@ export default function MyTickets({ mode = 'all' }) {
               }`}>
                 {drafts.length} / 10 Drafts
               </span>
-              <button
-                type="button"
-                onClick={() => navigate('/create-ticket')}
-                disabled={drafts.length >= 10}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#252578] hover:bg-[#1f1f66] disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition cursor-pointer"
-              >
-                + New Ticket
-              </button>
             </div>
           </div>
 
@@ -1557,6 +1551,11 @@ export default function MyTickets({ mode = 'all' }) {
         onClose={() => setIsModalOpen(false)}
         onSubmit={handleCreateTicket}
         openTicketsCount={customerOpenCount}
+        onDraftSaved={() => {
+          setActiveTab('drafts');
+          setSearchParams({ tab: 'drafts' });
+          loadDrafts();
+        }}
       />
       <CustomerTicketDetailModal
         ticket={selectedTicket}
@@ -1603,24 +1602,20 @@ export default function MyTickets({ mode = 'all' }) {
               </div>
               <div className="grid gap-4 md:grid-cols-3">
                 <div className="min-w-0 md:col-span-2">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Category</p>
-                  {editOptions ? (
-                    <select
-                      value={editCategory}
-                      onChange={(e) => setEditCategory(e.target.value)}
-                      title={editingTicket.category || ''}
-                      className="mt-1 w-full rounded-xl border border-gray-200 bg-surface px-3 py-2 text-sm text-dark-slate outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-brand-accent"
-                    >
-                      <option value="">{editingTicket.category ? `Current: ${editingTicket.category}` : 'Select category'}</option>
-                      {(editOptions.problem_categories || editOptions.category_options || []).map((cat) => (
-                        <option key={cat.problem_category_ID || cat.value} value={cat.problem_category_ID || cat.value} title={cat.category_name || cat.label || cat.name}>
-                          {cat.category_name || cat.label || cat.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <p className="mt-1 text-sm text-dark-slate break-words">{editingTicket.category}</p>
-                  )}
+                  <label htmlFor="edit-category" className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Category</label>
+                  <select
+                    id="edit-category"
+                    data-testid="edit-category"
+                    value={editCategory ? String(editCategory) : ''}
+                    onChange={(e) => setEditCategory(e.target.value)}
+                    disabled={!editOptions}
+                    className="mt-1 w-full rounded-xl border border-gray-200 bg-surface px-3 py-2 text-sm text-dark-slate outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-brand-accent disabled:opacity-60"
+                  >
+                    <option value="" disabled>Pending classification</option>
+                    {(editOptions?.problem_categories || []).map((c) => (
+                      <option key={c.problem_category_ID} value={String(c.problem_category_ID)}>{c.category_name}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Status</p>
@@ -1628,30 +1623,28 @@ export default function MyTickets({ mode = 'all' }) {
                     {!editingTicket.assigned_to && editingTicket.status === 'In Progress' ? 'Open' : editingTicket.status}
                   </p>
                 </div>
-                <div className="min-w-0 md:col-span-2">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Equipment</p>
-                  {editOptions ? (
+                {editCategoryKind(editingTicket) !== 'software' && (
+                  <div className="min-w-0 md:col-span-2">
+                    <label htmlFor="edit-equipment" className="text-xs font-semibold uppercase tracking-wider text-muted-slate">
+                      Equipment {editCategoryKind(editingTicket) === 'service' && <span className="text-destructive">*</span>}
+                    </label>
                     <select
+                      id="edit-equipment"
                       value={editEquipment}
                       onChange={(e) => setEditEquipment(e.target.value)}
-                      title={editingTicket.equipment || ''}
-                      className="mt-1 w-full rounded-xl border border-gray-200 bg-surface px-3 py-2 text-sm text-dark-slate outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-brand-accent"
+                      disabled={!editOptions}
+                      required={editCategoryKind(editingTicket) === 'service'}
+                      className="mt-1 w-full rounded-xl border border-gray-200 bg-surface px-3 py-2 text-sm text-dark-slate outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-brand-accent disabled:opacity-60"
                     >
-                      <option value="">{editingTicket.equipment ? `Current: ${editingTicket.equipment}` : 'Select equipment'}</option>
-                      {(editOptions.equipment_options || editOptions.machines || []).map((m) => {
-                        const optVal = m.machine_ID || m.value || '';
-                        const optLabel = m.machine_name ? `${m.machine_name}${m.serial_number ? ` - ${m.serial_number}` : ''}` : (typeof m.label === 'string' ? m.label : (m.name || `Machine #${optVal}`));
-                        return (
-                          <option key={optVal || optLabel} value={optVal} title={optLabel}>
-                            {optLabel}
-                          </option>
-                        );
-                      })}
+                      <option value="">Select a machine</option>
+                      {(editOptions?.machines || []).map((m) => (
+                        <option key={m.machine_ID} value={m.machine_ID}>
+                          {`${m.machine_name}${m.serial_number ? ` - ${m.serial_number}` : ''}`}
+                        </option>
+                      ))}
                     </select>
-                  ) : (
-                    <p className="mt-1 text-sm text-dark-slate break-words">{editingTicket.equipment}</p>
-                  )}
-                </div>
+                  </div>
+                )}
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Date Created</p>
                   <p className="mt-1 text-sm text-dark-slate">{formatDate(editingTicket.date_created)}</p>

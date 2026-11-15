@@ -187,6 +187,11 @@ class EmployeeAssignmentService
             return ['status' => 404, 'data' => ['message' => 'Ticket not found']];
         }
 
+        // Spec 0043 (AC-20): an unclassified ticket must be classified by CS before anyone is assigned.
+        if ($ticket->problem_category_ID === null) {
+            return ['status' => 422, 'data' => ['message' => 'Classify this ticket before assigning.', 'code' => 'NEEDS_CLASSIFICATION']];
+        }
+
         $currentState = $this->stateMachine->resolveState($ticket);
         try {
             $this->stateMachine->validateTransition($ticket, $currentState, TicketStateMachine::STATE_ASSIGNED);
@@ -249,6 +254,8 @@ class EmployeeAssignmentService
                     'updated_at' => now(),
                 ]);
             }
+
+            $this->recordAssignmentChange($ticketId, $toRemove->values()->all(), $toAdd->values()->all(), $assignedBy);
 
             DB::table('reassignment_requests')
                 ->where('ticket_id', $ticketId)
@@ -516,15 +523,19 @@ class EmployeeAssignmentService
                     ->exists();
 
                 if ($isDirectlyAssigned) {
-                    DB::table('ticket_assignments')->insert([
-                        'ticket_ID' => $ticketId,
-                        'employee_ID' => $empId,
-                        'assigned_by' => $empId,
-                        'assignment_status' => 'assigned',
-                        'assigned_at' => now(),
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
+                    DB::transaction(function () use ($ticketId, $empId) {
+                        DB::table('ticket_assignments')->insert([
+                            'ticket_ID' => $ticketId,
+                            'employee_ID' => $empId,
+                            'assigned_by' => $empId,
+                            'assignment_status' => 'assigned',
+                            'assigned_at' => now(),
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                        // Spec 0039 (AC-1): no op when a period is already open for this holder.
+                        $this->periods()->open($ticketId, (int) $empId, (int) $empId);
+                    });
                     $assignment = DB::table('ticket_assignments')
                         ->where('ticket_ID', $ticketId)
                         ->where('employee_ID', $empId)
@@ -565,6 +576,9 @@ class EmployeeAssignmentService
                         'accepted_at' => now(),
                         'updated_at' => now(),
                     ]);
+
+                // Spec 0039 (AC-2): accepting twice never moves the period's accepted_at.
+                $this->periods()->accept($ticketId, (int) $empId);
 
                 $inProgressId = DB::table('ticket_statuses')
                     ->whereRaw('LOWER(status_name) = ?', ['in progress'])
@@ -745,6 +759,8 @@ class EmployeeAssignmentService
                         'updated_at' => now(),
                     ]);
                 }
+
+                $this->recordAssignmentChange($ticketId, $toRemove->values()->all(), $toAdd->values()->all(), $assignedBy);
 
                 DB::table('reassignment_requests')
                     ->where('ticket_id', $ticketId)
@@ -981,6 +997,11 @@ class EmployeeAssignmentService
                     } elseif (in_array(strtolower($newStatusName), ['on hold', 'hold', 'pending'])) {
                         $updateFields['previous_in_progress_owner'] = $ticket->in_progress_owner ?? 'employee';
                         $updateFields['in_progress_owner'] = null;
+                        // Spec 0038 AC-28: an On Hold ticket resumes to the status it was held from.
+                        if ((int) $statusId === 11) {
+                            $updateFields['held_from_status_ID'] = $ticket->ticket_status_ID;
+                            $updateFields['hold_reason'] = $remarksText !== '' ? $remarksText : null;
+                        }
                     } elseif (in_array(strtolower($newStatusName), ['in progress', 'pending evaluation'])) {
                         $updateFields['in_progress_owner'] = 'employee';
                     }
@@ -989,6 +1010,12 @@ class EmployeeAssignmentService
                     DB::table('tickets')
                         ->where('ticket_ID', $ticketId)
                         ->update($updateFields);
+
+                    // Spec 0039: Resolved or Closed ends every holding period (AC-3); On Hold pauses them (AC-4).
+                    $this->periods()->releaseForStatus($ticketId, (int) $statusId);
+                    if (in_array(strtolower($newStatusName), ['on hold', 'hold', 'pending'])) {
+                        $this->periods()->pause($ticketId);
+                    }
 
                     DB::table('ticket_audit_logs')->insert([
                         'ticket_ID' => $ticketId,
@@ -1258,6 +1285,33 @@ class EmployeeAssignmentService
      * Ask ticket-service (owner of SLA rules) to recalculate SLA deadlines after a
      * priority change made here. Failures are logged and never block assignment.
      */
+    /** Spec 0039: assignment period history writer. */
+    private function periods(): AssignmentPeriodRecorder
+    {
+        return app(AssignmentPeriodRecorder::class);
+    }
+
+    /**
+     * Spec 0039 (AC-1, AC-3): record a CS assign or reassign. Removed holders are released as
+     * reassigned when someone new takes over, or returned_to_cs when nobody is left holding the ticket.
+     * Must run inside the transaction that changes ticket_assignments (AC-21).
+     */
+    private function recordAssignmentChange(int $ticketId, array $removedEmpIds, array $addedEmpIds, int $assignedBy): void
+    {
+        if (!empty($removedEmpIds)) {
+            $stillAssigned = DB::table('ticket_assignments')->where('ticket_ID', $ticketId)->exists();
+            $this->periods()->release(
+                $ticketId,
+                $stillAssigned ? AssignmentPeriodRecorder::REASON_REASSIGNED : AssignmentPeriodRecorder::REASON_RETURNED_TO_CS,
+                $removedEmpIds
+            );
+        }
+
+        foreach ($addedEmpIds as $employeeId) {
+            $this->periods()->open($ticketId, (int) $employeeId, $assignedBy);
+        }
+    }
+
     private function requestSlaRecalculation(int $ticketId): void
     {
         try {

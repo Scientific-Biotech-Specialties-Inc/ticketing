@@ -124,6 +124,13 @@ export default function PrivateRoute({ children, role }) {
       if (e.persisted) {
         document.documentElement.style.visibility = 'hidden';
         window.location.reload();
+        return;
+      }
+      if (isCustomerSite) {
+        const isLoggedOut = typeof window !== 'undefined' && sessionStorage.getItem('is_logged_out') === 'true';
+        if (isLoggedOut) {
+          window.location.replace(import.meta.env.BASE_URL || '/');
+        }
       }
     };
     window.addEventListener('pageshow', handlePageShow);

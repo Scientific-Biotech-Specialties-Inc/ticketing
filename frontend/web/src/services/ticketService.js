@@ -14,6 +14,23 @@ const ticketClient = axios.create({
   },
 });
 
+const getStoredClientId = () => {
+  for (const key of ['user', 'auth_user']) {
+    for (const store of [sessionStorage, localStorage]) {
+      try {
+        const raw = store.getItem(key);
+        if (!raw) continue;
+        const u = JSON.parse(raw);
+        const cid = u?.client_ID || u?.client_id || u?.id || u?.emp_id;
+        if (cid) return cid;
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return null;
+};
+
 ticketClient.interceptors.request.use((config) => {
   const token = tokenStore.getToken();
   if (token) {
@@ -849,9 +866,13 @@ export const resumeTicket = async (ticketId) => {
   return response.data;
 };
 
-export const reclassifyTicket = async ({ ticketId, problem_category_ID, priority_ID }) => {
+export const reclassifyTicket = async ({ ticketId, problem_category_ID, priority_ID, machine_ID }) => {
   const numericId = Number(String(ticketId).replace(/\D/g, ''));
   const payload = {};
+  // Spec 0043 (AC-20): a Service classification carries one of the customer's machines.
+  if (machine_ID !== undefined && machine_ID !== null && machine_ID !== '') {
+    payload.machine_ID = Number(machine_ID);
+  }
   if (problem_category_ID !== undefined && problem_category_ID !== null) {
     payload.problem_category_ID = Number(problem_category_ID);
   }
@@ -959,6 +980,9 @@ export const createTicket = async (payload) => {
       description: response.data.ticket?.description,
       date_created: response.data.ticket?.created_at,
       last_updated: response.data.ticket?.updated_at,
+      attachments: (response.data?.attachments && response.data.attachments.length > 0)
+        ? response.data.attachments
+        : (processedPayload.attachments || []),
     });
   }
   return response.data;
@@ -1243,13 +1267,8 @@ export const getWorklogs = async (params = {}) => {
 };
 
 export const saveWorkLog = async (payload) => {
-  try {
-    const response = await employeeClient.post('/employee/worklogs', payload);
-    return response.data;
-  } catch (err) {
-    const response = await employeeClient.post('/employee/worklogs', payload);
-    return response.data;
-  }
+  const response = await employeeClient.post('/employee/worklogs', payload);
+  return response.data;
 };
 
 export const getNotifications = async () => {
@@ -1606,12 +1625,28 @@ export const getEmployeeFilterOptions = async () => {
 };
 
 // Ticket SLA Reminder (TS-REMINDER)
-export const sendTicketReminder = async (ticketId, customMessage = '') => {
+// Spec 0038 AC-31: record that the current CS user opened a proof of completion file.
+// Returns { viewed_attachment_ids, all_viewed }.
+export const recordProofView = async (ticketId, attachmentId) => {
   const numericId = typeof ticketId === 'number' ? ticketId : Number(String(ticketId).replace(/\D/g, ''));
-  const response = await ticketClient.post(`/tickets/${numericId}/reminders`, {
+  const response = await ticketClient.post(`/tickets/${numericId}/proof-views`, {
+    attachment_id: Number(attachmentId),
+  });
+  return response.data;
+};
+
+// Spec 0038 AC-8: `employeeId` reminds that specific active assignee (per assignee cooldown).
+// Omit it to remind the primary assignee, as before.
+export const sendTicketReminder = async (ticketId, customMessage = '', employeeId = null) => {
+  const numericId = typeof ticketId === 'number' ? ticketId : Number(String(ticketId).replace(/\D/g, ''));
+  const body = {
     custom_message: customMessage,
     message: customMessage,
-  });
+  };
+  if (employeeId !== null && employeeId !== undefined && employeeId !== '') {
+    body.employee_id = Number(employeeId);
+  }
+  const response = await ticketClient.post(`/tickets/${numericId}/reminders`, body);
   return response.data;
 };
 
@@ -1739,6 +1774,27 @@ export const triggerEtlSync = async (payload = {}) => {
   return response.data;
 };
 
+/**
+ * Ask the AI service to pick a problem category from the supplied list.
+ * Resolves to `{ category_id: null }` on any failure so the customer simply chooses manually
+ * (no local fallback model).
+ */
+export const suggestProblemCategory = async (title, description, categories) => {
+  const none = { category_id: null, confidence: 0, reasoning: '', source: 'none' };
+  if (!description || !Array.isArray(categories) || categories.length === 0) return none;
+  try {
+    const response = await axiosInstance.post(`${AI_API_URL || '/api/ticketing/ai'}/classify-category`, {
+      title,
+      description,
+      categories: categories.map((c) => ({ id: c.problem_category_ID, name: c.category_name })),
+    });
+    return response.data?.data || none;
+  } catch (err) {
+    console.warn('AI category suggestion unavailable; category left for manual selection:', err);
+    return none;
+  }
+};
+
 export const classifyDepartment = async (title, description) => {
   try {
     const response = await axiosInstance.post(`${AI_API_URL || '/api/ticketing/ai'}/classify-department`, {
@@ -1762,4 +1818,32 @@ export const classifyDepartment = async (title, description) => {
       source: 'client-fallback'
     };
   }
+};
+
+// ─── Spec 0043: department codes (superadmin; employee-service owns `departments`) ───
+
+/** Every department with its code and active state, for the superadmin departments table. */
+export const getDepartmentsWithCodes = async () => {
+  const response = await employeeClient.get('/departments', { params: { include_inactive: 1 } });
+  return response.data?.departments ?? [];
+};
+
+/** Server suggested code for a department name (initials, first 3 letters, number suffix if taken). */
+export const suggestDepartmentCode = async (name, excludeId = null) => {
+  const params = { name };
+  if (excludeId) params.exclude_id = excludeId;
+  const response = await employeeClient.get('/departments/code-suggestion', { params });
+  return response.data?.code ?? '';
+};
+
+export const createDepartment = async ({ name, code, description }) => {
+  const response = await employeeClient.post('/departments', { name, code: code || undefined, description: description || undefined });
+  departmentsCache = null;
+  return response.data?.department;
+};
+
+export const updateDepartment = async (id, fields) => {
+  const response = await employeeClient.put(`/departments/${id}`, fields);
+  departmentsCache = null;
+  return response.data?.department;
 };

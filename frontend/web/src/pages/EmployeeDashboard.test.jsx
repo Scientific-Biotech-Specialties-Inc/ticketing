@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import EmployeeDashboard from './EmployeeDashboard';
 import * as ticketService from '@/services/ticketService';
@@ -114,8 +114,8 @@ describe('EmployeeDashboard dual panel workspace (AC-13, AC-14, AC-15, AC-20)', 
     expect(screen.getByText(/Manage your assigned technician work/)).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByText('Section I: Assigned Workload (My Work)')).toBeInTheDocument();
-      expect(screen.getByText('Section II: Requestor Activity (My Requests)')).toBeInTheDocument();
+      expect(screen.getAllByText('My Work').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('My Request').length).toBeGreaterThan(0);
     });
   });
 
@@ -147,15 +147,15 @@ describe('EmployeeDashboard dual panel workspace (AC-13, AC-14, AC-15, AC-20)', 
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Section I: Assigned Workload (My Work)')).toBeInTheDocument();
+      expect(screen.getAllByText('My Work').length).toBeGreaterThan(0);
     });
 
-    const requestsPill = screen.getByRole('button', { name: /my requests/i });
+    const requestsPill = screen.getByRole('button', { name: /my request/i });
     fireEvent.click(requestsPill);
 
     await waitFor(() => {
-      expect(screen.queryByText('Section I: Assigned Workload (My Work)')).toBeNull();
-      expect(screen.getByText('Section II: Requestor Activity (My Requests)')).toBeInTheDocument();
+      expect(screen.queryByText('My Work')).toBeNull();
+      expect(screen.getAllByText('My Request').length).toBeGreaterThan(0);
     });
   });
 
@@ -196,7 +196,7 @@ describe('EmployeeDashboard dual panel workspace (AC-13, AC-14, AC-15, AC-20)', 
       expect(screen.getByText('Unable to load assigned workload tickets.')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('Section II: Requestor Activity (My Requests)')).toBeInTheDocument();
+    expect(screen.getAllByText('My Request').length).toBeGreaterThan(0);
   });
 
   describe('contextual ticket modals (covers: AC-3)', () => {
@@ -275,6 +275,92 @@ describe('EmployeeDashboard dual panel workspace (AC-13, AC-14, AC-15, AC-20)', 
       });
       expect(screen.queryByRole('button', { name: /^accept$/i })).toBeNull();
       expect(ticketService.acceptTicket).not.toHaveBeenCalled();
+    });
+
+    it('never displays In Progress tickets as pending acceptance even when accepted flag is false', async () => {
+      ticketService.getEmployeeAssignedTickets.mockResolvedValue([
+        {
+          id: 'TKT-701',
+          ticket_ID: 701,
+          title: 'Active Centrifuge Repair',
+          customer: 'St Luke Hospital',
+          status: 'In Progress',
+          priority: 'Medium',
+          sla_breached: false,
+          accepted: false,
+          updated_at: '2026-11-03T10:30:00Z',
+        },
+        {
+          id: 'TKT-702',
+          ticket_ID: 702,
+          title: 'Breached MRI Cooling Task',
+          customer: 'Metro Medical',
+          status: 'In Progress',
+          priority: 'Critical',
+          sla_breached: true,
+          accepted: false,
+          updated_at: '2026-11-03T10:30:00Z',
+        },
+      ]);
+      ticketService.getTicketDetails.mockImplementation(async (id) => ({
+        ticket_ID: id,
+        status: 'In Progress',
+        accepted: false,
+      }));
+
+      render(
+        <MemoryRouter>
+          <EmployeeDashboard />
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Assigned Items Needing Immediate Action (1)')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByText(/Awaiting Review & Accept/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Accept / Review' })).not.toBeInTheDocument();
+      expect(screen.getByText(/SLA Critical/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Update Ticket' })).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Update Ticket' }));
+      await waitFor(() => expect(ticketService.getTicketDetails).toHaveBeenCalledWith(702));
+      expect(screen.queryByRole('button', { name: /^accept$/i })).toBeNull();
+    });
+
+    it('lists only SLA breached or at risk tickets as needing immediate action (spec 0038 AC-20)', async () => {
+      ticketService.getEmployeeAssignedTickets.mockResolvedValue([
+        {
+          id: 'TKT-801', ticket_ID: 801, title: 'Unaccepted On Track Ticket', customer: 'A',
+          status: 'Assigned', priority: 'Low', sla_breached: false, accepted: false,
+          updated_at: '2026-11-03T10:30:00Z',
+        },
+        {
+          id: 'TKT-802', ticket_ID: 802, title: 'Escalated Without Risk', customer: 'B',
+          status: 'Escalated', priority: 'Medium', sla_breached: false, accepted: true,
+          updated_at: '2026-11-03T10:30:00Z',
+        },
+        {
+          id: 'TKT-803', ticket_ID: 803, title: 'At Risk Analyzer Repair', customer: 'C',
+          status: 'In Progress', priority: 'High', sla_status: 'At Risk', accepted: true,
+          updated_at: '2026-11-03T10:30:00Z',
+        },
+      ]);
+
+      render(
+        <MemoryRouter>
+          <EmployeeDashboard />
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Assigned Items Needing Immediate Action (1)')).toBeInTheDocument();
+      });
+      const heading = screen.getByText('Assigned Items Needing Immediate Action (1)');
+      const section = heading.parentElement.parentElement;
+      expect(within(section).getByText('At Risk Analyzer Repair')).toBeInTheDocument();
+      expect(within(section).queryByText('Unaccepted On Track Ticket')).toBeNull();
+      expect(within(section).queryByText('Escalated Without Risk')).toBeNull();
     });
   });
 });

@@ -341,8 +341,13 @@ const applyUnauthenticated = (setUser, setIsAuthenticated) => {
 
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [user, setUser] = useState(() => readStoredUser());
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    const hasAuthCookie = document.cookie.split('; ').some((c) => c.startsWith('is_authenticated=true') || c.startsWith('access_token='));
+    const stored = readStoredUser();
+    return hasAuthCookie || Boolean(stored);
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isFirstLogin, setIsFirstLogin] = useState(() =>
@@ -368,6 +373,17 @@ export function AuthProvider({ children }) {
 
       applyUnauthenticated(setUser, setIsAuthenticated);
       return false;
+    }
+
+    // If the browser has active SSO session cookies or a stored staff user from Central Auth Module,
+    // clear any stale logout flags left in sessionStorage from a prior session.
+    if (typeof window !== 'undefined') {
+      const hasSsoAuth = document.cookie.split('; ').some((c) => c.startsWith('is_authenticated=true') || c.startsWith('access_token='));
+      const stored = readStoredUser();
+      const hasStaffSession = isStaffUser(stored);
+      if (hasSsoAuth || hasStaffSession) {
+        clearLoggedOutFlags();
+      }
     }
 
     // Skip session revalidation on guest/login pages or if user explicitly logged out.

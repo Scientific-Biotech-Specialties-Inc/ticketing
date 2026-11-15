@@ -155,7 +155,14 @@ class VerifyEmployeeJwt
         }
 
         if (!$verified) {
-            Log::warning('VerifyEmployeeJwt: Signature verification failed (local and remote verify exhausted)');
+            $errs = [];
+            while ($msg = openssl_error_string()) { $errs[] = $msg; }
+            Log::warning('VerifyEmployeeJwt: Signature verification failed (local and remote verify exhausted)', [
+                'token_sample' => substr($token, 0, 50) . '...' . substr($token, -30),
+                'payload_decoded' => $base64UrlDecode($payloadB64),
+                'openssl_errors' => $errs,
+                'public_key_path' => $publicKeyPath,
+            ]);
             return response()->json(['message' => 'Unauthorized: Invalid signature'], 401);
         }
 
@@ -210,9 +217,11 @@ class VerifyEmployeeJwt
             str_contains($normRole, 'customer service') || str_contains($normRole, 'customer-service') ||
             str_contains($normRole, 'head of cs') || str_contains($normRole, 'head of customer service') || $normRole === 'cs') {
             $mappedRole = 'customer service';
-        } elseif ($normRole === 'superadmin' || $normRole === 'super admin' || $normDept === 'superadmin' || $normDept === 'super admin') {
+        } elseif ($normRole === 'it admin' || $normRole === 'superadmin' || $normRole === 'super admin' || $normDept === 'superadmin' || $normDept === 'super admin') {
+            // Auth Module "IT Admin" (admin@example.com) is the Ticketing superadmin: global configuration, all branches.
             $mappedRole = 'superadmin';
-        } elseif ($normRole === 'it admin' || $normRole === 'admin' || ($normDept === 'admin' && $normRole !== 'superadmin')) {
+        } elseif ($normRole === 'branch admin' || $normRole === 'admin' || ($normDept === 'admin' && $normRole !== 'superadmin')) {
+            // Auth Module "Branch Admin" is the Ticketing admin, scoped to the branch on their Auth profile.
             $mappedRole = 'admin';
         } elseif (str_contains($normDept, 'service') || str_contains($normDept, 'engineer') ||
                   str_contains($normRole, 'service') || str_contains($normRole, 'engineer') || $normRole === 'employee') {
@@ -227,11 +236,11 @@ class VerifyEmployeeJwt
             $payloadBranch = $payloadBranch ?: (string) $payloadBranchId;
         }
 
-        $isAdminOrSuperAdmin = in_array(strtolower($email), ['admin@example.com', 'superadmin@example.com'], true)
-            || in_array($normRole, ['superadmin', 'super admin', 'admin', 'it admin'], true)
-            || in_array($normDept, ['superadmin', 'super admin', 'admin'], true);
+        // Role-based only: no email address grants elevated handling. Only the global superadmin may
+        // go without a branch; a branch admin is branch-scoped, so their branch is looked up like staff.
+        $isGlobalAdmin = $mappedRole === 'superadmin';
 
-        if (!$isAdminOrSuperAdmin && empty($payloadBranch) && empty($payloadBranchId)) {
+        if (!$isGlobalAdmin && empty($payloadBranch) && empty($payloadBranchId)) {
             $userId = $payload['sub'] ?? null;
             if ($userId) {
                 try {
@@ -257,6 +266,12 @@ class VerifyEmployeeJwt
                     Log::warning('VerifyEmployeeJwt: Failed to query internal user branch from auth-service', ['error' => $e->getMessage()]);
                 }
             }
+        }
+
+        // Auth Module branch ids are numbered independently of ticket-service branch ids (Auth 12 is
+        // SBSI Makati; local 12 may be another branch), so a foreign numeric id is never stored as-is.
+        if (!empty($payloadBranch) || !empty($payloadBranchId)) {
+            [$payloadBranch, $payloadBranchId] = $this->resolveLocalBranch($payloadBranch);
         }
 
         $existingEmployee = class_exists('App\Models\Employee')
@@ -339,6 +354,34 @@ class VerifyEmployeeJwt
         ], $ttlSeconds);
 
         return $next($request);
+    }
+
+    /**
+     * Map an Auth Module branch name to the local branch row (case-insensitive name match).
+     * Returns [local name, local id]; the id is null when no local branch matches or the
+     * service has no Branch model, so a foreign id is never written to employees.branch_id.
+     *
+     * @return array{0: ?string, 1: ?int}
+     */
+    protected function resolveLocalBranch(?string $branchName): array
+    {
+        $branchName = trim((string) $branchName);
+        if ($branchName === '') {
+            return [null, null];
+        }
+
+        if (class_exists('App\Models\Branch')) {
+            try {
+                $local = \App\Models\Branch::whereRaw('LOWER(name) = ?', [strtolower($branchName)])->first();
+                if ($local) {
+                    return [$local->name, (int) $local->id];
+                }
+            } catch (\Throwable $e) {
+                // Fall through: keep the name, drop the foreign id
+            }
+        }
+
+        return [$branchName, null];
     }
 
     /**

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import tokenStore from '@/auth/tokenStore';
-import { saveFeedback, updateFeedback, deleteFeedback, fetchFeedbackForTicket } from './mockFeedbackData';
+import { saveFeedback, updateFeedback, deleteFeedback, fetchFeedbackForTicket, feedbackTicketId } from './mockFeedbackData';
 
 /**
  * Spec 0034 (AC-4, AC-11): the analytics service identifies the caller from the verified token only.
@@ -84,12 +84,24 @@ describe('feedback requests to the analytics service (spec 0034)', () => {
     expect(init.headers).not.toHaveProperty('Authorization');
   });
 
-  it('keeps the saved local copy even when the analytics request is refused', async () => {
-    global.fetch = vi.fn(async () => ({ ok: false, status: 401, json: async () => ({ message: 'Unauthenticated.' }) }));
+  it('reports a refused analytics request and does not pretend the feedback was saved', async () => {
+    global.fetch = vi.fn(async () => ({ ok: false, status: 404, json: async () => ({ message: 'Ticket not found.' }) }));
 
-    await saveFeedback('5001', { 501: 5 }, {}, 'Still saved locally');
+    await expect(saveFeedback('5001', { 501: 5 }, {}, 'Not saved')).rejects.toThrow('Ticket not found.');
 
-    const stored = JSON.parse(localStorage.getItem('customer_feedback'));
-    expect(stored['5001'].overallComment).toBe('Still saved locally');
+    expect(JSON.parse(localStorage.getItem('customer_feedback') || '{}')['5001']).toBeUndefined();
+  });
+
+  it('reports an unreachable analytics service and does not save feedback locally (spec 0038 AC-37)', async () => {
+    global.fetch = vi.fn(async () => { throw new TypeError('Failed to fetch'); });
+
+    await expect(saveFeedback('5001', { 501: 5 }, {}, 'Not saved')).rejects.toThrow('Feedback cannot be verified right now');
+
+    expect(JSON.parse(localStorage.getItem('customer_feedback') || '{}')['5001']).toBeUndefined();
+  });
+
+  it('uses the numeric ticket_ID, not the display number, for backend calls', () => {
+    expect(feedbackTicketId({ id: 'TKT-0012', ticket_ID: 12 })).toBe(12);
+    expect(feedbackTicketId({ id: 'TKT-0012' })).toBe('TKT-0012');
   });
 });

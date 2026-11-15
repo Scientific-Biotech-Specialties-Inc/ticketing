@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Events\TicketChanged;
 use App\Mail\TicketNotificationMail;
+use App\Services\Mail\ConfigServiceMailer;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -131,12 +132,28 @@ class TicketNotificationService
      */
     public function notifyCS(string $title, string $message, ?int $ticketId = null, ?array $data = null, ?int $excludeUserId = null, ?string $alertKey = null): void
     {
-        $csUsers = DB::table('employees')->where('role', 'customer service')->pluck('emp_id');
+        $csUsers = DB::table('employees')
+            ->where(function ($q) {
+                $q->whereRaw('LOWER(role) IN (?, ?, ?, ?, ?, ?)', [
+                    'customer service',
+                    'cs',
+                    'customer support',
+                    'head of cs',
+                    'head of customer service',
+                    'cs_manager'
+                ])
+                ->orWhereRaw('LOWER(department) IN (?, ?)', [
+                    'customer service',
+                    'customer support'
+                ]);
+            })
+            ->pluck('emp_id');
+
         foreach ($csUsers as $csEmpId) {
             if ($excludeUserId !== null && (int) $csEmpId === $excludeUserId) {
                 continue;
             }
-            $this->notifyRecipient((int)$csEmpId, 'employee', $title, $message, $ticketId, $data, $alertKey);
+            $this->notifyRecipient((int)$csEmpId, 'employee', $title, $message, $ticketId, $data, $alertKey ?? 'reassignment');
         }
     }
 
@@ -204,7 +221,7 @@ class TicketNotificationService
                 }
             }
         } catch (\Throwable $e) {
-            Log::warning("Configuration-service template dispatch-event failed: {$e->getMessage()}");
+            Log::warning("Configuration-service template dispatch-event failed, trying direct dispatch then SMTP backup: {$e->getMessage()}");
         }
 
         return false;
@@ -258,7 +275,8 @@ class TicketNotificationService
         }
 
         try {
-            Mail::to($employee->email)->send(new TicketNotificationMail(
+            // Spec 0040: configuration-service (Brevo API) first, Brevo SMTP relay as backup.
+            app(ConfigServiceMailer::class)->send($employee->email, new TicketNotificationMail(
                 $subject,
                 $message,
                 $ticketRef,
@@ -266,9 +284,9 @@ class TicketNotificationService
                 $category,
                 $priority,
                 $ticketLink
-            ));
-        } catch (\Exception $e) {
-            Log::warning("Failed to send ticket email to {$employee->email}: {$e->getMessage()}");
+            ), $alertKey, ConfigServiceMailer::CATEGORY_NOTIFICATION);
+        } catch (\Throwable $e) {
+            Log::warning("Failed to send ticket email to employee {$empId}: {$e->getMessage()}");
         }
     }
 
@@ -319,7 +337,8 @@ class TicketNotificationService
         }
 
         try {
-            Mail::to($client->email)->send(new TicketNotificationMail(
+            // Spec 0040: configuration-service (Brevo API) first, Brevo SMTP relay as backup.
+            app(ConfigServiceMailer::class)->send($client->email, new TicketNotificationMail(
                 $subject,
                 $message,
                 $ticketRef,
@@ -327,9 +346,9 @@ class TicketNotificationService
                 $category,
                 $priority,
                 $ticketLink
-            ));
-        } catch (\Exception $e) {
-            Log::warning("Failed to send customer email to {$client->email}: {$e->getMessage()}");
+            ), $alertKey, ConfigServiceMailer::CATEGORY_NOTIFICATION);
+        } catch (\Throwable $e) {
+            Log::warning("Failed to send customer email to client {$customerId}: {$e->getMessage()}");
         }
     }
 

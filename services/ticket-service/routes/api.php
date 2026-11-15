@@ -28,7 +28,8 @@ Route::middleware('auth.subsystem')->get('/user', function (Request $request) {
 });
 
 // ─── Core Ticket Public / Common Endpoints ────────────────────────────────────
-Route::get('/ticket-form-options', [TicketController::class, 'formOptions']);
+// Spec 0043 (AC-15): optional auth so a signed in customer only sees their own registered machines.
+Route::middleware('auth.subsystem:optional')->get('/ticket-form-options', [TicketController::class, 'formOptions']);
 Route::get('/cs/filter-options', [TicketDashboardController::class, 'csFilterOptions']);
 Route::get('/branches', [BranchPriorityController::class, 'publicBranches']);
 
@@ -90,6 +91,10 @@ Route::middleware('auth.subsystem')->group(function () {
     // ─── Ticket Reminders (TS084) ─────────────────────────────────────────────
     Route::post('/tickets/{ticketId}/reminders', [TicketReminderController::class, 'sendReminder']);
     Route::post('/tickets/{ticketId}/reminder', [TicketReminderController::class, 'sendReminder']);
+
+    // ─── Spec 0038: proof review gate and lightweight ownership lookup ───────
+    Route::post('/tickets/{ticketId}/proof-views', [\App\Http\Controllers\TicketProofReviewController::class, 'store'])->whereNumber('ticketId');
+    Route::get('/tickets/{ticketId}/ownership', [\App\Http\Controllers\TicketOwnershipController::class, 'show'])->whereNumber('ticketId')->middleware('no-cache');
 
     // ─── Core Ticket Lifecycle & Status Transitions ───────────────────────────
     Route::post('/tickets', [TicketController::class, 'store']);

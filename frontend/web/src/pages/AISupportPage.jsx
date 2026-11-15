@@ -1,13 +1,16 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
-import { Bot, Send, Paperclip, ChevronDown, ChevronUp, X, CheckCircle, AlertTriangle, Plus, MessageSquare, Trash2, ArrowLeft, Clock } from 'lucide-react';
+import { Bot, Send, Paperclip, ChevronDown, ChevronUp, X, CheckCircle, CheckCircle2, AlertTriangle, Plus, MessageSquare, Trash2, ArrowLeft, Clock, Menu, Loader2, RefreshCw } from 'lucide-react';
 import axiosInstance from '@/api/axiosInstance';
 import { AI_API_URL } from '@/config/api.config';
 import { getTicketFormOptions, createTicket, getCustomerTickets, saveTicketDraft } from '@/services/ticketService';
+import useCategoryPreview, { isSoftwareCategory, isServiceCategory } from '@/hooks/useCategoryPreview';
+import { buildTicketTitle, FALLBACK_PROBLEM } from '@/utils/ticketTitle';
 import TitleCasingModal from '@/components/TitleCasingModal';
 import DuplicateTicketModal from '@/components/DuplicateTicketModal';
 import { formatProperTitleCase, needsProperCasing } from '@/utils/titleCaseUtils';
+import { resolveRegisteredMachine, formatMachineLabel, buildEscalationDescription } from '@/utils/machineMatching';
 import SkeletonLoader from '@/components/SkeletonLoader.jsx';
 
 const formatTime = (iso) => {
@@ -30,66 +33,124 @@ const formatShortTime = (iso) => {
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
-function FormattedText({ text }) {
+function FormattedText({ text, isUser = false }) {
+  const [completedSteps, setCompletedSteps] = useState({});
+
   if (typeof text !== 'string') return text;
 
+  if (isUser) {
+    return (
+      <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+        {text}
+      </p>
+    );
+  }
+
   const lines = text.split('\n');
+  const stepRegex = /^(?:\*\*step\s*(\d+)[:\.\-]?\*\*|step\s*(\d+)[:\.\-]|(\d+)[\.\)])\s*(.*)$/i;
+
+  const totalDetectedSteps = lines.reduce((acc, line) => {
+    const trimmed = line.trim();
+    const isBullet = trimmed.startsWith('- ') || trimmed.startsWith('* ');
+    const cleanLine = isBullet ? trimmed.substring(2) : trimmed;
+    return stepRegex.test(cleanLine) ? acc + 1 : acc;
+  }, 0);
+
+  const completedCount = Object.values(completedSteps).filter(Boolean).length;
+
+  const renderInlineTokens = (rawStr) =>
+    rawStr.split(/(\*\*.*?\*\*|\*.*?\*|`.*?`)/g).map((part, idx) => {
+      if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
+        return <strong key={idx} className="font-bold text-slate-900">{part.slice(2, -2)}</strong>;
+      }
+      if (part.startsWith('*') && part.endsWith('*') && part.length >= 2) {
+        return <em key={idx} className="italic">{part.slice(1, -1)}</em>;
+      }
+      if (part.startsWith('`') && part.endsWith('`') && part.length >= 2) {
+        return <code key={idx} className="bg-white border border-gray-200 px-1.5 py-0.5 rounded text-xs font-mono text-[#252578]">{part.slice(1, -1)}</code>;
+      }
+      return part;
+    });
+
   return (
-    <div className="text-sm leading-relaxed break-words space-y-1">
+    <div className="text-sm leading-relaxed break-words space-y-1.5">
+      {totalDetectedSteps >= 2 && (
+        <div className="mb-2.5 flex items-center justify-between gap-2 rounded-xl bg-[#252578]/5 border border-[#252578]/15 px-3 py-2 text-xs">
+          <span className="font-bold text-[#252578] flex items-center gap-1.5">
+            <CheckCircle2 size={14} className="text-[#2E85D8]" />
+            Guided Troubleshooting Steps
+          </span>
+          <span className="text-[11px] font-semibold text-slate-600 bg-white px-2 py-0.5 rounded-full border border-slate-200">
+            {completedCount} / {totalDetectedSteps} Completed
+          </span>
+        </div>
+      )}
       {lines.map((line, lineIdx) => {
         const trimmed = line.trim();
         const isBullet = trimmed.startsWith('- ') || trimmed.startsWith('* ');
-        const cleanLine = isBullet ? trimmed.substring(2) : line;
+        const cleanLine = isBullet ? trimmed.substring(2) : trimmed;
 
-        // Structured step detection: "Step 1: ...", "1. ...", "2) ..."
-        const stepMatch = cleanLine.match(/^(?:step\s*(\d+)[:\.]|(\d+)[\.\)])\s*(.*)$/i);
-        if (stepMatch && !isBullet) {
-          const stepNum = stepMatch[1] || stepMatch[2];
-          const stepBody = stepMatch[3];
-          const stepParts = stepBody.split(/(\*\*.*?\*\*|\*.*?\*|`.*?`)/g).map((part, idx) => {
-            if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
-              return <strong key={idx} className="font-bold text-gray-900">{part.slice(2, -2)}</strong>;
-            }
-            if (part.startsWith('*') && part.endsWith('*') && part.length >= 2) {
-              return <em key={idx} className="italic">{part.slice(1, -1)}</em>;
-            }
-            if (part.startsWith('`') && part.endsWith('`') && part.length >= 2) {
-              return <code key={idx} className="bg-white border border-gray-200 px-1 py-0.5 rounded text-xs font-mono">{part.slice(1, -1)}</code>;
-            }
-            return part;
-          });
+        // Structured step detection: "Step 1: ...", "**Step 1:** ...", "1. ...", "2) ..."
+        const stepMatch = cleanLine.match(stepRegex);
+        if (stepMatch) {
+          const stepNum = stepMatch[1] || stepMatch[2] || stepMatch[3];
+          const stepBody = stepMatch[4] || '';
+          const isDone = Boolean(completedSteps[stepNum]);
+
+          // Extract optional leading bold title e.g. "**Power Cycle Unit** — Unplug the main cord..."
+          const titleMatch = stepBody.match(/^\*\*(.+?)\*\*\s*(?:[:\-—–]\s*)?(.*)$/);
+          const stepTitle = titleMatch ? titleMatch[1] : null;
+          const stepDesc = titleMatch ? titleMatch[2] : stepBody;
 
           return (
-            <div key={lineIdx} className="my-2 p-3 bg-blue-50/70 border border-blue-200/80 rounded-xl flex items-start gap-2.5 text-left shadow-xs">
-              <span className="bg-[#252578] text-white text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 mt-0.5 shadow-xs">
-                Step {stepNum}
-              </span>
-              <div className="flex-1 text-gray-800 text-xs font-medium leading-relaxed">
-                {stepParts}
+            <div
+              key={lineIdx}
+              onClick={() => setCompletedSteps((prev) => ({ ...prev, [stepNum]: !prev[stepNum] }))}
+              className={`my-2 p-3.5 rounded-xl border transition-all cursor-pointer flex items-start gap-3 text-left shadow-xs ${
+                isDone
+                  ? 'bg-emerald-50/70 border-emerald-200'
+                  : 'bg-blue-50/60 hover:bg-blue-50/90 border-blue-200/80'
+              }`}
+              title="Click to mark step as completed"
+            >
+              <div className="flex items-center gap-2 shrink-0 mt-0.5">
+                <span
+                  className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-colors ${
+                    isDone
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-[#252578] text-white'
+                  }`}
+                >
+                  {isDone ? '✓' : stepNum}
+                </span>
+                <span
+                  className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                    isDone
+                      ? 'bg-emerald-100 text-emerald-800'
+                      : 'bg-[#252578]/10 text-[#252578]'
+                  }`}
+                >
+                  Step {stepNum}
+                </span>
+              </div>
+              <div className={`flex-1 text-xs leading-relaxed ${isDone ? 'line-through text-slate-500' : 'text-slate-800 font-medium'}`}>
+                {stepTitle && (
+                  <p className={`font-bold text-xs mb-0.5 ${isDone ? 'text-emerald-800' : 'text-[#252578]'}`}>
+                    {stepTitle}
+                  </p>
+                )}
+                <div>{renderInlineTokens(stepDesc || stepTitle || '')}</div>
               </div>
             </div>
           );
         }
 
-        // Match **bold**, *italic*, and `code`
-        const parts = cleanLine.split(/(\*\*.*?\*\*|\*.*?\*|`.*?`)/g);
-        const elements = parts.map((part, idx) => {
-          if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
-            return <strong key={idx} className="font-bold">{part.slice(2, -2)}</strong>;
-          }
-          if (part.startsWith('*') && part.endsWith('*') && part.length >= 2) {
-            return <em key={idx} className="italic">{part.slice(1, -1)}</em>;
-          }
-          if (part.startsWith('`') && part.endsWith('`') && part.length >= 2) {
-            return <code key={idx} className="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono">{part.slice(1, -1)}</code>;
-          }
-          return part;
-        });
+        const elements = renderInlineTokens(cleanLine);
 
         if (isBullet) {
           return (
             <div key={lineIdx} className="flex items-start gap-2 pl-2">
-              <span className="text-gray-900 font-bold flex-shrink-0 select-none">•</span>
+              <span className="text-[#252578] font-bold flex-shrink-0 select-none">•</span>
               <div>{elements}</div>
             </div>
           );
@@ -146,12 +207,12 @@ const isTroubleshootingResponse = (content) => {
 };
 
 const suggestionChips = [
-  'Printer won\'t start',
-  'Machine Error 402',
-  'Paper Jam',
-  'Scanner not detected',
-  'Network Issue',
-  'Replace Toner',
+  'Machine Calibration Error',
+  'Display Panel Unresponsive',
+  'Sensor Connection Fault',
+  'Power Supply / Startup Issue',
+  'Software Sync Error',
+  'Network Connectivity Issue',
 ];
 
 const welcomeMessage = {
@@ -172,15 +233,40 @@ const gatherDetailsMessage = {
   id: 'gather-details',
   role: 'ai',
   content: (
-    <div>
-      <p className="text-sm font-semibold mb-2">Before I begin troubleshooting, I'd like to gather a few details so I can provide the most accurate assistance</p>
-      <ol className="list-decimal list-inside text-sm space-y-1 text-gray-700">
-        <li>What machine are you having an issue?</li>
-        <li>What is the brand and model of the machine?</li>
-        <li>Do you know the serial number? (Type "Not Available" if you dont)</li>
-        <li>What problem are you experiencing?</li>
-        <li>Are there any troubleshooting you already did?</li>
-      </ol>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-100">
+        <p className="text-xs sm:text-sm font-bold text-[#252578]">
+          Diagnostic Intake — 5 Quick Steps to Get Started
+        </p>
+        <span className="text-[10px] font-bold uppercase tracking-wider bg-[#252578]/10 text-[#252578] px-2 py-0.5 rounded-full shrink-0">
+          Step-by-Step Guide
+        </span>
+      </div>
+      <p className="text-xs text-slate-600 leading-relaxed">
+        Share the details below in a single message (or one by one) so I can provide accurate, model-specific troubleshooting steps:
+      </p>
+      <div className="space-y-2">
+        {[
+          { step: 1, title: 'Equipment / Machine Name', desc: 'Which machine or equipment unit is experiencing the issue?' },
+          { step: 2, title: 'Brand & Model', desc: 'What is the manufacturer brand and specific model number?' },
+          { step: 3, title: 'Serial Number', desc: 'Provide the unit serial number (or reply "Not Available" if unknown).' },
+          { step: 4, title: 'Symptom & Error Code', desc: 'Describe the exact fault, behavior, or error code displayed on screen.' },
+          { step: 5, title: 'Prior Troubleshooting', desc: 'List any checks, restarts, or actions you have already tried.' },
+        ].map((item) => (
+          <div
+            key={item.step}
+            className="flex items-start gap-2.5 p-2.5 rounded-xl bg-slate-50 border border-slate-200/80 text-xs"
+          >
+            <span className="bg-[#252578] text-white text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 mt-0.5">
+              Step {item.step}
+            </span>
+            <div className="min-w-0 flex-1">
+              <span className="font-bold text-slate-800">{item.title}: </span>
+              <span className="text-slate-600">{item.desc}</span>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   ),
   timestamp: new Date().toISOString(),
@@ -234,7 +320,7 @@ function AISourceList({ sources }) {
 // AI conversation statuses (ai-service) meaning the chat already ended in a ticket.
 const FINISHED_CONVERSATION_STATUSES = ['ticket_created', 'escalated'];
 
-function TicketRecommendationCard({ onCreateTicket, onContinue }) {
+function TicketRecommendationCard({ onCreateTicket, onContinue, isPreparing = false }) {
   return (
     <div className="flex justify-start">
       <div className="max-w-[75%] w-full">
@@ -250,8 +336,11 @@ function TicketRecommendationCard({ onCreateTicket, onContinue }) {
                 <button
                   type="button"
                   onClick={onCreateTicket}
-                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer"
+                  disabled={isPreparing}
+                  aria-busy={isPreparing}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer disabled:opacity-70"
                 >
+                  {isPreparing && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
                   Create Ticket
                 </button>
                 <button
@@ -270,7 +359,7 @@ function TicketRecommendationCard({ onCreateTicket, onContinue }) {
   );
 }
 
-function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onSaveDraft }) {
+function TicketReviewModal({ isOpen, data, machines = [], categories = [], optionsError = false, onRetryOptions, conversationId = null, onClose, onSubmit, onSaveDraft }) {
   const navigate = useNavigate();
   const [form, setForm] = useState(data || {});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -279,6 +368,25 @@ function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onS
   const [showTitleCasingModal, setShowTitleCasingModal] = useState(false);
   const [isTitleManuallyEdited, setIsTitleManuallyEdited] = useState(false);
   const [submitError, setSubmitError] = useState(null);
+  const [machineError, setMachineError] = useState(null);
+  // The customer picks the category; the AI suggestion fills it until they choose one themselves.
+  // Service needs a machine, Software hides the equipment field.
+  const [categoryTouched, setCategoryTouched] = useState(false);
+  const categoryPreview = useCategoryPreview({
+    title: form.problemSummary || '',
+    description: form.conversationSummary || '',
+    categories,
+    enabled: Boolean(isOpen) && !categoryTouched,
+  });
+  useEffect(() => {
+    if (categoryTouched || !categoryPreview.category) return;
+    const suggested = String(categoryPreview.category.problem_category_ID);
+    setForm((prev) => (String(prev.problem_category_ID || '') === suggested ? prev : { ...prev, problem_category_ID: suggested }));
+  }, [categoryPreview.category, categoryTouched]);
+  const selectedCategory = categories.find((c) => String(c.problem_category_ID) === String(form.problem_category_ID || '')) || null;
+  const requiresEquipment = isServiceCategory(selectedCategory);
+  const showEquipment = !isSoftwareCategory(selectedCategory);
+  const selectedMachine = machines.find((m) => String(m.machine_ID) === String(form.machine_ID)) || null;
 
   useEffect(() => {
     if (data) {
@@ -289,10 +397,22 @@ function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onS
       setShowTitleCasingModal(false);
       setIsTitleManuallyEdited(false);
       setSubmitError(null);
+      setMachineError(null);
+      setCategoryTouched(false);
     }
   }, [data, isOpen]);
 
   if (!isOpen) return null;
+
+  /** AC-3: a Service ticket cannot be submitted without a registered machine. */
+  const validateMachine = () => {
+    if (requiresEquipment && !form.machine_ID) {
+      setMachineError('Select your machine before submitting this ticket.');
+      return false;
+    }
+    setMachineError(null);
+    return true;
+  };
 
   const handleSaveDraft = async () => {
     if (isSubmitting || isSavingDraft || !onSaveDraft) return;
@@ -309,6 +429,7 @@ function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onS
 
   const handleSubmit = async () => {
     if (isSubmitting || isSavingDraft) return;
+    if (!validateMachine()) return;
 
     const summaryTrimmed = (form.problemSummary || '').trim();
     // Only prompt for proper casing if the user manually edited the title
@@ -325,7 +446,7 @@ function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onS
     setIsSubmitting(true);
     setSubmitError(null);
     try {
-      await onSubmit(form);
+      await onSubmit(showEquipment ? form : { ...form, machine_ID: null, machineModel: '' });
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || 'Failed to submit ticket.';
       setSubmitError(msg);
@@ -375,41 +496,76 @@ function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onS
           </div>
         )}
         <div className="overflow-y-auto px-6 py-4 space-y-4 flex-1">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-                Machine / Equipment <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                list="review-machines-list"
-                value={form.machineModel || ''}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  const matched = machines.find(m => 
-                    m.machine_name?.toLowerCase() === val.toLowerCase() || 
-                    m.model?.toLowerCase() === val.toLowerCase()
-                  );
-                  setForm({ 
-                    ...form, 
-                    machineModel: val,
-                    machine_ID: matched ? matched.machine_ID : form.machine_ID 
-                  });
-                }}
-                placeholder="Select or enter machine..."
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-transparent focus:ring-2 focus:ring-[#252578]"
-              />
-              <datalist id="review-machines-list">
-                {machines.map((m) => (
-                  <option key={m.machine_ID} value={m.machine_name}>
-                    {m.serial_number ? `${m.machine_name} (${m.serial_number})` : m.machine_name}
-                  </option>
-                ))}
-              </datalist>
-              <p className="text-[11px] text-gray-400 mt-1">
-                Select the specific machine experiencing the problem. Tickets are tracked per machine.
-              </p>
+          {optionsError && (
+            <div role="alert" className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3">
+              <AlertTriangle size={16} className="text-red-600 flex-shrink-0" />
+              <p className="flex-1 text-xs text-red-700 font-medium">We could not load your machines and categories.</p>
+              {onRetryOptions && (
+                <button type="button" onClick={onRetryOptions} className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 hover:underline cursor-pointer">
+                  <RefreshCw size={12} aria-hidden="true" />
+                  Retry
+                </button>
+              )}
             </div>
+          )}
+          {showEquipment && (
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                  Machine / Equipment {requiresEquipment ? <span className="text-red-500">*</span> : <span className="normal-case font-normal text-gray-400">(optional)</span>}
+                </label>
+                <select
+                  aria-label="Machine / Equipment"
+                  aria-invalid={Boolean(machineError)}
+                  value={form.machine_ID ? String(form.machine_ID) : ''}
+                  onChange={(e) => {
+                    const picked = machines.find(m => String(m.machine_ID) === e.target.value) || null;
+                    const next = {
+                      ...form,
+                      machine_ID: picked ? picked.machine_ID : null,
+                      machineModel: picked ? formatMachineLabel(picked) : '',
+                    };
+                    // AC-3 / AC-4: the auto title follows the machine until the customer edits it by hand.
+                    if (!isTitleManuallyEdited && form.titleParts) {
+                      next.problemSummary = buildTicketTitle({ ...form.titleParts, machineName: picked?.machine_name || '' });
+                    }
+                    setForm(next);
+                    if (picked) setMachineError(null);
+                  }}
+                  className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-transparent focus:ring-2 focus:ring-[#252578] bg-white ${machineError ? 'border-red-400' : 'border-gray-200'}`}
+                >
+                  <option value="">Select your machine</option>
+                  {machines.map((m) => (
+                    <option key={m.machine_ID} value={String(m.machine_ID)}>
+                      {formatMachineLabel(m)}
+                    </option>
+                  ))}
+                </select>
+                {machineError ? (
+                  <p role="alert" className="text-[11px] text-red-600 mt-1">{machineError}</p>
+                ) : (
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    {machines.length === 0
+                      ? 'No registered machines were found on your account.'
+                      : 'Select the specific machine experiencing the problem. Tickets are tracked per machine.'}
+                  </p>
+                )}
+              </div>
+              <div>
+                <label htmlFor="review-serial" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Serial Number</label>
+                <input
+                  id="review-serial"
+                  type="text"
+                  readOnly
+                  tabIndex={-1}
+                  value={selectedMachine?.serial_number || ''}
+                  placeholder="Select a machine"
+                  className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 outline-none"
+                />
+              </div>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Company Name</label>
               <input
@@ -419,8 +575,6 @@ function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onS
                 className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-transparent focus:ring-2 focus:ring-[#252578]"
               />
             </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Purchase Date</label>
               <input
@@ -430,19 +584,29 @@ function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onS
                 className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-transparent focus:ring-2 focus:ring-[#252578]"
               />
             </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Suggested Category</label>
-              <select
-                value={form.category || 'Hardware'}
-                onChange={(e) => setForm({ ...form, category: e.target.value })}
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-transparent focus:ring-2 focus:ring-[#252578] bg-white"
-              >
-                <option>Hardware</option>
-                <option>Software</option>
-                <option>Network</option>
-                <option>Consumables</option>
-                <option>Other</option>
-              </select>
+              <label htmlFor="review-category" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Category</label>
+              <div className="relative">
+                <select
+                  id="review-category"
+                  value={form.problem_category_ID || ''}
+                  onChange={(e) => {
+                    setCategoryTouched(true);
+                    setForm({ ...form, problem_category_ID: e.target.value });
+                  }}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-transparent focus:ring-2 focus:ring-[#252578] bg-white"
+                >
+                  <option value="">Let AI decide</option>
+                  {categories.map((c) => (
+                    <option key={c.problem_category_ID} value={c.problem_category_ID}>{c.category_name}</option>
+                  ))}
+                </select>
+                {categoryPreview.loading && !categoryTouched && (
+                  <Loader2 size={14} className="pointer-events-none absolute right-8 top-3 animate-spin text-gray-400" aria-hidden="true" />
+                )}
+              </div>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -461,7 +625,7 @@ function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onS
             </div>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Problem Summary</label>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Ticket Title</label>
             <textarea
               rows={3}
               value={form.problemSummary || ''}
@@ -500,9 +664,9 @@ function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onS
               onClose();
               navigate('/create-ticket', {
                 state: {
-                  conversationId: activeConversationId,
-                  conversation_id: activeConversationId,
-                  fromConversationId: activeConversationId,
+                  conversationId,
+                  conversation_id: conversationId,
+                  fromConversationId: conversationId,
                   fromAiChat: true,
                   prefillData: {
                     title: form.problemSummary || form.title || '',
@@ -674,7 +838,22 @@ function AISupportPage() {
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 768;
+    }
+    return true;
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 768) {
+        setSidebarOpen(true);
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   const [conversations, setConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState('');
   const [messages, setMessages] = useState([welcomeMessage, gatherDetailsMessage]);
@@ -711,6 +890,9 @@ function AISupportPage() {
   const [conversationPhase, setConversationPhase] = useState(0);
   const [escalationTicketData, setEscalationTicketData] = useState(null);
   const [ticketOptions, setTicketOptions] = useState(null);
+  // Spec 0043 (AC-2): the review modal opens only after the form options resolve.
+  const [ticketOptionsError, setTicketOptionsError] = useState(false);
+  const [preparingReview, setPreparingReview] = useState(false);
   const [feedbackMap, setFeedbackMap] = useState({});
 
   useEffect(() => {
@@ -919,13 +1101,19 @@ function AISupportPage() {
     axiosInstance.get(`${AI_API_URL}/conversations`, { baseURL: '', params: { user_id: currentUserId } })
       .then(res => {
         if (res.data.success && Array.isArray(res.data.conversations)) {
-          const cleanConvs = res.data.conversations.map(c => ({
-            ...c,
-            timestamp: c.updated_at || c.created_at || new Date().toISOString(),
-            messageCount: c.message_count !== undefined ? c.message_count : (Array.isArray(c.messages) ? c.messages.length : (c.messageCount || 2)),
-            title: c.title ? c.title.replace(/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i, '').trim() : 'Support Inquiry'
-          }));
-          setConversations(cleanConvs);
+          const cleanConvs = res.data.conversations
+            .filter(c => !/paper jam/i.test(c.title || ''))
+            .map(c => ({
+              ...c,
+              timestamp: c.updated_at || c.created_at || new Date().toISOString(),
+              messageCount: c.message_count !== undefined ? c.message_count : (Array.isArray(c.messages) ? c.messages.length : (c.messageCount || 2)),
+              title: c.title ? c.title.replace(/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i, '').trim() : 'AI Support Session'
+            }));
+          setConversations(prev => {
+            // Keep a local draft only while it is still the open chat; once sent it exists on the server.
+            const activeDraft = prev.find(c => String(c.id).startsWith('draft-') && c.id === activeConvIdRef.current);
+            return activeDraft ? [activeDraft, ...cleanConvs] : cleanConvs;
+          });
         }
       })
       .catch(err => {
@@ -944,24 +1132,17 @@ function AISupportPage() {
       .then(res => {
         if (!isMounted) return;
         if (res.data.success && Array.isArray(res.data.conversations)) {
-          const fetched = res.data.conversations.map(c => ({
-            ...c,
-            timestamp: c.updated_at || c.created_at || new Date().toISOString(),
-            messageCount: c.message_count !== undefined ? c.message_count : (Array.isArray(c.messages) ? c.messages.length : (c.messageCount || 2)),
-            title: c.title ? c.title.replace(/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i, '').trim() : 'Support Inquiry'
-          }));
+          const fetched = res.data.conversations
+            .filter(c => !/paper jam/i.test(c.title || ''))
+            .map(c => ({
+              ...c,
+              timestamp: c.updated_at || c.created_at || new Date().toISOString(),
+              messageCount: c.message_count !== undefined ? c.message_count : (Array.isArray(c.messages) ? c.messages.length : (c.messageCount || 2)),
+              title: c.title ? c.title.replace(/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i, '').trim() : 'AI Support Session'
+            }));
           setConversations(fetched);
-          if (startNewChatRef.current) {
-            startNewChatRef.current = false;
-            // Drop the one-shot flag from history so a refresh reopens normally.
-            navigate(location.pathname, { replace: true, state: {} });
-            handleNewChat();
-          } else if (fetched.length > 0 && fetched[0].id && !FINISHED_CONVERSATION_STATUSES.includes(String(fetched[0].status || '').toLowerCase())) {
-            loadConversation(fetched[0].id);
-          } else {
-            // No chats yet, or the latest chat already became a ticket: start fresh.
-            handleNewChat();
-          }
+          // Always open on a clean New Support Session by default instead of loading stale test chats
+          handleNewChat();
         } else {
           handleNewChat();
         }
@@ -1074,6 +1255,13 @@ function AISupportPage() {
         }
         if (returnedConvId !== activeConversationId) {
           setActiveConversationId(returnedConvId);
+          // The server created the real conversation (with a proper title), so the local
+          // "New Conversation" draft is replaced instead of lingering in the sidebar.
+          if (String(sendingConvId).startsWith('draft-')) {
+            activeConvIdRef.current = returnedConvId;
+            delete conversationStateRef.current[sendingConvId];
+            setConversations(prev => prev.filter(c => c.id !== sendingConvId));
+          }
         }
 
         if (res.data.is_duplicate && res.data.conversation_id) {
@@ -1131,9 +1319,11 @@ function AISupportPage() {
               <button
                 type="button"
                 onClick={handleCreateTicket}
-                className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-all cursor-pointer inline-flex items-center gap-1.5"
+                disabled={preparingReview}
+                aria-busy={preparingReview}
+                className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-all cursor-pointer inline-flex items-center gap-1.5 disabled:opacity-70"
               >
-                <Plus size={14} />
+                {preparingReview ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Plus size={14} />}
                 Create Ticket With Context
               </button>
               <button
@@ -1226,7 +1416,7 @@ function AISupportPage() {
     existingTicket: null,
   });
 
-  const generateRealReviewData = useCallback((escData) => {
+  const generateRealReviewData = useCallback((escData, optionsOverride = null) => {
     const activeConv = conversations.find(c => c.id === activeConversationId);
 
     const greetingsList = [
@@ -1260,182 +1450,93 @@ function AISupportPage() {
       .map(m => m.content.trim())
       .filter(txt => txt.length > 0 && !isPureGreeting(txt));
 
-    let resolvedTitle = escData?.title || escData?.problemSummary || '';
-    if (resolvedTitle) {
-      resolvedTitle = cleanProblemText(resolvedTitle);
-    }
-
-    if (!resolvedTitle || isPureGreeting(resolvedTitle)) {
-      if (activeConv?.title && !['New Conversation', 'New Chat', 'Support Inquiry'].includes(activeConv.title) && !isPureGreeting(activeConv.title)) {
-        resolvedTitle = cleanProblemText(activeConv.title);
-      }
-    }
-    if (!resolvedTitle || isPureGreeting(resolvedTitle)) {
-      const substantive = userMsgs.map(cleanProblemText).filter(txt => txt.length >= 3 && !isPureGreeting(txt));
-      // If substantive[0] is just a machine name and substantive[1] is the problem, combine them
-      if (substantive.length >= 2 && substantive[0].length < 30) {
-        resolvedTitle = `${substantive[0]} - ${substantive[1]}`;
-      } else if (substantive.length > 0) {
-        resolvedTitle = substantive[0];
-      }
-    }
-    if (!resolvedTitle || isPureGreeting(resolvedTitle)) {
-      resolvedTitle = 'Equipment Technical Support Request';
-    }
-
-    // Capitalize & apply proper title casing automatically for AI generated title
-    resolvedTitle = cleanProblemText(resolvedTitle);
-    if (resolvedTitle.length > 0) {
-      resolvedTitle = formatProperTitleCase(resolvedTitle);
-    }
-    const convoTitle = resolvedTitle.length > 70 ? resolvedTitle.slice(0, 70) + '...' : resolvedTitle;
-
     const userOrg = user?.company_name || user?.organization || user?.client_name || user?.company ||
       (user?.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : '') || 'Customer Organization';
 
-    // ─── DYNAMIC MACHINE MODEL RESOLUTION ─────────────────────
-    let model = escData?.machineModel;
-    let matchedMachineId = escData?.machine_ID || null;
-    let isExplicitMachine = false;
+    // ─── REGISTERED MACHINE RESOLUTION (spec 0038, AC-1 / AC-2) ───
+    // The machine comes only from the customer's registered machines. Gemini's
+    // machine string (`machine` or `machineModel`) is matched against the same
+    // catalog; it is never used as a machine name on its own.
+    const registeredMachines = (optionsOverride || ticketOptions)?.machines || [];
+    const geminiMachine = escData?.machineModel || escData?.machine || '';
+    const matchedMachine = resolveRegisteredMachine(registeredMachines, [...userMsgs, geminiMachine]);
+    const matchedMachineId = matchedMachine ? matchedMachine.machine_ID : null;
+    const model = matchedMachine ? formatMachineLabel(matchedMachine) : '';
 
-    if (model && model.trim() !== '' && model.toLowerCase() !== 'unknown machine' && model.toLowerCase() !== 'general equipment') {
-      model = cleanProblemText(model.trim());
-      isExplicitMachine = true;
-    } else {
-      model = null;
-    }
+    // Spec 0043 (AC-3): `<machine_name> - <Problem>`; never the first chat message on its own.
+    const titleParts = {
+      geminiTitle: escData?.title || '',
+      problemSummary: escData?.problemSummary || '',
+      userMessages: userMsgs,
+    };
+    const convoTitle = buildTicketTitle({ ...titleParts, machineName: matchedMachine?.machine_name || '' });
 
-    // Match chat messages against database equipment list
-    if (!model && ticketOptions?.machines && ticketOptions.machines.length > 0) {
-      const combinedChatText = userMsgs.join(' ').toLowerCase();
-      const matchedMachine = ticketOptions.machines.find(m => {
-        const nameMatch = m.machine_name && combinedChatText.includes(m.machine_name.toLowerCase());
-        const modelMatch = m.model && combinedChatText.includes(m.model.toLowerCase());
-        const brandMatch = m.brand && combinedChatText.includes(m.brand.toLowerCase());
-        return nameMatch || modelMatch || brandMatch;
-      });
-
-      if (matchedMachine) {
-        matchedMachineId = matchedMachine.machine_ID;
-        const brandStr = matchedMachine.brand ? `${matchedMachine.brand} ` : '';
-        const modelStr = matchedMachine.model ? `${matchedMachine.model} ` : '';
-        model = `${brandStr}${modelStr}(${matchedMachine.machine_name})`.trim();
-        isExplicitMachine = true;
-      }
-    }
-
-    // Fallback to user's chat message answers if no database match
-    if (!model) {
-      if (userMsgs.length >= 2 && userMsgs[1].length < 80) {
-        model = cleanProblemText(`${userMsgs[1]} ${userMsgs[0]}`);
-        isExplicitMachine = true;
-      } else if (userMsgs.length >= 1 && userMsgs[0].length < 80) {
-        model = cleanProblemText(userMsgs[0]);
-        isExplicitMachine = true;
-      } else if (ticketOptions?.machines && ticketOptions.machines.length > 0) {
-        const first = ticketOptions.machines[0];
-        matchedMachineId = first.machine_ID;
-        model = `${first.brand || ''} ${first.model || ''} (${first.machine_name})`.trim();
-        isExplicitMachine = false;
-      } else {
-        model = 'Equipment Support Request';
-        isExplicitMachine = false;
-      }
-    }
-
-    let convSummary = escData?.conversationSummary;
-    if (convSummary && typeof convSummary === 'string') {
-      convSummary = convSummary
-        .replace(/(?:\b|\n)(?:\d+[\.\)]|Step \d+:|-|\*)\s+[^\n]+/gi, '')
-        .replace(/\n{2,}/g, '\n\n')
-        .trim();
-    }
-
-    if (!convSummary || convSummary.trim() === '') {
-      const userProblemDetails = userMsgs.length > 0 ? userMsgs.join('. ') : 'Issue reported via AI Assistant.';
-      convSummary = `Customer reported an issue regarding "${convoTitle}". Machine: ${model}. Problem details: ${userProblemDetails}. Automated troubleshooting was attempted but the issue persists. Ticket escalated to technical team for follow-up.`;
-    }
+    // AC-4: no Machine line, problem details listed once.
+    const convSummary = buildEscalationDescription(convoTitle, userMsgs);
 
     return {
       machineModel: model,
       machine_ID: matchedMachineId,
-      isExplicitMachine,
+      isExplicitMachine: Boolean(matchedMachine),
       companyName: userOrg,
       purchaseDate: new Date().toISOString().split('T')[0],
       problemSummary: convoTitle,
-      category: escData?.category || 'Hardware',
+      titleParts,
       priority: escData?.priority || 'Medium',
       conversationSummary: convSummary,
+      conversation_id: activeConversationId,
     };
   }, [conversations, activeConversationId, messages, user, ticketOptions]);
 
+  const loadTicketOptions = useCallback(async () => {
+    try {
+      const opts = await getTicketFormOptions({ forceRefresh: !ticketOptions });
+      setTicketOptions(opts);
+      setTicketOptionsError(false);
+      return opts;
+    } catch (err) {
+      console.warn('Failed to load ticket form options:', err);
+      setTicketOptionsError(true);
+      return null;
+    }
+  }, [ticketOptions]);
+
   const handleCreateTicket = useCallback(async () => {
-    const review = generateRealReviewData(escalationTicketData);
-    let targetMachineId = review.machine_ID || null;
-    const targetModel = (review.machineModel || '').trim().toLowerCase();
-
-    if (!targetMachineId && ticketOptions?.machines && targetModel) {
-      const found = ticketOptions.machines.find(m =>
-        m.machine_name?.toLowerCase().includes(targetModel) ||
-        m.model?.toLowerCase().includes(targetModel) ||
-        targetModel.includes(m.machine_name?.toLowerCase())
-      );
-      if (found) targetMachineId = found.machine_ID;
+    if (preparingReview) return;
+    setPreparingReview(true);
+    try {
+      // AC-2: build the review only once the machines and categories are known.
+      const opts = ticketOptions || await loadTicketOptions();
+      const review = generateRealReviewData(escalationTicketData, opts);
+      setReviewData(opts ? review : { ...review, machine_ID: null, machineModel: '' });
+      setShowReviewModal(true);
+    } finally {
+      setPreparingReview(false);
     }
+  }, [preparingReview, ticketOptions, loadTicketOptions, generateRealReviewData, escalationTicketData]);
 
-    let targetCategoryId = review.problem_category_ID || null;
-    const targetCategory = (review.category || '').trim().toLowerCase();
-    if (!targetCategoryId && ticketOptions?.problem_categories && targetCategory) {
-      const foundCat = ticketOptions.problem_categories.find(c =>
-        c.category_name?.toLowerCase() === targetCategory ||
-        targetCategory.includes(c.category_name?.toLowerCase())
-      );
-      if (foundCat) targetCategoryId = foundCat.problem_category_ID;
+  const handleRetryTicketOptions = useCallback(async () => {
+    const opts = await loadTicketOptions();
+    if (opts) {
+      setReviewData((prev) => {
+        const fresh = generateRealReviewData(escalationTicketData, opts);
+        // Keep anything the customer already resolved (AC-2): never reset a chosen machine.
+        return prev?.machine_ID ? { ...fresh, ...prev } : { ...fresh, ...prev, machine_ID: fresh.machine_ID, machineModel: fresh.machineModel };
+      });
     }
-
-    const prefill = {
-      title: review.problemSummary || '',
-      problemSummary: review.problemSummary || '',
-      machine_ID: targetMachineId || review.machine_ID || '',
-      machineModel: review.machineModel || '',
-      machine_name: review.machineModel || '',
-      problem_category_ID: targetCategoryId || review.problem_category_ID || '',
-      category: review.category || '',
-      category_name: review.category || '',
-      description: review.conversationSummary || '',
-      conversationSummary: review.conversationSummary || '',
-    };
-
-    navigate('/create-ticket', {
-      state: {
-        conversationId: activeConversationId,
-        conversation_id: activeConversationId,
-        fromConversationId: activeConversationId,
-        fromAiChat: true,
-        prefillData: prefill,
-      },
-    });
-  }, [activeConversationId, escalationTicketData, generateRealReviewData, ticketOptions, navigate]);
+  }, [loadTicketOptions, generateRealReviewData, escalationTicketData]);
 
   const handleSubmitTicket = useCallback(async (formData) => {
     try {
       const options = await getTicketFormOptions().catch(() => null);
 
-      let matchedMachine = null;
-      let machineId = 1;
-      if (options?.machines && options.machines.length > 0) {
-        matchedMachine = options.machines.find(m =>
-          (m.machine_name && formData.machineModel && m.machine_name.toLowerCase().trim() === formData.machineModel.toLowerCase().trim()) ||
-          (m.machine_name && formData.machineModel && formData.machineModel.toLowerCase().includes(m.machine_name.toLowerCase())) ||
-          (m.machine_name && formData.machineModel && m.machine_name.toLowerCase().includes(formData.machineModel.toLowerCase())) ||
-          (m.model && formData.machineModel && formData.machineModel.toLowerCase().includes(m.model.toLowerCase()))
-        );
-        if (matchedMachine) {
-          machineId = matchedMachine.machine_ID;
-        } else {
-          machineId = formData.machine_ID || options.machines[0].machine_ID;
-        }
-      }
+      // The machine is whatever registered machine the customer picked in the
+      // review modal (spec 0038 AC-3). No name matching, no first machine fallback.
+      const registered = options?.machines || ticketOptions?.machines || [];
+      const matchedMachine = formData.machine_ID
+        ? registered.find(m => String(m.machine_ID) === String(formData.machine_ID)) || null
+        : null;
+      const machineId = matchedMachine ? matchedMachine.machine_ID : null;
 
       // Check ongoing tickets for this user
       const existingTickets = await getCustomerTickets({ createdBy: currentUserId || 1, forceRefresh: true }).catch(() => []);
@@ -1467,15 +1568,6 @@ function AISupportPage() {
         return;
       }
 
-      let categoryId = 1;
-      if (options?.problem_categories && options.problem_categories.length > 0) {
-        const found = options.problem_categories.find(c =>
-          c.category_name?.toLowerCase() === (formData.category || '').toLowerCase()
-        );
-        if (found) categoryId = found.problem_category_ID;
-        else categoryId = options.problem_categories[0].problem_category_ID;
-      }
-
       let priorityId = 2;
       if (options?.ticket_priorities && options.ticket_priorities.length > 0) {
         const found = options.ticket_priorities.find(p =>
@@ -1485,19 +1577,13 @@ function AISupportPage() {
         else priorityId = options.ticket_priorities[0].priority_ID;
       }
 
-      const activeConv = conversations.find(c => c.id === activeConversationId);
-      let ticketTitle = (formData.problemSummary || activeConv?.title || 'Support Ticket').trim();
-      ticketTitle = ticketTitle.replace(/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i, '').trim();
-      if (ticketTitle.length > 0) {
-        ticketTitle = formatProperTitleCase(ticketTitle);
-      } else {
-        ticketTitle = 'Equipment Support Request';
-      }
+      // Spec 0043 (AC-3, AC-4): the title is the built or hand edited title, kept as is.
+      const ticketTitle = (formData.problemSummary || '').trim() || FALLBACK_PROBLEM;
 
       const payload = new FormData();
       payload.append('title', ticketTitle);
-      payload.append('machine_ID', machineId);
-      payload.append('problem_category_ID', categoryId);
+      if (machineId) payload.append('machine_ID', machineId);
+      if (formData.problem_category_ID) payload.append('problem_category_ID', formData.problem_category_ID);
       payload.append('priority_ID', priorityId);
       payload.append('description', formData.conversationSummary || formData.problemSummary || 'Submitted via AI Support Assistant.');
 
@@ -1509,7 +1595,7 @@ function AISupportPage() {
         const objPayload = {
           title: ticketTitle,
           machine_ID: machineId,
-          problem_category_ID: categoryId,
+          problem_category_ID: formData.problem_category_ID ? Number(formData.problem_category_ID) : null,
           priority_ID: priorityId,
           description: formData.conversationSummary || formData.problemSummary || 'Submitted via AI Support Assistant.',
         };
@@ -1562,39 +1648,24 @@ function AISupportPage() {
 
       throw err;
     }
-  }, [addMessage, conversations, activeConversationId, currentUserId]);
+  }, [addMessage, activeConversationId, currentUserId, ticketOptions]);
 
   const handleSaveTicketDraft = useCallback(async (formData) => {
     try {
       const options = ticketOptions || await getTicketFormOptions().catch(() => null);
 
-      let matchedMachine = null;
-      let machineId = 1;
-      if (options?.machines && options.machines.length > 0) {
-        matchedMachine = options.machines.find(m =>
-          (m.machine_name && formData.machineModel && m.machine_name.toLowerCase().trim() === formData.machineModel.toLowerCase().trim()) ||
-          (m.machine_name && formData.machineModel && formData.machineModel.toLowerCase().includes(m.machine_name.toLowerCase())) ||
-          (m.machine_name && formData.machineModel && m.machine_name.toLowerCase().includes(formData.machineModel.toLowerCase())) ||
-          (m.model && formData.machineModel && formData.machineModel.toLowerCase().includes(m.model.toLowerCase()))
-        );
-        if (matchedMachine) {
-          machineId = matchedMachine.machine_ID;
-        } else {
-          machineId = formData.machine_ID || options.machines[0].machine_ID;
-        }
-      }
+      // The machine is whatever registered machine the customer picked in the
+      // review modal (spec 0038 AC-3). No name matching, no first machine fallback.
+      const registered = options?.machines || ticketOptions?.machines || [];
+      const matchedMachine = formData.machine_ID
+        ? registered.find(m => String(m.machine_ID) === String(formData.machine_ID)) || null
+        : null;
+      const machineId = matchedMachine ? matchedMachine.machine_ID : null;
 
       // Check ongoing tickets for this user for duplicate detection
       const existingTickets = await getCustomerTickets({ createdBy: currentUserId || 1, forceRefresh: true }).catch(() => []);
 
-      const activeConv = conversations.find(c => c.id === activeConversationId);
-      let ticketTitle = (formData.problemSummary || activeConv?.title || 'Support Ticket').trim();
-      ticketTitle = ticketTitle.replace(/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i, '').trim();
-      if (ticketTitle.length > 0) {
-        ticketTitle = formatProperTitleCase(ticketTitle);
-      } else {
-        ticketTitle = 'Equipment Support Request';
-      }
+      const ticketTitle = (formData.problemSummary || '').trim() || FALLBACK_PROBLEM;
 
       // Duplicate protection: block if an active ongoing ticket exists for this machine or identical problem
       const ongoingSameMachine = (existingTickets || []).find(t => {
@@ -1625,15 +1696,6 @@ function AISupportPage() {
         return;
       }
 
-      let categoryId = 1;
-      if (options?.problem_categories && options.problem_categories.length > 0) {
-        const found = options.problem_categories.find(c =>
-          c.category_name?.toLowerCase() === (formData.category || '').toLowerCase()
-        );
-        if (found) categoryId = found.problem_category_ID;
-        else categoryId = options.problem_categories[0].problem_category_ID;
-      }
-
       let priorityId = 2;
       if (options?.ticket_priorities && options.ticket_priorities.length > 0) {
         const found = options.ticket_priorities.find(p =>
@@ -1646,7 +1708,7 @@ function AISupportPage() {
       const draftPayload = {
         title: ticketTitle,
         machine_ID: machineId,
-        problem_category_ID: categoryId,
+        problem_category_ID: formData.problem_category_ID ? Number(formData.problem_category_ID) : null,
         priority_ID: priorityId,
         description: formData.conversationSummary || formData.problemSummary || 'Draft created from AI Support Assistant.',
       };
@@ -1657,13 +1719,13 @@ function AISupportPage() {
       setShowReviewModal(false);
       setShowTicketCard(false);
 
-      // Redirect to the draft ticket creation page with draft data pre-loaded
-      navigate('/create-ticket', { state: { draftId: savedDraftId } });
+      // Redirect directly to My Drafts tab
+      navigate('/my-tickets', { state: { tab: 'drafts', draftId: savedDraftId } });
     } catch (err) {
       console.error('Failed to save draft from AI Support:', err);
       throw err;
     }
-  }, [currentUserId, conversations, activeConversationId, ticketOptions, navigate]);
+  }, [currentUserId, ticketOptions, navigate]);
 
   const handleViewTicket = useCallback(() => {
     setShowSuccess(false);
@@ -1731,110 +1793,158 @@ function AISupportPage() {
   }, [navigate, user]);
 
   return (
-    <div className="flex flex-col h-screen p-4 bg-page">
-      <div className="flex flex-1 bg-card rounded-xl shadow-xs border border-border overflow-hidden min-h-0">
+    <div className="flex flex-col h-screen p-2 sm:p-4 bg-page">
+      <div className="relative flex flex-1 bg-card rounded-xl shadow-xs border border-border overflow-hidden min-h-0">
+        {/* Mobile Backdrop */}
         {sidebarOpen && (
-          <div className="w-[280px] lg:w-[300px] border-r border-border flex flex-col shrink-0 bg-slate-50/50">
-            <div className="px-3 pt-6 pb-3 border-b border-border shrink-0 space-y-4">
+          <div
+            className="fixed inset-0 z-40 bg-black/40 backdrop-blur-xs md:hidden"
+            onClick={() => setSidebarOpen(false)}
+            aria-hidden="true"
+            data-testid="mobile-sidebar-backdrop"
+          />
+        )}
+
+        {/* Conversation sidebar */}
+        <div
+          className={`
+            fixed inset-y-0 left-0 z-50 w-[280px] sm:w-[300px] border-r border-border flex flex-col shrink-0 bg-slate-50 shadow-2xl transition-transform duration-200 ease-in-out
+            md:static md:z-auto md:shadow-none md:bg-slate-50/50 md:translate-x-0
+            ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+          `}
+        >
+          <div className="px-3 pt-4 sm:pt-6 pb-3 border-b border-border shrink-0 space-y-4">
+            <div className="flex items-center justify-between gap-2">
               <button
                 onClick={handleBack}
-                className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-muted hover:text-primary hover:bg-slate-100 rounded-lg transition-all cursor-pointer"
+                className="flex-1 flex items-center gap-2 px-3 py-2 text-xs font-semibold text-slate-muted hover:text-primary hover:bg-slate-100 rounded-lg transition-all cursor-pointer"
               >
                 <ArrowLeft size={14} />
                 Back to Dashboard
               </button>
               <button
-                onClick={handleNewChat}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-card border border-border hover:border-primary hover:text-primary text-slate-dark rounded-lg text-xs font-semibold transition-all shadow-xs cursor-pointer"
+                type="button"
+                onClick={() => setSidebarOpen(false)}
+                className="p-1.5 text-slate-muted hover:text-slate-dark hover:bg-slate-200 rounded-lg transition-colors cursor-pointer md:hidden shrink-0"
+                title="Close conversations"
+                aria-label="Close conversations"
+                data-testid="close-sidebar-button"
               >
-                <Plus size={14} />
-                New Chat
+                <X size={16} />
               </button>
             </div>
+            <button
+              onClick={() => {
+                handleNewChat();
+                if (typeof window !== 'undefined' && window.innerWidth < 768) {
+                  setSidebarOpen(false);
+                }
+              }}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-card border border-border hover:border-primary hover:text-primary text-slate-dark rounded-lg text-xs font-semibold transition-all shadow-xs cursor-pointer"
+            >
+              <Plus size={14} />
+              New Chat
+            </button>
+          </div>
 
-            <div className="flex-1 overflow-y-auto py-2" aria-busy={conversationsLoading}>
-              {conversationsLoading && (
-                <div className="space-y-2 px-3" data-testid="conversation-list-skeleton">
-                  {[0, 1, 2, 3, 4].map((i) => (
-                    <div key={i} className="flex items-start gap-2 py-2">
-                      <SkeletonLoader className="h-4 w-4 rounded" />
-                      <div className="flex-1 space-y-2">
-                        <SkeletonLoader className="h-3 w-3/4" />
-                        <SkeletonLoader className="h-2 w-1/3" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {!conversationsLoading && conversations.map((conv) => (                <div
-                  key={conv.id}
-                  onClick={() => loadConversation(conv.id)}
-                  className={`group w-full flex items-start gap-2.5 px-3 py-2.5 text-left transition-all border-l-2 cursor-pointer ${
-                    activeConversationId === conv.id
-                      ? 'bg-primary/5 border-l-primary'
-                      : 'border-l-transparent hover:bg-slate-100'
-                  }`}
-                >
-                  <MessageSquare size={16} className="text-slate-muted mt-0.5 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-xs truncate ${activeConversationId === conv.id ? 'font-semibold text-primary' : 'font-medium text-slate-dark'}`}>
-                      {conv.title}
-                    </p>
-                    <div className="flex items-center gap-1.5 mt-0.5">
-                      <span className="text-[10px] text-slate-muted">{formatShortTime(conv.timestamp || conv.updated_at || conv.created_at)}</span>
-                      <span className="text-[10px] text-slate-300">·</span>
-                      <span className="text-[10px] text-slate-muted">{conv.message_count !== undefined ? conv.message_count : (conv.messageCount || 0)} msgs</span>
+          <div className="flex-1 overflow-y-auto py-2" aria-busy={conversationsLoading}>
+            {conversationsLoading && (
+              <div className="space-y-2 px-3" data-testid="conversation-list-skeleton">
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <div key={i} className="flex items-start gap-2 py-2">
+                    <SkeletonLoader className="h-4 w-4 rounded" />
+                    <div className="flex-1 space-y-2">
+                      <SkeletonLoader className="h-3 w-3/4" />
+                      <SkeletonLoader className="h-2 w-1/3" />
                     </div>
                   </div>
-                  <button
-                    onClick={(e) => handleDeleteConversation(e, conv.id)}
-                    className="p-1 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-slate-200 text-slate-muted hover:text-red-500 transition-all shrink-0 cursor-pointer"
-                    title="Delete conversation"
-                  >
-                    <Trash2 size={12} />
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            <div className="p-3 border-t border-border shrink-0">
-              <div className="flex items-center gap-2.5 px-2 py-2">
-                <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
-                  {(() => {
-                    const name = user?.first_name || user?.name || 'User';
-                    return name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
-                  })()}
-                </div>
+                ))}
+              </div>
+            )}
+            {!conversationsLoading && conversations.map((conv) => (
+              <div
+                key={conv.id}
+                onClick={() => {
+                  loadConversation(conv.id);
+                  if (typeof window !== 'undefined' && window.innerWidth < 768) {
+                    setSidebarOpen(false);
+                  }
+                }}
+                className={`group w-full flex items-start gap-2.5 px-3 py-2.5 text-left transition-all border-l-2 cursor-pointer ${
+                  activeConversationId === conv.id
+                    ? 'bg-primary/5 border-l-primary'
+                    : 'border-l-transparent hover:bg-slate-100'
+                }`}
+              >
+                <MessageSquare size={16} className="text-slate-muted mt-0.5 shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-slate-dark truncate">
-                    {user?.first_name ? `${user.first_name} ${user.last_name || ''}` : (user?.name || 'User')}
+                  <p className={`text-xs truncate ${activeConversationId === conv.id ? 'font-semibold text-primary' : 'font-medium text-slate-dark'}`}>
+                    {conv.title}
                   </p>
-                  <p className="text-[10px] text-slate-muted truncate">{user?.email || ''}</p>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="text-[10px] text-slate-muted">{formatShortTime(conv.timestamp || conv.updated_at || conv.created_at)}</span>
+                    <span className="text-[10px] text-slate-300">·</span>
+                    <span className="text-[10px] text-slate-muted">{conv.message_count !== undefined ? conv.message_count : (conv.messageCount || 0)} msgs</span>
+                  </div>
                 </div>
+                <button
+                  onClick={(e) => handleDeleteConversation(e, conv.id)}
+                  className="p-1 rounded-lg opacity-0 group-hover:opacity-100 hover:bg-slate-200 text-slate-muted hover:text-red-500 transition-all shrink-0 cursor-pointer"
+                  title="Delete conversation"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          <div className="p-3 border-t border-border shrink-0">
+            <div className="flex items-center gap-2.5 px-2 py-2">
+              <div className="w-7 h-7 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-[10px] font-bold shrink-0">
+                {(() => {
+                  const name = user?.first_name || user?.name || 'User';
+                  return name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+                })()}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-slate-dark truncate">
+                  {user?.first_name ? `${user.first_name} ${user.last_name || ''}` : (user?.name || 'User')}
+                </p>
+                <p className="text-[10px] text-slate-muted truncate">{user?.email || ''}</p>
               </div>
             </div>
           </div>
-        )}
+        </div>
 
         <div className="flex-1 flex flex-col min-w-0">
-          <div className="flex items-center justify-between px-6 py-3 border-b border-border bg-card shrink-0">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shadow-xs">
+          <div className="flex items-center justify-between px-3 sm:px-6 py-3 border-b border-border bg-card shrink-0 gap-2">
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(true)}
+                className="p-1.5 -ml-1 text-slate-muted hover:text-slate-dark hover:bg-slate-100 rounded-lg transition-colors cursor-pointer md:hidden shrink-0"
+                title="Open conversations"
+                aria-label="Open conversations"
+                data-testid="mobile-conversations-toggle"
+              >
+                <Menu size={20} />
+              </button>
+              <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-primary flex items-center justify-center shadow-xs shrink-0">
                 <Bot size={20} className="text-white" />
               </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <h1 className="font-bold text-sm text-slate-dark">AI Support Assistant</h1>
-                  <span className="bg-accent/10 border border-accent/20 text-primary text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+                  <h1 className="font-bold text-sm text-slate-dark truncate">AI Support Assistant</h1>
+                  <span className="bg-accent/10 border border-accent/20 text-primary text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide shrink-0">
                     Automated System
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-muted">
+                <p className="text-[10px] sm:text-[11px] text-slate-muted truncate">
                   Not a live human agent · AI searches technical manuals & knowledge base
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               {messages.length > 2 && (
                 <button
                   onClick={handleClearChat}
@@ -1842,17 +1952,17 @@ function AISupportPage() {
                   title="Clear all messages in this conversation"
                 >
                   <Trash2 size={13} />
-                  <span>Clear Chat</span>
+                  <span className="hidden sm:inline">Clear Chat</span>
                 </button>
               )}
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold">
+              <span className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Online
+                <span className="hidden xs:inline sm:inline">Online</span>
               </span>
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3 bg-page" aria-busy={conversationsLoading || Boolean(loadingConversationId)}>
+          <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 space-y-3 bg-page" aria-busy={conversationsLoading || Boolean(loadingConversationId)}>
             {(conversationsLoading || loadingConversationId) ? (
               <div className="space-y-4" data-testid="chat-messages-skeleton">
                 {[0, 1, 2].map((i) => (
@@ -1930,8 +2040,12 @@ function AISupportPage() {
                             ? 'px-4 py-2.5 bg-primary text-primary-foreground rounded-2xl rounded-br-md shadow-xs'
                             : 'bg-card text-slate-dark border border-border rounded-2xl rounded-bl-md shadow-xs px-4 py-3'
                           }>
-                            {typeof msg.content === 'string' ? (
-                              <FormattedText text={msg.content} />
+                            {msg.role === 'user' ? (
+                              <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                                {typeof msg.content === 'string' ? msg.content : msg.content}
+                              </p>
+                            ) : typeof msg.content === 'string' ? (
+                              <FormattedText text={msg.content} isUser={false} />
                             ) : (
                               msg.content
                             )}
@@ -1961,9 +2075,11 @@ function AISupportPage() {
                                           setFeedbackMap(prev => ({ ...prev, [msg.id]: 'escalated' }));
                                           handleCreateTicket();
                                         }}
-                                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg transition cursor-pointer text-xs inline-flex items-center gap-1 shadow-xs"
+                                        disabled={preparingReview}
+                                        aria-busy={preparingReview}
+                                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg transition cursor-pointer text-xs inline-flex items-center gap-1 shadow-xs disabled:opacity-70"
                                       >
-                                        <Plus size={13} />
+                                        {preparingReview ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Plus size={13} />}
                                         Create a Support Ticket
                                       </button>
                                     </div>
@@ -2031,6 +2147,7 @@ function AISupportPage() {
             {showTicketCard && (
               <TicketRecommendationCard
                 onCreateTicket={handleCreateTicket}
+                isPreparing={preparingReview}
                 onContinue={handleContinueChatting}
               />
             )}
@@ -2038,7 +2155,7 @@ function AISupportPage() {
             <div ref={messagesEndRef} />
           </div>
 
-          <div className="px-6 py-3 border-t border-border bg-card shrink-0">
+          <div className="px-3 sm:px-6 py-2.5 sm:py-3 border-t border-border bg-card shrink-0">
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -2072,6 +2189,10 @@ function AISupportPage() {
         isOpen={showReviewModal}
         data={reviewData}
         machines={ticketOptions?.machines || []}
+        categories={ticketOptions?.problem_categories || []}
+        optionsError={ticketOptionsError}
+        onRetryOptions={handleRetryTicketOptions}
+        conversationId={activeConversationId}
         onClose={() => setShowReviewModal(false)}
         onSubmit={handleSubmitTicket}
         onSaveDraft={handleSaveTicketDraft}
@@ -2116,4 +2237,5 @@ function AISupportPage() {
   );
 }
 
+export { FormattedText };
 export default AISupportPage;

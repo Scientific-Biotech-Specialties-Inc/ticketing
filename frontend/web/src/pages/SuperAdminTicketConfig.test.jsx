@@ -110,8 +110,8 @@ describe('SuperAdminTicketConfig Messaging Subtabs & Internal Configuration Test
     render(<SuperAdminTicketConfig />);
 
     expect(await screen.findByText('Ticket Messaging Configuration')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /External Tickets/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Internal Tickets/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /External Customer Tickets/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Internal Employee Tickets/i })).toBeInTheDocument();
   });
 
   it('switches between External and Internal ticket configurations', async () => {
@@ -124,8 +124,8 @@ describe('SuperAdminTicketConfig Messaging Subtabs & Internal Configuration Test
     // Default is external
     expect(screen.getByText('Baseline Participants')).toBeInTheDocument();
 
-    // Click Internal Tickets segmented sub-tab
-    const internalTabButton = screen.getByRole('button', { name: /Internal Tickets/i });
+    // Click Internal Employee Tickets segmented sub-tab
+    const internalTabButton = screen.getByRole('button', { name: /Internal Employee Tickets/i });
     fireEvent.click(internalTabButton);
 
     // Should now display internal configuration cards
@@ -152,8 +152,8 @@ describe('SuperAdminTicketConfig Messaging Subtabs & Internal Configuration Test
 
     await screen.findByText('Ticket Messaging Configuration');
 
-    // Switch to Internal Tickets
-    fireEvent.click(screen.getByRole('button', { name: /Internal Tickets/i }));
+    // Switch to Internal Employee Tickets
+    fireEvent.click(screen.getByRole('button', { name: /Internal Employee Tickets/i }));
 
     // Select Requestor -> CS Only mode radio
     const csOnlyRadio = screen.getByDisplayValue('requestor_cs_only');
@@ -278,5 +278,44 @@ describe('SuperAdminTicketConfig - SLA business hours', () => {
     await waitFor(() => expect(ticketService.saveDepartmentSLARules).toHaveBeenCalledWith(1, expect.arrayContaining([
       { priority: 'High', response_time_limit: 30, resolution_time_limit: 240 },
     ])));
+  });
+});
+
+describe('SuperAdminTicketConfig - Brevo email delivery (spec 0040)', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const router = await import('react-router-dom');
+    router.useParams.mockReturnValue({ group: 'notifications', subtab: 'email-delivery' });
+    router.useLocation.mockReturnValue({ pathname: '/ticketing/superadmin/config/notifications/email-delivery' });
+    configurationService.getMessagingConfiguration.mockResolvedValue({});
+    configurationService.getEmailConfiguration.mockResolvedValue({ is_configured: false, data: null });
+  });
+
+  const openAddForm = async () => {
+    render(<SuperAdminTicketConfig />);
+    fireEvent.click(await screen.findByRole('button', { name: /Add Email Configuration/i }));
+    expect(await screen.findByText('Add Brevo Email Configuration')).toBeInTheDocument();
+  };
+
+  it('labels the provider as Brevo API v3 and never mentions Resend', async () => {
+    await openAddForm();
+    expect(screen.getByText('Brevo API v3')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/^xkeysib-/)).toBeInTheDocument();
+    expect(screen.getByText('Must be a verified sender in your Brevo account.')).toBeInTheDocument();
+    expect(screen.queryByText(/Resend/)).not.toBeInTheDocument();
+  });
+
+  it('rejects a Brevo SMTP key with a specific message', async () => {
+    await openAddForm();
+    fireEvent.change(screen.getByPlaceholderText(/^xkeysib-/), { target: { value: 'xsmtpsib-abc123456789' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save Configuration/i }));
+    expect(await screen.findByText('This is a Brevo SMTP key. Paste an API v3 key instead.')).toBeInTheDocument();
+  });
+
+  it('rejects an old Resend style key', async () => {
+    await openAddForm();
+    fireEvent.change(screen.getByPlaceholderText(/^xkeysib-/), { target: { value: 're_oldkey123456789' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save Configuration/i }));
+    expect(await screen.findByText('Brevo API Key must start with "xkeysib-".')).toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Inbox, Clock, CheckCircle2, Archive, Bot, Eye, ArrowRight } from 'lucide-react';
+import { Inbox, Clock, CheckCircle2, Archive, Bot, ArrowRight, MessageCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import TicketModal from '@/components/TicketModal';
 import CustomerTicketDetailModal from '@/components/CustomerTicketDetailModal';
 import useRealtimeRefresh from '@/hooks/useRealtimeRefresh';
@@ -31,6 +31,7 @@ import { DataTableSkeleton } from '@/components/ui/data-table';
 import { ConfirmationModal } from '@/components/ui/confirmation-modal';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/context/ToastContext';
+import Pagination from '@/components/Pagination';
 
 const getStoredUser = () => {
   try {
@@ -54,6 +55,21 @@ export default function CustomerDashboard() {
     closed: 0,
   });
   const [recentTickets, setRecentTickets] = useState([]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 5;
+
+  const totalPages = Math.max(1, Math.ceil(recentTickets.length / pageSize));
+  const paginatedTickets = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return recentTickets.slice(start, start + pageSize);
+  }, [recentTickets, currentPage, pageSize]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(1);
+    }
+  }, [totalPages, currentPage]);
+
   const [modalLoading, setModalLoading] = useState(false);
   const [loadingText, setLoadingText] = useState('Loading...');
   const navigate = useNavigate();
@@ -180,6 +196,17 @@ export default function CustomerDashboard() {
   };
 
   const handleViewTicket = async (t) => {
+    if (t.status === 'Resolved' || t.status === 'Closed') {
+      const ticketId = t.ticket_ID || parseInt(String(t.id || '').replace(/\D/g, ''), 10);
+      navigate(`/history/${ticketId}`, {
+        state: {
+          ticket: t,
+          backPath: '/customer-dashboard',
+        },
+      });
+      return;
+    }
+
     const isMock = !!t.isMock;
     if (isMock) {
       setSelectedTicket({
@@ -201,6 +228,7 @@ export default function CustomerDashboard() {
       setSelectedTicket({
         ...t,
         ...fullTicket,
+        openDirectChat: Boolean(t?.openDirectChat),
         description: fullTicket.description || t.description || '',
         resolved_at: fullTicket.resolved_at || null,
         proofAttachments: fullTicket.proofAttachments || [],
@@ -440,11 +468,10 @@ export default function CustomerDashboard() {
                 <TableHead className="w-32">Ticket ID</TableHead>
                 <TableHead>Title & Equipment</TableHead>
                 <TableHead className="w-36">Status</TableHead>
-                <TableHead className="w-20 text-center">Action</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              <DataTableSkeleton columns={4} rows={4} />
+              <DataTableSkeleton columns={3} rows={4} />
             </TableBody>
           </Table>
         ) : recentTickets.length === 0 ? (
@@ -452,50 +479,62 @@ export default function CustomerDashboard() {
             No tickets found. Submit a support ticket to get started.
           </div>
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-32">Ticket ID</TableHead>
-                <TableHead>Title & Equipment</TableHead>
-                <TableHead className="w-36">Status</TableHead>
-                <TableHead className="w-20 text-center">Action</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {recentTickets.map((t) => (
-                <TableRow key={t.id || t.ticket_ID}>
-                  <TableCell className="font-semibold text-primary text-xs">
-                    {t.id || t.ticket_ID}
-                  </TableCell>
-                  <TableCell className="max-w-[280px]">
-                    <div className="font-semibold text-dark-slate text-xs truncate" title={t.title}>
-                      {t.title}
-                    </div>
-                    {t.equipment && (
-                      <div className="text-[11px] text-muted-slate truncate mt-0.5" title={t.equipment}>
-                        {t.equipment}
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={getStatusBadgeVariant(t.status)}>
-                      {t.status}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <button
-                      type="button"
-                      onClick={() => handleViewTicket(t)}
-                      aria-label={`View ticket ${t.id}`}
-                      className="p-1.5 rounded-lg text-muted-slate hover:text-accent hover:bg-slate-100 transition-colors"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </button>
-                  </TableCell>
+          <>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-32">Ticket ID</TableHead>
+                  <TableHead>Title & Equipment</TableHead>
+                  <TableHead className="w-36">Status</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {paginatedTickets.map((t) => (
+                  <TableRow
+                    key={t.id || t.ticket_ID}
+                    onClick={() => handleViewTicket(t)}
+                    className="cursor-pointer hover:bg-slate-50/80 transition-colors duration-150"
+                  >
+                    <TableCell className="font-semibold text-primary text-xs">
+                      {t.id || t.ticket_ID}
+                    </TableCell>
+                    <TableCell className="max-w-[280px]">
+                      <div className="font-semibold text-dark-slate text-xs truncate" title={t.title}>
+                        {t.title}
+                      </div>
+                      {t.equipment && (
+                        <div className="text-[11px] text-muted-slate truncate mt-0.5" title={t.equipment}>
+                          {t.equipment}
+                        </div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={getStatusBadgeVariant(t.status)}>
+                        {t.status}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+
+            {/* Pagination Controls */}
+            {recentTickets.length > pageSize && (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-4 mt-3 border-t border-slate-100 text-xs text-muted-slate">
+                <span>
+                  Showing <strong>{(currentPage - 1) * pageSize + 1}</strong> to{' '}
+                  <strong>{Math.min(currentPage * pageSize, recentTickets.length)}</strong> of{' '}
+                  <strong>{recentTickets.length}</strong> tickets
+                </span>
+                <Pagination
+                  totalItems={recentTickets.length}
+                  itemsPerPage={pageSize}
+                  currentPage={currentPage}
+                  onPageChange={setCurrentPage}
+                />
+              </div>
+            )}
+          </>
         )}
       </div>
 

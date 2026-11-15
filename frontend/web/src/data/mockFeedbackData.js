@@ -222,8 +222,31 @@ export function hasFeedbackBeenSubmitted(ticketId) {
   return !!(feedback && feedback.submitted);
 }
 
+/**
+ * The id the backend understands for a ticket. The analytics service looks the ticket up by its
+ * numeric primary key, so the display number (e.g. "TKT-0012") must never be sent to it.
+ */
+export function feedbackTicketId(ticket) {
+  return ticket?.ticket_ID ?? ticket?.ticket_id ?? ticket?.id;
+}
+
+// Throws for an HTTP rejection so callers can show it. A network failure is not an HTTP error,
+// so the caller keeps the local copy for those.
+async function assertFeedbackResponse(res) {
+  if (res.ok) return;
+  let message = `Feedback request failed (${res.status}).`;
+  try {
+    const body = await res.json();
+    message = body?.message || message;
+  } catch {
+    // keep default message
+  }
+  const err = new Error(message);
+  err.isHttpError = true;
+  throw err;
+}
+
 export async function saveFeedback(ticketId, ratings, comments, overallComment, customerId = null, questionAnswers = {}, categoryQuestionsSnapshot = []) {
-  const all = getAllFeedback();
   const feedbackData = {
     ratings,
     comments: comments || {},
@@ -234,21 +257,28 @@ export async function saveFeedback(ticketId, ratings, comments, overallComment, 
     submitted: true,
   };
 
-  all[ticketId] = feedbackData;
-  all[String(ticketId)] = feedbackData;
-  const num = Number(String(ticketId).replace(/\D/g, ''));
-  if (num) {
-    all[num] = feedbackData;
-  }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
-
-  try {
-    window.dispatchEvent(new CustomEvent('customer_feedback_submitted', { detail: { ticketId } }));
-  } catch {
-    // ignore
-  }
+  const persistLocal = () => {
+    const all = getAllFeedback();
+    all[ticketId] = feedbackData;
+    all[String(ticketId)] = feedbackData;
+    const num = Number(String(ticketId).replace(/\D/g, ''));
+    if (num) {
+      all[num] = feedbackData;
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+    try {
+      window.dispatchEvent(new CustomEvent('customer_feedback_submitted', { detail: { ticketId } }));
+    } catch {
+      // ignore
+    }
+    return all[ticketId];
+  };
 
   // Send rating payload to legacy DB via analytics-service backend API
+  if (!tokenStore.getToken()) {
+    return persistLocal();
+  }
+
   try {
     const res = await fetch('/api/ticketing/analytics/feedback', {
       method: 'POST',
@@ -266,18 +296,19 @@ export async function saveFeedback(ticketId, ratings, comments, overallComment, 
         category_questions_snapshot: categoryQuestionsSnapshot || [],
       }),
     });
-    const result = await res.json();
-    console.log('CSAT feedback posted to analytics-service:', result);
+    await assertFeedbackResponse(res);
   } catch (err) {
-    console.warn('Analytics service offline. Feedback persisted locally:', err);
+    if (err?.isHttpError) throw err;
+    // Spec 0038 AC-37: never save feedback locally as if it succeeded.
+    console.warn('Analytics service unreachable. Feedback was not saved:', err);
+    throw new Error('Feedback cannot be verified right now. Please try again shortly.');
   }
 
-  return all[ticketId];
+  return persistLocal();
 }
 
 export async function updateFeedback(ticketId, ratings, comments, overallComment, customerId = null, questionAnswers = {}, categoryQuestionsSnapshot = []) {
-  const all = getAllFeedback();
-  const existing = all[ticketId] || all[String(ticketId)] || {};
+  const existing = getAllFeedback()[ticketId] || getAllFeedback()[String(ticketId)] || {};
   const feedbackData = {
     ...existing,
     ratings,
@@ -290,18 +321,25 @@ export async function updateFeedback(ticketId, ratings, comments, overallComment
     submitted: true,
   };
 
-  all[ticketId] = feedbackData;
-  all[String(ticketId)] = feedbackData;
-  const num = Number(String(ticketId).replace(/\D/g, ''));
-  if (num) {
-    all[num] = feedbackData;
-  }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+  const persistLocal = () => {
+    const all = getAllFeedback();
+    all[ticketId] = feedbackData;
+    all[String(ticketId)] = feedbackData;
+    const num = Number(String(ticketId).replace(/\D/g, ''));
+    if (num) {
+      all[num] = feedbackData;
+    }
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(all));
+    try {
+      window.dispatchEvent(new CustomEvent('customer_feedback_updated', { detail: { ticketId, feedback: feedbackData } }));
+    } catch {
+      // ignore
+    }
+    return all[ticketId];
+  };
 
-  try {
-    window.dispatchEvent(new CustomEvent('customer_feedback_updated', { detail: { ticketId, feedback: feedbackData } }));
-  } catch {
-    // ignore
+  if (!tokenStore.getToken()) {
+    return persistLocal();
   }
 
   try {
@@ -320,13 +358,15 @@ export async function updateFeedback(ticketId, ratings, comments, overallComment
         category_questions_snapshot: categoryQuestionsSnapshot || existing.categoryQuestionsSnapshot || [],
       }),
     });
-    const result = await res.json();
-    console.log('CSAT feedback updated on analytics-service:', result);
+    await assertFeedbackResponse(res);
   } catch (err) {
-    console.warn('Analytics service offline. Feedback update persisted locally:', err);
+    if (err?.isHttpError) throw err;
+    // Spec 0038 AC-37: never save feedback locally as if it succeeded.
+    console.warn('Analytics service unreachable. Feedback update was not saved:', err);
+    throw new Error('Feedback cannot be verified right now. Please try again shortly.');
   }
 
-  return all[ticketId];
+  return persistLocal();
 }
 
 export async function deleteFeedback(ticketId) {
@@ -343,6 +383,10 @@ export async function deleteFeedback(ticketId) {
     window.dispatchEvent(new CustomEvent('customer_feedback_deleted', { detail: { ticketId } }));
   } catch {
     // ignore
+  }
+
+  if (!tokenStore.getToken()) {
+    return true;
   }
 
   try {
@@ -362,13 +406,24 @@ export async function deleteFeedback(ticketId) {
   return true;
 }
 
+/**
+ * Saved feedback for a ticket, read from the analytics API only (spec 0038 AC-36).
+ * Returns null when there is none or it cannot be read. Nothing is read from browser
+ * storage; a successful read is still mirrored there for the customer ticket list badge.
+ */
 export async function fetchFeedbackForTicket(ticketId) {
   if (!ticketId) return null;
-  const local = getTicketFeedback(ticketId);
+  const local = null;
+  const token = tokenStore.getToken();
+  if (!token) return null;
+
   try {
     let res = await fetch(`/api/ticketing/analytics/feedback/ticket/${ticketId}`, {
       headers: { Accept: 'application/json', ...authHeaders() },
     });
+    if (res.status === 401 || res.status === 403) {
+      return null;
+    }
     if (!res.ok && res.status === 404) {
       const strId = String(ticketId);
       const numMatch = strId.match(/\d+/);
@@ -428,7 +483,7 @@ export async function fetchFeedbackForTicket(ticketId) {
   } catch (err) {
     // Analytics service offline or network issue
   }
-  return local;
+  return null;
 }
 
 export const FEEDBACK_MASTER_ENABLED_KEY = 'feedback_form_master_enabled';

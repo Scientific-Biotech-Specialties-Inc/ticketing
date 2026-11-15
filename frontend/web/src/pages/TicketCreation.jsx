@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import NotificationModal from '@/components/NotificationModal';
 import TitleCasingModal from '@/components/TitleCasingModal';
-import AIDepartmentModal from '@/components/AIDepartmentModal';
+import useCategoryPreview, { isSoftwareCategory, isServiceCategory } from '@/hooks/useCategoryPreview';
 import {
   getTicketFormOptions,
   createTicket,
@@ -11,7 +11,6 @@ import {
   getTicketDraft,
   uploadAttachments,
   getEscalateHandoff,
-  classifyDepartment,
 } from '@/services/ticketService';
 import { getSystemStatus, getFileLimitsConfig } from '@/services/configurationService';
 import { normalizeCasing } from '@/utils/normalizeCasing';
@@ -24,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { PersistentBanner } from '@/components/ui/alert-banner';
+import { resolveRegisteredMachine } from '@/utils/machineMatching';
 import { useToast } from '@/context/ToastContext';
 import {
   ArrowLeft,
@@ -35,6 +35,7 @@ import {
   Trash2,
   AlertTriangle,
   Sparkles,
+  Loader2,
 } from 'lucide-react';
 
 export default function TicketCreation() {
@@ -93,22 +94,9 @@ export default function TicketCreation() {
       const exists = machineList.some((m) => Number(m.machine_ID) === numericVal);
       if (exists) return numericVal;
     }
-    const search = String(val).trim().toLowerCase();
-    if (!search) return '';
-    const matched = machineList.find((m) => {
-      const name = (m.machine_name || '').toLowerCase();
-      const model = (m.model || '').toLowerCase();
-      const brand = (m.brand || '').toLowerCase();
-      const serial = (m.serial_number || '').toLowerCase();
-      return (
-        name === search ||
-        model === search ||
-        (name && search.includes(name)) ||
-        (model && search.includes(model)) ||
-        (brand && search.includes(brand)) ||
-        (serial && search.includes(serial))
-      );
-    });
+    // Spec 0038 AC-1: a machine string from the AI flow only links one of the customer's
+    // registered machines by exact serial, then model, then name. A brand never counts.
+    const matched = resolveRegisteredMachine(machineList, [String(val)]);
     return matched ? matched.machine_ID : '';
   }, []);
 
@@ -173,13 +161,26 @@ export default function TicketCreation() {
   const [customerOpenCount, setCustomerOpenCount] = useState(0);
   const [systemStatus, setSystemStatus] = useState('Operational');
 
-  // AI Department Triage State
-  const [selectedDepartment, setSelectedDepartment] = useState('IT');
-  const [departmentConfirmed, setDepartmentConfirmed] = useState(false);
-  const [aiClassification, setAiClassification] = useState(null);
-  const [showAIDepartmentModal, setShowAIDepartmentModal] = useState(false);
-  const [isClassifying, setIsClassifying] = useState(false);
-  const [lastClassifiedText, setLastClassifiedText] = useState('');
+  // The customer picks the category. The AI suggestion fills the dropdown until the customer
+  // chooses one themselves; after that their choice is kept. The chosen category decides whether
+  // a machine is required (Service) or hidden (Software).
+  const [categoryTouched, setCategoryTouched] = useState(false);
+  const categoryPreview = useCategoryPreview({
+    title: formData.title,
+    description: formData.description,
+    categories: options.problem_categories,
+    enabled: !loadingOptions && !categoryTouched,
+  });
+  useEffect(() => {
+    if (categoryTouched || !categoryPreview.category) return;
+    const suggested = String(categoryPreview.category.problem_category_ID);
+    setFormData((prev) => (String(prev.problem_category_ID || '') === suggested ? prev : { ...prev, problem_category_ID: suggested }));
+  }, [categoryPreview.category, categoryTouched]);
+  const selectedCategory = (options.problem_categories || []).find(
+    (c) => String(c.problem_category_ID) === String(formData.problem_category_ID || '')
+  ) || null;
+  const showEquipment = !isSoftwareCategory(selectedCategory);
+  const equipmentRequired = isServiceCategory(selectedCategory);
 
   const fetchCustomerOpenCount = useCallback(async () => {
     try {
@@ -255,6 +256,8 @@ export default function TicketCreation() {
               description: draft.description || '',
               priority_ID: draft.priority_ID || 1,
             }));
+            // A category saved in the draft is the customer's choice; the AI must not replace it.
+            if (draft.problem_category_ID) setCategoryTouched(true);
             if (draft.attachments && Array.isArray(draft.attachments)) {
               setExistingDraftAttachments(draft.attachments);
             }
@@ -264,8 +267,10 @@ export default function TicketCreation() {
     }
   }, [location.state]);
 
-  // Load escalated AI handoff prefill if redirected from AI Support triage or route state
+  // Load escalated AI handoff prefill if redirected from AI Support triage or route state.
+  // Spec 0043 (AC-2): wait for the form options so the machine resolves against the real list.
   useEffect(() => {
+    if (loadingOptions) return;
     const prefill = location.state?.prefillData;
     if (prefill) {
       setFormData((prev) => {
@@ -318,24 +323,11 @@ export default function TicketCreation() {
           console.warn('Could not prefill escalation handoff payload:', err);
         });
     }
-  }, [location.state, options.machines, options.problem_categories, draftId, resolveMachineId, resolveCategoryId]);
+  }, [location.state, options.machines, options.problem_categories, draftId, resolveMachineId, resolveCategoryId, loadingOptions]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
-
-    if (name === 'problem_category_ID') {
-      const selectedCat = (options.problem_categories || []).find(
-        (c) => String(c.problem_category_ID) === String(value)
-      );
-      const catName = (selectedCat?.category_name || '').toLowerCase();
-      if (catName.includes('it') || catName.includes('software') || catName.includes('system') || catName.includes('network')) {
-        setSelectedDepartment('IT');
-      } else if (catName.includes('service') || catName.includes('biomedical') || catName.includes('maintenance') || catName.includes('hardware')) {
-        setSelectedDepartment('Service');
-      }
-      setDepartmentConfirmed(false);
-    }
   };
 
   const handleCasingBlur = (field) => () => {
@@ -345,59 +337,11 @@ export default function TicketCreation() {
     }));
   };
 
-  const handleDescriptionBlur = async () => {
+  const handleDescriptionBlur = () => {
     const raw = formData.description || '';
     const normalized = normalizeCasing(raw);
     if (normalized !== raw) {
       setFormData((prev) => ({ ...prev, description: normalized }));
-    }
-
-    const trimmed = normalized.trim();
-    if (trimmed.length >= 20 && trimmed !== lastClassifiedText) {
-      setLastClassifiedText(trimmed);
-      try {
-        setIsClassifying(true);
-        const classification = await classifyDepartment(formData.title || '', trimmed);
-        setAiClassification(classification);
-        if (classification?.department) {
-          setSelectedDepartment(classification.department);
-        }
-      } catch (err) {
-        console.warn('AI triage blur error:', err);
-      } finally {
-        setIsClassifying(false);
-      }
-    }
-  };
-
-  const handleConfirmAIDepartment = async () => {
-    setDepartmentConfirmed(true);
-    setShowAIDepartmentModal(false);
-
-    if (selectedDepartment === 'Service' && !formData.machine_ID) {
-      const msg = 'Equipment selection is required for Service hardware tickets. Please select an equipment item.';
-      setError(msg);
-      if (toast?.show) {
-        toast.show(msg, 'warning');
-      }
-      return;
-    }
-
-    const titleTrim = (formData.title || '').trim();
-    const descTrim = (formData.description || '').trim();
-
-    if (titleTrim && descTrim && formData.problem_category_ID) {
-      if (needsProperCasing(titleTrim)) {
-        const proper = formatProperTitleCase(titleTrim);
-        setTitleCasingData({
-          original: titleTrim,
-          formatted: proper,
-        });
-        setShowTitleCasingModal(true);
-        return;
-      }
-
-      await submitTicketWithTitle(titleTrim);
     }
   };
 
@@ -465,7 +409,8 @@ export default function TicketCreation() {
         setExistingDraftAttachments(res.draft.attachments);
         setFiles([]);
       }
-      setDraftMessage('Draft saved successfully with attachments. You can safely leave and resume editing anytime from My Drafts.');
+      setDraftMessage('Draft saved successfully! Redirecting to My Drafts...');
+      navigate('/my-tickets?tab=drafts', { state: { tab: 'drafts', draftSavedAt: Date.now() } });
     } catch (err) {
       setError(err?.response?.data?.message || 'Failed to save draft. Please try again.');
     } finally {
@@ -619,7 +564,7 @@ export default function TicketCreation() {
 
     const titleTrim = (formData.title || '').trim();
     const descTrim = (formData.description || '').trim();
-    if (!titleTrim || !formData.problem_category_ID || !descTrim) {
+    if (!titleTrim || !descTrim) {
       setError('Please complete all required fields.');
       return;
     }
@@ -632,73 +577,15 @@ export default function TicketCreation() {
       return;
     }
 
-    // AI Department confirmation check before letting user create ticket
-    if (!departmentConfirmed) {
-      const selectedCat = (options.problem_categories || []).find(
-        (c) => String(c.problem_category_ID) === String(formData.problem_category_ID)
-      );
-      const catName = (selectedCat?.category_name || '').toLowerCase();
-      const text = `${titleTrim} ${descTrim} ${catName}`.toLowerCase();
-      const isSoftware = /(software|app|login|password|account|portal|bug|glitch|crash|freeze|network|wifi|database|timeout|license)/i.test(text)
-        || catName.includes('it')
-        || catName.includes('software');
-
-      const initialDept = isSoftware ? 'IT' : 'Service';
-      setSelectedDepartment(initialDept);
-      setAiClassification({
-        department: initialDept,
-        department_id: isSoftware ? 2 : 1,
-        is_software: isSoftware,
-        requires_equipment: !isSoftware,
-        confidence: 0.9,
-        reasoning: isSoftware
-          ? 'Identified as a software, application, or account issue. Physical equipment selection is optional.'
-          : 'Identified as a physical machine or hardware maintenance issue. Equipment selection is required.'
-      });
-
-      setShowAIDepartmentModal(true);
-
-      // In background, call AI to refine classification if needed
-      classifyDepartment(titleTrim, descTrim).then((fresh) => {
-        if (fresh?.department) {
-          setAiClassification(fresh);
-        }
-      }).catch(() => {});
-
-      return; // STOP! Block submission until confirmed in modal
-    }
-
-    // If Service (Hardware), equipment is mandatory
-    if (selectedDepartment === 'Service' && !formData.machine_ID) {
-      setError('Equipment selection is required for Service hardware tickets. Please select an equipment item.');
+    // Spec 0043 (AC-5): a Service preview needs one of the customer's registered machines.
+    if (equipmentRequired && !formData.machine_ID) {
+      setError('Select the machine this problem is about. Service tickets need one of your registered machines.');
       return;
     }
 
-    if (needsProperCasing(titleTrim)) {
-      const proper = formatProperTitleCase(titleTrim);
-      setTitleCasingData({
-        original: titleTrim,
-        formatted: proper,
-      });
-      setShowTitleCasingModal(true);
-      return;
-    }
-
-    await submitTicketWithTitle(titleTrim);
-  };
-
-  const handleConfirmTitleCasing = async () => {
-    if (!titleCasingData) return;
-    const limitConfig = getMaxOpenTicketsLimit();
-    if (!limitConfig.isUnlimited && customerOpenCount >= limitConfig.limit) {
-      setShowTitleCasingModal(false);
-      setError(`You've reached the maximum number of open tickets (${limitConfig.limit}). Resolve or close an existing ticket before submitting another.`);
-      return;
-    }
-    const formatted = titleCasingData.formatted;
-    setFormData((prev) => ({ ...prev, title: formatted }));
-    setShowTitleCasingModal(false);
-    await submitTicketWithTitle(formatted);
+    const finalTitle = needsProperCasing(titleTrim) ? formatProperTitleCase(titleTrim) : titleTrim;
+    setFormData((prev) => ({ ...prev, title: finalTitle }));
+    await submitTicketWithTitle(finalTitle);
   };
 
   const submitTicketWithTitle = async (finalTitle) => {
@@ -723,13 +610,15 @@ export default function TicketCreation() {
       setFormData((prev) => ({ ...prev, title: finalTitle, description: normalizedDesc }));
       const payload = new FormData();
       payload.append('title', finalTitle);
-      if (formData.machine_ID) {
+      // The customer's chosen category is sent; with none, the server asks the AI. Software sends no machine.
+      if (formData.problem_category_ID) {
+        payload.append('problem_category_ID', formData.problem_category_ID);
+      }
+      if (formData.machine_ID && showEquipment) {
         payload.append('machine_ID', formData.machine_ID);
       }
-      payload.append('problem_category_ID', formData.problem_category_ID);
       payload.append('description', normalizedDesc);
       payload.append('priority_ID', formData.priority_ID || options.ticket_priorities?.[0]?.priority_ID || 1);
-      payload.append('department_id', selectedDepartment === 'Service' ? 1 : 2);
       if (draftId) {
         payload.append('draft_id', draftId);
       }
@@ -789,25 +678,7 @@ export default function TicketCreation() {
       label: `${machine.machine_name} - ${machine.serial_number}`,
     }));
 
-  const categoryOptions = options.category_options?.length
-    ? options.category_options
-    : (options.problem_categories || []).map((category) => {
-      const nameLower = (category.category_name || '').toLowerCase();
-      let label = category.category_name;
-      if (nameLower === 'it') {
-        label = 'IT (Software / Applications / Network — Equipment Optional)';
-      } else if (nameLower === 'service') {
-        label = 'Service (Hardware Diagnostic & Repair — Equipment Required)';
-      } else if (nameLower.includes('biomedical')) {
-        label = `${category.category_name} (Equipment Required)`;
-      } else if (nameLower.includes('others')) {
-        label = `${category.category_name} (General Inquiry)`;
-      }
-      return {
-        value: category.problem_category_ID,
-        label,
-      };
-    });
+  const selectedMachine = (options.machines || []).find((m) => String(m.machine_ID) === String(formData.machine_ID)) || null;
 
   const priorityOptions = options.priority_options?.length
     ? options.priority_options
@@ -871,7 +742,7 @@ export default function TicketCreation() {
               type="button"
               onClick={() => {
                 setDraftId(null);
-                setFormData({ title: '', machine_ID: '', problem_category_ID: '', description: '', priority_ID: 1 });
+                setFormData({ title: '', machine_ID: '', description: '', priority_ID: 1 });
                 setExistingDraftAttachments([]);
                 setFiles([]);
               }}
@@ -918,52 +789,69 @@ export default function TicketCreation() {
               </div>
 
               <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="ticket-machine">
-                    Equipment Name / ID {selectedDepartment === 'Service' ? <span className="text-destructive">*</span> : <span className="text-muted-slate text-xs font-normal ml-1">(Optional for IT)</span>}
-                  </Label>
-                  {selectedDepartment === 'IT' && (
-                    <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
-                      Optional (Software)
-                    </span>
+                <Label htmlFor="ticket-category">Problem Category</Label>
+                <div className="relative">
+                  <select
+                    id="ticket-category"
+                    name="problem_category_ID"
+                    value={formData.problem_category_ID || ''}
+                    onChange={(e) => {
+                      setCategoryTouched(true);
+                      handleChange(e);
+                    }}
+                    disabled={loadingOptions}
+                    className="flex h-10 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-dark-slate shadow-xs focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/20 outline-none disabled:opacity-50"
+                  >
+                    <option value="">Let AI decide</option>
+                    {(options.problem_categories || []).map((c) => (
+                      <option key={c.problem_category_ID} value={c.problem_category_ID}>{c.category_name}</option>
+                    ))}
+                  </select>
+                  {categoryPreview.loading && !categoryTouched && (
+                    <Loader2 className="pointer-events-none absolute right-8 top-3 h-4 w-4 animate-spin text-muted-slate" aria-hidden="true" />
                   )}
                 </div>
-                <select
-                  id="ticket-machine"
-                  name="machine_ID"
-                  required={selectedDepartment === 'Service'}
-                  value={formData.machine_ID}
-                  onChange={handleChange}
-                  disabled={loadingOptions}
-                  className="flex h-10 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-dark-slate shadow-xs focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/20 outline-none disabled:opacity-50"
-                >
-                  <option value="">{selectedDepartment === 'IT' ? 'None / Not Applicable (Software Issue)' : 'Select Equipment'}</option>
-                  {equipmentOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
+                <p className="text-xs text-muted-slate">
+                  {categoryTouched ? 'You chose this category.' : 'Suggested by AI from your description. You can change it.'}
+                </p>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-1.5">
-                <Label htmlFor="ticket-category">Problem Category <span className="text-destructive">*</span></Label>
-                <select
-                  id="ticket-category"
-                  name="problem_category_ID"
-                  required
-                  value={formData.problem_category_ID}
-                  onChange={handleChange}
-                  disabled={loadingOptions}
-                  className="flex h-10 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-dark-slate shadow-xs focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/20 outline-none disabled:opacity-50"
-                >
-                  <option value="">Select Category</option>
-                  {categoryOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
+            {showEquipment && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-1.5">
+                  <Label htmlFor="ticket-machine">
+                    Machine / Equipment {equipmentRequired ? <span className="text-destructive">*</span> : <span className="text-muted-slate text-xs font-normal ml-1">(optional)</span>}
+                  </Label>
+                  <select
+                    id="ticket-machine"
+                    name="machine_ID"
+                    required={equipmentRequired}
+                    value={formData.machine_ID}
+                    onChange={handleChange}
+                    disabled={loadingOptions}
+                    className="flex h-10 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-dark-slate shadow-xs focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/20 outline-none disabled:opacity-50"
+                  >
+                    <option value="">Select a machine</option>
+                    {equipmentOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="ticket-serial">Serial Number</Label>
+                  <Input
+                    id="ticket-serial"
+                    type="text"
+                    readOnly
+                    tabIndex={-1}
+                    value={selectedMachine?.serial_number || ''}
+                    placeholder="Select a machine"
+                    className="bg-page"
+                  />
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="space-y-1.5">
               <Label htmlFor="ticket-description">Detailed Description <span className="text-destructive">*</span></Label>
@@ -1156,23 +1044,6 @@ export default function TicketCreation() {
           </form>
         </div>
       </div>
-
-      <AIDepartmentModal
-        isOpen={showAIDepartmentModal}
-        classification={aiClassification}
-        selectedDepartment={selectedDepartment}
-        onSelectDepartment={(dept) => setSelectedDepartment(dept)}
-        onConfirm={handleConfirmAIDepartment}
-        onCancel={() => setShowAIDepartmentModal(false)}
-      />
-
-      <TitleCasingModal
-        isOpen={showTitleCasingModal}
-        originalTitle={titleCasingData?.original}
-        formattedTitle={titleCasingData?.formatted}
-        onConfirm={handleConfirmTitleCasing}
-        onCancel={() => setShowTitleCasingModal(false)}
-      />
 
       <NotificationModal
         isOpen={successModal}

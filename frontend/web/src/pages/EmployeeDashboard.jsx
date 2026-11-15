@@ -7,10 +7,11 @@ import {
   ShieldAlert,
   ArrowRight,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Inbox,
   ClipboardList,
   CheckCircle2,
-  Eye,
   Clock,
   Send,
   PauseCircle,
@@ -43,6 +44,7 @@ import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@
 import { DataTableSkeleton } from '@/components/ui/data-table';
 import { Button } from '@/components/ui/button';
 import { formatDisplayDate } from '@/utils/dateUtils';
+import { cn } from '@/lib/utils';
 
 export default function EmployeeDashboard() {
   const { user } = useAuth();
@@ -157,6 +159,23 @@ export default function EmployeeDashboard() {
     deferRefresh: false,
   });
 
+  // Tickets already in active work, hold, evaluation, or terminal states are never awaiting acceptance.
+  const isTicketAccepted = useCallback((ticket) => {
+    if (!ticket) return false;
+    if (ticket.accepted === true) return true;
+    const normalizedStatus = String(ticket.status || '').trim().toLowerCase();
+    return [
+      'in progress',
+      'on hold',
+      'pending evaluation',
+      'pending',
+      'resolved',
+      'closed',
+      'discarded',
+      'discarded by customer',
+    ].includes(normalizedStatus);
+  }, []);
+
   // ─── Assigned Workload Metrics (TS060 Criteria) ───────────────────────────
   const assignedMetrics = useMemo(() => {
     let openCount = 0;
@@ -172,7 +191,7 @@ export default function EmployeeDashboard() {
       if (t.status === 'In Progress') inProgressCount++;
       if (t.status === 'On Hold') onHoldCount++;
       if (t.status === 'Resolved' || t.status === 'Closed') resolvedCount++;
-      if (!t.accepted && t.status !== 'Resolved' && t.status !== 'Closed') awaitingAcceptCount++;
+      if (!isTicketAccepted(t)) awaitingAcceptCount++;
 
       const risk = evaluateSlaRisk(t);
       if (risk === 'breached') breachedCount++;
@@ -189,7 +208,7 @@ export default function EmployeeDashboard() {
       awaitingAccept: awaitingAcceptCount,
       totalActive: assignedTickets.filter((t) => !['Resolved', 'Closed'].includes(t.status)).length,
     };
-  }, [assignedTickets, evaluateSlaRisk]);
+  }, [assignedTickets, evaluateSlaRisk, isTicketAccepted]);
 
   // ─── Requestor Activity Metrics (TS060 Criteria) ──────────────────────────
   const requestorMetrics = useMemo(() => {
@@ -235,12 +254,13 @@ export default function EmployeeDashboard() {
     });
   }, [assignedTickets, search, statusFilter, priorityFilter]);
 
-  // Attention-needed items for Assigned section
+  // Attention-needed items for Assigned section (spec 0038 AC-20): SLA problems only.
+  // Not yet accepted or Escalated tickets without an SLA risk are not listed.
   const assignedAttentionItems = useMemo(() => {
     return assignedTickets.filter((t) => {
       const risk = evaluateSlaRisk(t);
-      const isUrgent = risk === 'breached' || risk === 'at_risk' || !t.accepted || t.status === 'Escalated';
-      return isUrgent && !['Resolved', 'Closed'].includes(t.status);
+      const hasSlaProblem = risk === 'breached' || risk === 'at_risk';
+      return hasSlaProblem && !['Resolved', 'Closed', 'Discarded', 'Discarded by Customer'].includes(t.status);
     }).slice(0, 4);
   }, [assignedTickets, evaluateSlaRisk]);
 
@@ -264,12 +284,12 @@ export default function EmployeeDashboard() {
       setModalLoading(false);
     }
 
-    if (!fullTicket.accepted) {
+    if (!isTicketAccepted(fullTicket)) {
       setPendingTicket(fullTicket);
     } else {
       setInfoTicket(fullTicket);
     }
-  }, []);
+  }, [isTicketAccepted]);
 
   const openRequestorModal = useCallback(async (t) => {
     setModalLoading(true);
@@ -341,7 +361,96 @@ export default function EmployeeDashboard() {
         badgeVariant="emerald"
       />
 
-      {/* Visual Navigation Pill Switcher (Clearly separating the two roles) */}
+      {/* Top Hero KPI Row (Industry standard 4-card maximum to eliminate metric clutter) */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {activeSection === 'requestor' ? (
+          <>
+            <MetricCard
+              title="Total Requests"
+              value={requestorMetrics.total}
+              subtitle="Submitted requests"
+              icon={<Send className="w-4 h-4 text-accent" />}
+              loading={loadingRequests}
+              onClick={() => navigate('/employee/my-tickets')}
+              className="cursor-pointer hover:shadow-md transition-shadow"
+            />
+            <MetricCard
+              title="Under Service"
+              value={requestorMetrics.open + requestorMetrics.inProgress}
+              subtitle="Open & In Progress"
+              icon={<Clock className="w-4 h-4 text-amber-600" />}
+              variant="amber"
+              loading={loadingRequests}
+              onClick={() => navigate('/employee/my-tickets?status=Open')}
+              className="cursor-pointer hover:shadow-md transition-shadow"
+            />
+            <MetricCard
+              title="Action Needed"
+              value={requestorAttentionItems.length}
+              subtitle="Awaiting confirm / review"
+              icon={<AlertCircle className="w-4 h-4 text-amber-600" />}
+              variant="amber"
+              loading={loadingRequests}
+              onClick={() => navigate('/employee/my-tickets?status=Resolved')}
+              className="cursor-pointer hover:shadow-md transition-shadow"
+            />
+            <MetricCard
+              title="Closed Requests"
+              value={requestorMetrics.closed}
+              subtitle="Successfully closed"
+              icon={<CheckCircle2 className="w-4 h-4 text-emerald-600" />}
+              variant="emerald"
+              loading={loadingRequests}
+              onClick={() => navigate('/employee/my-tickets?status=Closed')}
+              className="cursor-pointer hover:shadow-md transition-shadow"
+            />
+          </>
+        ) : (
+          <>
+            <MetricCard
+              title="Assigned Workload"
+              value={assignedMetrics.totalActive}
+              subtitle="Active technician tickets"
+              icon={<Briefcase className="w-4 h-4 text-primary" />}
+              loading={loadingAssigned}
+              onClick={() => navigate('/employee/assigned')}
+              className="cursor-pointer hover:shadow-md transition-shadow"
+            />
+            <MetricCard
+              title="Awaiting Accept"
+              value={assignedMetrics.awaitingAccept}
+              subtitle="Pending acceptance"
+              icon={<Inbox className="w-4 h-4 text-amber-600" />}
+              variant="amber"
+              loading={loadingAssigned}
+              onClick={() => navigate('/employee/assigned?status=Open')}
+              className="cursor-pointer hover:shadow-md transition-shadow"
+            />
+            <MetricCard
+              title="Approaching SLA"
+              value={assignedMetrics.atRisk}
+              subtitle="Near threshold (warning)"
+              icon={<Clock className="w-4 h-4 text-amber-600" />}
+              variant="amber"
+              loading={loadingAssigned}
+              onClick={() => navigate('/employee/assigned?sla=At+Risk')}
+              className="cursor-pointer hover:shadow-md transition-shadow"
+            />
+            <MetricCard
+              title="SLA Breached"
+              value={assignedMetrics.breached}
+              subtitle="Resolution overdue"
+              icon={<AlertTriangle className="w-4 h-4 text-rose-600" />}
+              variant="crimson"
+              loading={loadingAssigned}
+              onClick={() => navigate('/employee/assigned?sla=Breached')}
+              className="cursor-pointer hover:shadow-md transition-shadow"
+            />
+          </>
+        )}
+      </div>
+
+      {/* Visual Navigation Pill Switcher */}
       <div className="flex items-center gap-1 bg-muted/40 p-1.5 rounded-xl border border-border w-fit">
         <Button
           variant={activeSection === 'all' ? 'default' : 'ghost'}
@@ -358,7 +467,7 @@ export default function EmployeeDashboard() {
           className="text-xs gap-1.5"
         >
           <Briefcase className="w-3.5 h-3.5" />
-          <span>My Work (Assigned Workload)</span>
+          <span>Assigned Tasks</span>
           <Badge variant="secondary" className="ml-1 text-[10px]">{assignedMetrics.totalActive}</Badge>
         </Button>
         <Button
@@ -368,16 +477,16 @@ export default function EmployeeDashboard() {
           className="text-xs gap-1.5"
         >
           <Send className="w-3.5 h-3.5" />
-          <span>My Requests (Requestor Activity)</span>
+          <span>My Request</span>
           <Badge variant="secondary" className="ml-1 text-[10px]">{requestorMetrics.total}</Badge>
         </Button>
       </div>
 
       {/* ═════════════════════════════════════════════════════════════════════ */}
-      {/* SECTION 1: ASSIGNED EMPLOYEE WORKLOAD ("MY WORK")                     */}
+      {/* SECTION 1: MY WORK                                                    */}
       {/* ═════════════════════════════════════════════════════════════════════ */}
       {(activeSection === 'all' || activeSection === 'assigned') && (
-        <div className="rounded-2xl border-2 border-primary/20 bg-card p-6 shadow-xs space-y-6">
+        <div className="rounded-2xl border border-border bg-card p-6 shadow-xs space-y-6">
           {/* Section Banner Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-4">
             <div className="flex items-center gap-3">
@@ -386,7 +495,7 @@ export default function EmployeeDashboard() {
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-base font-bold text-foreground">Section I: Assigned Workload (My Work)</h2>
+                  <h2 className="text-base font-bold text-foreground">My Work</h2>
                   <Badge variant="outline" className="text-[10px] bg-primary/5 text-primary border-primary/20">
                     Technician Role
                   </Badge>
@@ -397,15 +506,17 @@ export default function EmployeeDashboard() {
               </div>
             </div>
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => navigate('/employee/assigned')}
-              className="text-xs gap-1.5 shrink-0"
-            >
-              <span>Go to Work Log</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </Button>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate('/employee/assigned')}
+                className="text-xs gap-1.5 shrink-0"
+              >
+                <span>Go to Work Log</span>
+                <ArrowRight className="w-3.5 h-3.5" />
+              </Button>
+            </div>
           </div>
 
           {/* Assigned Section Partial-Failure State */}
@@ -418,64 +529,37 @@ export default function EmployeeDashboard() {
             </div>
           ) : (
             <>
-              {/* Summary Cards by Status + SLA Risk Highlights (TS060 Criteria) */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                <MetricCard
-                  title="Open Work"
-                  value={assignedMetrics.open}
-                  subtitle="Awaiting start"
-                  icon={<Inbox className="w-4 h-4 text-primary" />}
-                  loading={loadingAssigned}
-                  onClick={() => navigate('/employee/assigned?status=Open')}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
-                />
-                <MetricCard
-                  title="In Progress"
-                  value={assignedMetrics.inProgress}
-                  subtitle="Active work"
-                  icon={<ClipboardList className="w-4 h-4 text-amber-600" />}
-                  loading={loadingAssigned}
-                  onClick={() => navigate('/employee/assigned?status=In+Progress')}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
-                />
-                <MetricCard
-                  title="On Hold"
-                  value={assignedMetrics.onHold}
-                  subtitle="Paused tickets"
-                  icon={<PauseCircle className="w-4 h-4 text-slate-600" />}
-                  loading={loadingAssigned}
-                  onClick={() => navigate('/employee/assigned?status=On+Hold')}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
-                />
-                <MetricCard
-                  title="Completed / Resolved"
-                  value={assignedMetrics.resolved}
-                  subtitle="Successfully serviced"
-                  icon={<CheckCircle2 className="w-4 h-4 text-emerald-600" />}
-                  loading={loadingAssigned}
-                  onClick={() => navigate('/employee/assigned?status=Resolved')}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
-                />
-                <MetricCard
-                  title="Approaching SLA"
-                  value={assignedMetrics.atRisk}
-                  subtitle="At Risk (warning)"
-                  icon={<Clock className="w-4 h-4 text-amber-600" />}
-                  variant="amber"
-                  loading={loadingAssigned}
-                  onClick={() => navigate('/employee/assigned?sla=At+Risk')}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
-                />
-                <MetricCard
-                  title="SLA Breached"
-                  value={assignedMetrics.breached}
-                  subtitle="SLA exceeded"
-                  icon={<AlertTriangle className="w-4 h-4 text-rose-600" />}
-                  variant="crimson"
-                  loading={loadingAssigned}
-                  onClick={() => navigate('/employee/assigned?sla=Breached')}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
-                />
+              {/* Compact Status Breakdown Filters */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {[
+                  { label: 'All Status', count: assignedMetrics.totalActive },
+                  { label: 'Open', count: assignedMetrics.open },
+                  { label: 'In Progress', count: assignedMetrics.inProgress },
+                  { label: 'On Hold', count: assignedMetrics.onHold },
+                  { label: 'Resolved', count: assignedMetrics.resolved },
+                ].map((tab) => (
+                  <button
+                    key={tab.label}
+                    type="button"
+                    onClick={() => setStatusFilter(tab.label)}
+                    className={cn(
+                      "px-2.5 py-1 text-xs font-medium rounded-lg transition-colors border",
+                      statusFilter === tab.label
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : "bg-muted/40 hover:bg-muted text-muted-foreground border-border"
+                    )}
+                  >
+                    {tab.label}
+                    <span className={cn(
+                      "ml-1.5 text-[10px] px-1.5 py-0.2 rounded-full",
+                      statusFilter === tab.label
+                        ? "bg-white/20 text-white"
+                        : "bg-muted text-foreground"
+                    )}>
+                      {tab.count}
+                    </span>
+                  </button>
+                ))}
               </div>
 
               {/* Assigned Attention Highlights (TS060 Criteria) */}
@@ -497,7 +581,7 @@ export default function EmployeeDashboard() {
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-xs text-primary">{t.id}</span>
-                            {!t.accepted ? (
+                            {!isTicketAccepted(t) ? (
                               <Badge variant="warning" className="text-[10px]">Awaiting Review &amp; Accept</Badge>
                             ) : (
                               <Badge variant="destructive" className="text-[10px]">SLA Critical</Badge>
@@ -515,7 +599,7 @@ export default function EmployeeDashboard() {
                           }}
                           className="text-xs shrink-0"
                         >
-                          {!t.accepted ? 'Accept / Review' : 'Update Ticket'}
+                          {!isTicketAccepted(t) ? 'Accept / Review' : 'Update Ticket'}
                         </Button>
                       </div>
                     ))}
@@ -561,15 +645,14 @@ export default function EmployeeDashboard() {
                         <TableHead>Customer / Facility</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Priority</TableHead>
-                        <TableHead className="w-[100px] text-right">Action</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {loadingAssigned ? (
-                        <DataTableSkeleton columns={6} rows={3} />
+                        <DataTableSkeleton columns={5} rows={3} />
                       ) : filteredAssigned.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={6} className="py-6 text-center text-xs text-muted-foreground">
+                          <TableCell colSpan={5} className="py-6 text-center text-xs text-muted-foreground">
                             No assigned tickets match the selected filters.
                           </TableCell>
                         </TableRow>
@@ -597,20 +680,6 @@ export default function EmployeeDashboard() {
                                 {t.priority}
                               </Badge>
                             </TableCell>
-                            <TableCell className="text-right">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openContextualTicketModal(t);
-                                }}
-                                className="text-xs text-primary hover:text-primary gap-1"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                {!t.accepted ? 'Review & Accept' : 'Update'}
-                              </Button>
-                            </TableCell>
                           </TableRow>
                         ))
                       )}
@@ -624,10 +693,10 @@ export default function EmployeeDashboard() {
       )}
 
       {/* ═════════════════════════════════════════════════════════════════════ */}
-      {/* SECTION 2: REQUESTOR ACTIVITY ("MY REQUESTS")                         */}
+      {/* SECTION 2: MY REQUEST                                                 */}
       {/* ═════════════════════════════════════════════════════════════════════ */}
       {(activeSection === 'all' || activeSection === 'requestor') && (
-        <div className="rounded-2xl border-2 border-accent/20 bg-card p-6 shadow-xs space-y-6">
+        <div className="rounded-2xl border border-border bg-card p-6 shadow-xs space-y-6">
           {/* Section Banner Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-border pb-4">
             <div className="flex items-center gap-3">
@@ -636,7 +705,7 @@ export default function EmployeeDashboard() {
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="text-base font-bold text-foreground">Section II: Requestor Activity (My Requests)</h2>
+                  <h2 className="text-base font-bold text-foreground">My Request</h2>
                   <Badge variant="outline" className="text-[10px] bg-accent/5 text-accent border-accent/20">
                     Requestor Role
                   </Badge>
@@ -668,54 +737,21 @@ export default function EmployeeDashboard() {
             </div>
           ) : (
             <>
-              {/* Summary Cards by Status (TS060 Criteria) */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                <MetricCard
-                  title="Open Requests"
-                  value={requestorMetrics.open}
-                  subtitle="Awaiting triage"
-                  icon={<Inbox className="w-4 h-4 text-accent" />}
-                  loading={loadingRequests}
-                  onClick={() => navigate('/employee/my-tickets?status=Open')}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
-                />
-                <MetricCard
-                  title="In Progress"
-                  value={requestorMetrics.inProgress}
-                  subtitle="Being serviced"
-                  icon={<Clock className="w-4 h-4 text-amber-600" />}
-                  loading={loadingRequests}
-                  onClick={() => navigate('/employee/my-tickets?status=In+Progress')}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
-                />
-                <MetricCard
-                  title="Resolved (Awaiting Close)"
-                  value={requestorMetrics.resolved}
-                  subtitle="Awaiting your confirm"
-                  icon={<CheckCircle2 className="w-4 h-4 text-emerald-600" />}
-                  variant="emerald"
-                  loading={loadingRequests}
-                  onClick={() => navigate('/employee/my-tickets?status=Resolved')}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
-                />
-                <MetricCard
-                  title="Auto-Closing Soon"
-                  value={requestorMetrics.autoClosingSoon}
-                  subtitle="Resolution window active"
-                  icon={<Clock className="w-4 h-4 text-primary" />}
-                  loading={loadingRequests}
-                  onClick={() => navigate('/employee/my-tickets?status=Resolved')}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
-                />
-                <MetricCard
-                  title="Closed Requests"
-                  value={requestorMetrics.closed}
-                  subtitle="Past request history"
-                  icon={<CheckCircle2 className="w-4 h-4 text-slate-500" />}
-                  loading={loadingRequests}
-                  onClick={() => navigate('/employee/my-tickets?status=Closed')}
-                  className="cursor-pointer hover:shadow-md transition-shadow"
-                />
+              {/* Compact Status Breakdown Overview */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-medium text-muted-foreground">Requests Breakdown:</span>
+                <span className="text-xs px-2.5 py-1 rounded-lg bg-muted/40 border border-border">
+                  Open: <strong className="font-semibold text-foreground">{requestorMetrics.open}</strong>
+                </span>
+                <span className="text-xs px-2.5 py-1 rounded-lg bg-muted/40 border border-border">
+                  In Progress: <strong className="font-semibold text-foreground">{requestorMetrics.inProgress}</strong>
+                </span>
+                <span className="text-xs px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200">
+                  Resolved: <strong className="font-bold">{requestorMetrics.resolved}</strong>
+                </span>
+                <span className="text-xs px-2.5 py-1 rounded-lg bg-muted/40 border border-border">
+                  Closed: <strong className="font-semibold text-foreground">{requestorMetrics.closed}</strong>
+                </span>
               </div>
 
               {/* Requestor Attention Highlights (TS060 Criteria: Resolved awaiting confirm or reopened) */}
@@ -773,7 +809,7 @@ export default function EmployeeDashboard() {
                     onClick={() => navigate('/employee/my-tickets')}
                     className="text-xs text-primary hover:text-primary gap-1"
                   >
-                    <span>View All ({myRequests.length})</span>
+                    <span>View All</span>
                     <ArrowRight className="w-3.5 h-3.5" />
                   </Button>
                 </div>
@@ -786,15 +822,14 @@ export default function EmployeeDashboard() {
                         <TableHead>Title</TableHead>
                         <TableHead>Target Equipment</TableHead>
                         <TableHead>Status</TableHead>
-                        <TableHead className="w-[100px] text-right">Action</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {loadingRequests ? (
-                        <DataTableSkeleton columns={5} rows={3} />
+                        <DataTableSkeleton columns={4} rows={3} />
                       ) : myRequests.length === 0 ? (
                         <TableRow>
-                          <TableCell colSpan={5} className="py-6 text-center text-xs text-muted-foreground">
+                          <TableCell colSpan={4} className="py-6 text-center text-xs text-muted-foreground">
                             You have not submitted any internal tickets yet.
                           </TableCell>
                         </TableRow>
@@ -816,20 +851,6 @@ export default function EmployeeDashboard() {
                             </TableCell>
                             <TableCell>
                               <Badge variant={getStatusBadgeVariant(t.status)}>{t.status}</Badge>
-                            </TableCell>
-                            <TableCell className="text-right">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  openRequestorModal(t);
-                                }}
-                                className="text-xs text-primary hover:text-primary gap-1"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                View
-                              </Button>
                             </TableCell>
                           </TableRow>
                         ))

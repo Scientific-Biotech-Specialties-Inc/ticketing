@@ -1,66 +1,42 @@
-import { safeUrl } from '@/utils/safeUrl';
-import React, { useState, useMemo, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   X,
-  FileText,
-  Paperclip,
-  CheckCircle,
-  CheckCircle2,
-  AlertCircle,
-  Star,
-  ArrowUpDown,
   RotateCcw,
-  Pencil,
-  Eye,
-  Check,
-  Clock,
-  ShieldAlert,
-  AlertTriangle,
-  PauseCircle,
-  MessageCircle,
-  Bell,
+  MessageSquare,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import FilePreviewModal from './FilePreviewModal';
 import FeedbackModal from './feedback/FeedbackModal';
 import TicketFeedbackSection from './feedback/TicketFeedbackSection';
-import InternalTicketMessageThread from './InternalTicketMessageThread';
 import TicketActivityTimeline from './TicketActivityTimeline';
-import { formatDisplayDate } from '@/utils/dateUtils';
-import { hasFeedbackBeenSubmitted, isFeedbackFormEnabled, setFeedbackFormEnabled, fetchFeedbackForTicket } from '@/data/mockFeedbackData';
-import { getFeedbackFormStatus, getWindowConfiguration, getCachedWindowConfiguration } from '@/services/configurationService';
+import {
+  TicketDetailModalShell,
+  ModalHeader,
+  TicketTitleBlock,
+  StatusStepper,
+  AlertBanner,
+  AssigneeRow,
+  TabBar,
+  FieldGrid,
+  AttachmentCard,
+  ModalFooter,
+  formatPHT,
+  formatRelativePHT,
+  getAssigneeInfo,
+  getAssigneeList,
+  getMessagesPath,
+  getFileName,
+  getFileUrl,
+} from './ticket-modal';
+import { isFeedbackFormEnabled } from '@/data/mockFeedbackData';
+import { getWindowConfiguration, getCachedWindowConfiguration } from '@/services/configurationService';
+import { getTicketTimeline } from '@/services/ticketService';
+import { getTicketMessages } from '@/services/messagingService';
+import { useAuth } from '@/context/AuthContext';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-
-const getFileName = (file, fallback = 'Attachment') => {
-  if (!file) return fallback;
-  if (typeof file === 'string') return file.split('/').pop() || fallback;
-  return file.name || file.file_name || fallback;
-};
-
-const getFileUrlRaw = (file) => {
-  if (!file) return '';
-  let raw = '';
-  if (typeof file === 'string') {
-    raw = file;
-  } else {
-    raw = file.url || file.file_path || file.path || '';
-  }
-  if (!raw) return '';
-  if (raw.startsWith('http://') || raw.startsWith('https://') || raw.startsWith('blob:') || raw.startsWith('data:')) {
-    return raw;
-  }
-  const clean = raw.replace(/^\/+/, '');
-  if (clean.startsWith('storage/')) {
-    return `/api/ticketing/attachment/${clean}`;
-  }
-  if (clean.startsWith('api/')) {
-    return `/${clean}`;
-  }
-  return `/api/ticketing/attachment/storage/${clean}`;
-};
-const getFileUrl = (file) => safeUrl(getFileUrlRaw(file));
+import useLiveTicket from '@/hooks/useLiveTicket';
 
 export default function CustomerTicketDetailModal({
   ticket,
@@ -74,89 +50,73 @@ export default function CustomerTicketDetailModal({
   onAssign,
   onViewTicket,
   onFeedbackSubmitted,
+  readOnly = false,
 }) {
-  useLockBodyScroll(Boolean(ticket));
   const navigate = useNavigate();
+  const location = useLocation();
+  const { user } = useAuth();
+
+  const isCSSide = useMemo(() => {
+    const role = String(user?.role || '').toLowerCase();
+    if (
+      role === 'cs' ||
+      role === 'cs_manager' ||
+      role === 'service_manager' ||
+      role === 'it_manager' ||
+      role === 'admin' ||
+      role === 'super_admin' ||
+      role === 'employee' ||
+      role === 'service'
+    ) {
+      return true;
+    }
+    if (typeof window !== 'undefined') {
+      const p = window.location.pathname;
+      return (
+        p.startsWith('/cs') ||
+        p.startsWith('/it-manager') ||
+        p.startsWith('/service-manager') ||
+        p.startsWith('/employee')
+      );
+    }
+    return false;
+  }, [user?.role]);
+
   const [currentTicket, setCurrentTicket] = useState(ticket);
-  const [timelineSortOrder, setTimelineSortOrder] = useState('asc');
+  const [activeTab, setActiveTab] = useState('details'); // 'details' | 'updates' | 'files'
+  const [descExpanded, setDescExpanded] = useState(false);
+  const [previewFile, setPreviewFile] = useState(null);
+
+  // Updates / Timeline Data for Tab and Mini-Timeline
+  const [timelineEvents, setTimelineEvents] = useState([]);
+  const [timelineTotal, setTimelineTotal] = useState(0);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+
+  // Reopen Modal State
   const [showReopenModal, setShowReopenModal] = useState(false);
+  useLockBodyScroll(showReopenModal);
   const [reopenReason, setReopenReason] = useState('');
   const [reopenValidationError, setReopenValidationError] = useState('');
   const [reopenError, setReopenError] = useState('');
   const [reopenSubmitting, setReopenSubmitting] = useState(false);
   const [reopenSuccessNotice, setReopenSuccessNotice] = useState('');
-  const [previewFile, setPreviewFile] = useState(null);
+
+  // Feedback State
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
   const [editingFeedback, setEditingFeedback] = useState(null);
   const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
-  const [feedbackEnabled, setFeedbackEnabled] = useState(() => isFeedbackFormEnabled());
 
   useEffect(() => {
     setCurrentTicket(ticket);
     setReopenSuccessNotice('');
   }, [ticket]);
 
-  const effectiveTicket = currentTicket || ticket;
+  // Follow the backend while the modal is open so assignment/status changes (e.g. CS assigns the
+  // ticket) update the stepper circle and assignee row without closing and reopening the modal.
+  const { ticket: liveTicket, refresh: refreshLiveTicket } = useLiveTicket(currentTicket || ticket);
+  const effectiveTicket = liveTicket;
 
-  const normalizedAttachments = useMemo(() => {
-    let list = effectiveTicket?.attachments || effectiveTicket?.ticket_attachments || [];
-    if (typeof list === 'string') {
-      try { list = JSON.parse(list); } catch { list = []; }
-    }
-    if (!Array.isArray(list)) list = [];
-    return list;
-  }, [effectiveTicket?.attachments, effectiveTicket?.ticket_attachments]);
-
-  useEffect(() => {
-    const rawId = effectiveTicket?.ticket_ID || effectiveTicket?.id;
-    if (!rawId) return;
-    const numId = Number(String(rawId).replace(/\D/g, ''));
-    if (!numId) return;
-
-    if (normalizedAttachments.length === 0) {
-      let isMounted = true;
-      import('@/services/ticketService')
-        .then((mod) => {
-          if (typeof mod?.getTicketAttachments === 'function') {
-            return mod.getTicketAttachments(numId);
-          }
-          return [];
-        })
-        .then((atts) => {
-          if (isMounted && Array.isArray(atts) && atts.length > 0) {
-            setCurrentTicket((prev) => ({
-              ...prev,
-              attachments: atts,
-            }));
-          }
-        })
-        .catch(() => {});
-      return () => { isMounted = false; };
-    }
-  }, [effectiveTicket?.ticket_ID, effectiveTicket?.id, normalizedAttachments.length]);
-
-  useEffect(() => {
-    let isMounted = true;
-    getFeedbackFormStatus().then((res) => {
-      if (isMounted && res && (res.is_enabled !== undefined || res.isEnabled !== undefined)) {
-        const isMasterOn = Boolean(res.is_enabled ?? res.isEnabled);
-        setFeedbackEnabled(isMasterOn);
-        setFeedbackFormEnabled(isMasterOn);
-      }
-    }).catch(() => {});
-
-    const handleToggleChange = () => {
-      setFeedbackEnabled(isFeedbackFormEnabled());
-    };
-    window.addEventListener('storage', handleToggleChange);
-    window.addEventListener('feedback_master_toggle_changed', handleToggleChange);
-    return () => {
-      isMounted = false;
-      window.removeEventListener('storage', handleToggleChange);
-      window.removeEventListener('feedback_master_toggle_changed', handleToggleChange);
-    };
-  }, []);
-
+  // Window Configuration for Reopening
   const [windowConfig, setWindowConfig] = useState(() => {
     const cached = getCachedWindowConfiguration();
     if (cached && typeof cached.reopenWindowDays !== 'undefined') {
@@ -184,274 +144,132 @@ export default function CustomerTicketDetailModal({
         }
       })
       .catch(() => {});
-    return () => {
-      isMounted = false;
-    };
+    return () => { isMounted = false; };
   }, []);
 
-  const [modalNow, setModalNow] = useState(Date.now());
-  const isResolvedModal = effectiveTicket?.status === 'Resolved';
-  const resolvedDateModal = effectiveTicket?.resolved_at || effectiveTicket?.lastUpdate || effectiveTicket?.updated_at;
-
-  useEffect(() => {
-    if (!isResolvedModal) return;
-    const interval = setInterval(() => setModalNow(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, [isResolvedModal]);
-
-  const { modalRemainingSeconds, isModalAutoCloseExpired } = useMemo(() => {
-    if (!isResolvedModal || !resolvedDateModal || !windowConfig.autoCloseEnabled) {
-      return { modalRemainingSeconds: null, isModalAutoCloseExpired: false };
+  // Fetch normalized attachments & proof files
+  const normalizedAttachments = useMemo(() => {
+    let list = effectiveTicket?.attachments || effectiveTicket?.ticket_attachments || [];
+    if (typeof list === 'string') {
+      try { list = JSON.parse(list); } catch { list = []; }
     }
-    const resolvedMs = new Date(resolvedDateModal).getTime();
-    if (isNaN(resolvedMs)) return { modalRemainingSeconds: null, isModalAutoCloseExpired: false };
-    const windowMs = (windowConfig.autoCloseWindowDays || 2) * 24 * 60 * 60 * 1000;
-    const deadlineMs = resolvedMs + windowMs;
-    const diffSec = Math.floor((deadlineMs - modalNow) / 1000);
-    return {
-      modalRemainingSeconds: diffSec,
-      isModalAutoCloseExpired: diffSec <= 0,
-    };
-  }, [isResolvedModal, resolvedDateModal, windowConfig, modalNow]);
+    return Array.isArray(list) ? list : [];
+  }, [effectiveTicket?.attachments, effectiveTicket?.ticket_attachments]);
 
-  useEffect(() => {
-    if (isResolvedModal && isModalAutoCloseExpired && windowConfig.autoCloseEnabled) {
-      const nowIso = new Date().toISOString();
-      setCurrentTicket((prev) => {
-        if (!prev || prev.status === 'Closed') return prev;
-        const priorTimeline = prev.timeline || [];
-        return {
-          ...prev,
-          status: 'Closed',
-          closed_at: nowIso,
-          auto_closed: true,
-          closed_by: 'system',
-          timeline: [
-            ...priorTimeline,
-            {
-              id: `auto-close-${Date.now()}`,
-              type: 'system_autoclose',
-              text: 'Closed automatically by system due to inactivity following resolution window.',
-              timestamp: nowIso,
-            },
-          ],
-        };
-      });
-    }
-  }, [isResolvedModal, isModalAutoCloseExpired, windowConfig.autoCloseEnabled]);
+  const proofFiles = useMemo(() => {
+    const list = effectiveTicket?.proofAttachments || effectiveTicket?.proofFiles || [];
+    return Array.isArray(list) ? list : [];
+  }, [effectiveTicket?.proofAttachments, effectiveTicket?.proofFiles]);
 
-  const isAutoClosedModal = useMemo(() => {
-    if (!effectiveTicket || effectiveTicket.status !== 'Closed') return false;
-    if (effectiveTicket.auto_closed || effectiveTicket.autoClosed) return true;
-    if (effectiveTicket.closed_by === 'system' || effectiveTicket.actor_type === 'system') return true;
-    const timeline = effectiveTicket.timeline || [];
-    const hasAutoEvent = timeline.some((t) =>
-      /auto-close|closed automatically|system due to inactivity/i.test(t.text || '')
-    );
-    const audit = effectiveTicket.audit_logs || effectiveTicket.auditLogs || [];
-    const hasAutoAudit = audit.some((a) =>
-      a.actor_type === 'system' || /auto-close/i.test(a.details || '')
-    );
-    return hasAutoEvent || hasAutoAudit;
-  }, [effectiveTicket]);
+  const allFiles = useMemo(() => {
+    return [...normalizedAttachments, ...proofFiles];
+  }, [normalizedAttachments, proofFiles]);
 
-  const formatCountdown = (totalSec) => {
-    if (totalSec === null || totalSec < 0) return '00:00:00';
-    const d = Math.floor(totalSec / 86400);
-    const h = Math.floor((totalSec % 86400) / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const s = totalSec % 60;
-    if (d > 0) {
-      return `${d}d ${String(h).padStart(2, '0')}h ${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}s`;
-    }
-    return `${String(h).padStart(2, '0')}h ${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}s`;
-  };
+  // Ticket Numeric ID
+  const ticketNumericId = useMemo(() => {
+    const raw = effectiveTicket?.ticket_ID || effectiveTicket?.id;
+    if (!raw) return null;
+    const n = Number(String(raw).replace(/\D/g, ''));
+    return isNaN(n) ? null : n;
+  }, [effectiveTicket?.ticket_ID, effectiveTicket?.id]);
 
-  const formatRemainingText = (totalSec) => {
-    if (totalSec === null || totalSec <= 0) return 'less than a minute';
-    const d = Math.floor(totalSec / 86400);
-    const h = Math.floor((totalSec % 86400) / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    const parts = [];
-    if (d > 0) parts.push(`${d} day${d > 1 ? 's' : ''}`);
-    if (h > 0) parts.push(`${h} hour${h > 1 ? 's' : ''}`);
-    if (m > 0 && d === 0) parts.push(`${m} minute${m > 1 ? 's' : ''}`);
-    return parts.join(' and ') || 'less than a minute';
-  };
-
-  const isCS = useMemo(() => {
+  const loadTimeline = useCallback(async () => {
+    if (!ticketNumericId) return;
+    setTimelineLoading(true);
     try {
-      if (typeof window !== 'undefined' && window.location.pathname.startsWith('/cs')) return true;
-      const user = JSON.parse(localStorage.getItem('user') || '{}');
-      const dept = (user.department || user.profile?.department?.name || '').toLowerCase();
-      const role = (user.role || user.profile?.role?.name || '').toLowerCase();
-      return (
-        dept.includes('customer service') ||
-        dept.includes('customer support') ||
-        dept === 'cs' ||
-        role.includes('customer service') ||
-        role.includes('customer-service') ||
-        role.includes('head of cs') ||
-        role.includes('head of customer service') ||
-        role === 'cs' ||
-        role === 'head cs'
-      );
+      const res = await getTicketTimeline(ticketNumericId, { page: 1, per_page: 20, order: 'desc' });
+      const incoming = Array.isArray(res?.data)
+        ? res.data.map((item, idx) => ({
+            ...item,
+            id: item.id || item.log_id || `timeline-${idx}`,
+            type: item.type || item.action_type || item.event_type,
+            title:
+              item.type === 'reminder' || item.action_type === 'reminder_sent' || item.event_type === 'reminder_sent'
+                ? 'CS Reminder'
+                : item.title || item.description || 'Update',
+            description: item.description || item.title || '',
+            created_at: item.created_at || item.timestamp,
+          }))
+        : [];
+      setTimelineEvents(incoming);
+      setTimelineTotal(res?.pagination?.total ?? incoming.length);
     } catch {
-      return false;
+      setTimelineEvents([]);
+    } finally {
+      setTimelineLoading(false);
     }
-  }, []);
-
-  const isEmployee = useMemo(() => {
-    try {
-      const user = JSON.parse(localStorage.getItem('user') || '{}');
-      const role = String(user?.role || '').toLowerCase();
-      return role === 'employee' || role.includes('engineer') || role.includes('technician') || import.meta.env.VITE_APP_MODE === 'employee';
-    } catch {
-      return false;
-    }
-  }, []);
-
-  const hasAssignedEmployee = useMemo(() => {
-    if (!effectiveTicket) return false;
-    return Boolean(
-      (Array.isArray(effectiveTicket.assigned) && effectiveTicket.assigned.length > 0) ||
-      (Array.isArray(effectiveTicket.assigned_employees) && effectiveTicket.assigned_employees.length > 0) ||
-      effectiveTicket.assigned_to ||
-      (effectiveTicket.assigned_employee && effectiveTicket.assigned_employee !== '—' && effectiveTicket.assigned_employee !== 'Unassigned')
-    );
-  }, [effectiveTicket]);
-
-  const isAlreadyAssigned = useMemo(() => {
-    if (!effectiveTicket) return false;
-    return Boolean(
-      hasAssignedEmployee ||
-      (effectiveTicket.status && ['In Progress', 'Assigned', 'Pending Assignment', 'Resolved', 'Closed', 'Pending Evaluation', 'On Hold', 'Ongoing'].includes(effectiveTicket.status))
-    );
-  }, [effectiveTicket, hasAssignedEmployee]);
-
-  const isExternalClosed = (effectiveTicket?.status === 'Closed' || effectiveTicket?.status === 'Resolved') &&
-    !effectiveTicket?.is_internal &&
-    effectiveTicket?.ticket_type !== 'Internal' &&
-    effectiveTicket?.type !== 'Internal';
-  const [feedbackAlreadySubmitted, setFeedbackAlreadySubmitted] = useState(() => (
-    hasFeedbackBeenSubmitted(effectiveTicket?.id) || hasFeedbackBeenSubmitted(effectiveTicket?.ticket_ID)
-  ));
+  }, [ticketNumericId]);
 
   useEffect(() => {
-    let isMounted = true;
-    const tId = effectiveTicket?.id || effectiveTicket?.ticket_ID;
-    if (!tId) return;
-    if (hasFeedbackBeenSubmitted(tId)) {
-      setFeedbackAlreadySubmitted(true);
-      return;
-    }
-    if (typeof fetchFeedbackForTicket === 'function') {
-      fetchFeedbackForTicket(tId).then((fb) => {
-        if (isMounted && fb && fb.submitted) {
-          setFeedbackAlreadySubmitted(true);
-        }
-      });
-    }
-    return () => {
-      isMounted = false;
-    };
-  }, [effectiveTicket?.id, effectiveTicket?.ticket_ID]);
+    loadTimeline();
+  }, [loadTimeline]);
 
-  const remarksList = useMemo(() => {
+  // Assignee Information
+  const assignee = useMemo(() => {
+    return getAssigneeInfo(effectiveTicket);
+  }, [effectiveTicket]);
+  const activeAssignees = useMemo(() => getAssigneeList(effectiveTicket), [effectiveTicket]);
+
+  // SLA Status & Dates
+  const isSlaBreached = Boolean(
+    effectiveTicket?.sla_breached ||
+    effectiveTicket?.sla_status === 'Breached' ||
+    effectiveTicket?.slaStatus === 'Breached' ||
+    effectiveTicket?.sla_status === 'sla_breached'
+  );
+
+  const slaTargetDate =
+    effectiveTicket?.resolution_due_at ||
+    effectiveTicket?.due_at ||
+    effectiveTicket?.sla_due_date ||
+    effectiveTicket?.sla?.resolution?.target;
+
+  const formattedSlaTarget = slaTargetDate ? formatPHT(slaTargetDate) : 'today';
+
+  // Fallback Baseline Events
+  const displayEvents = useMemo(() => {
     if (!effectiveTicket) return [];
-    const list = [];
-    const seenRemarks = new Set();
-    const normalizeKey = (author, text) => `${(author || '').trim().toLowerCase()}::${(text || '').trim().replace(/^["']|["']$/g, '').toLowerCase()}`;
+    if (timelineEvents.length > 0) return timelineEvents;
 
-    const addRemark = (id, author, remark, timestamp) => {
-      if (!remark || typeof remark !== 'string' || !remark.trim()) return;
-      const key = normalizeKey(author, remark);
-      if (seenRemarks.has(key)) return;
-      seenRemarks.add(key);
-      list.push({
-        id,
-        author: author || 'Staff Member',
-        remark: remark.trim(),
-        timestamp,
-      });
-    };
-
-    if (Array.isArray(effectiveTicket.remarks)) {
-      effectiveTicket.remarks.forEach((rem, idx) => {
-        addRemark(
-          rem.id || `rem-${idx}`,
-          rem.author || rem.user_name || rem.created_by_name,
-          rem.remark || rem.text,
-          rem.timestamp || rem.created_at
-        );
-      });
-    }
-    if (Array.isArray(effectiveTicket.remarks_history)) {
-      effectiveTicket.remarks_history.forEach((rem, idx) => {
-        addRemark(
-          rem.id || `rem-hist-${idx}`,
-          rem.author || rem.user_name || rem.created_by_name,
-          rem.remark || rem.text,
-          rem.timestamp || rem.created_at
-        );
-      });
-    }
-    if (Array.isArray(effectiveTicket.timeline)) {
+    const base = [];
+    if (Array.isArray(effectiveTicket.timeline) && effectiveTicket.timeline.length > 0) {
       effectiveTicket.timeline.forEach((evt, idx) => {
-        if (evt.type === 'remark' && evt.text) {
-          const cleanText = evt.text.replace(/^Remark added by [^:]+:\s*"?/, '').replace(/"?$/, '');
-          addRemark(
-            evt.id || `timeline-rem-${idx}`,
-            evt.author,
-            cleanText || evt.text,
-            evt.timestamp
-          );
-        }
+        base.push({
+          id: evt.id || `timeline-${idx}`,
+          title: (evt.type === 'reminder' || evt.action_type === 'reminder_sent') ? 'CS Reminder' : (evt.title || evt.text || 'Event'),
+          description: evt.text || evt.description || evt.title || '',
+          created_at: evt.date || evt.timestamp || evt.created_at,
+          type: evt.type || evt.action_type,
+        });
       });
-    }
-    return list;
-  }, [effectiveTicket]);
-
-  const sortedTimelineEvents = useMemo(() => {
-    if (!effectiveTicket) return [];
-    const events = [];
-    if (effectiveTicket.timeline && Array.isArray(effectiveTicket.timeline)) {
-      events.push(...effectiveTicket.timeline.filter(evt => evt.type !== 'internal_note'));
-    } else {
-      events.push({
-        id: 'creation',
-        type: 'system',
-        text: 'Ticket created.',
-        timestamp: effectiveTicket.date_created || effectiveTicket.created_at,
-      });
+      return base;
     }
 
-    const sorted = [...events];
-    sorted.sort((a, b) => {
-      const dateA = a.timestamp ? new Date(a.timestamp).getTime() : 0;
-      const dateB = b.timestamp ? new Date(b.timestamp).getTime() : 0;
-      return timelineSortOrder === 'asc' ? dateA - dateB : dateB - dateA;
+    if (assignee.isAssigned) {
+      base.push({
+        id: 'base-assigned',
+        description: `Assigned to ${assignee.name}`,
+        created_at: effectiveTicket?.last_updated || effectiveTicket?.updated_at || effectiveTicket?.date_created,
+      });
+    }
+    base.push({
+      id: 'base-submitted',
+      description: 'Ticket submitted',
+      created_at: effectiveTicket?.date_created || effectiveTicket?.created_at || effectiveTicket?.date,
     });
-    return sorted;
-  }, [effectiveTicket, timelineSortOrder]);
+    return base;
+  }, [timelineEvents, assignee, effectiveTicket]);
 
-  useLockBodyScroll(!!effectiveTicket);
+  const updatesCount = timelineTotal || displayEvents.length;
+  const filesCount = allFiles.length;
 
-  if (!effectiveTicket) return null;
-
-  // Window Calculation Logic
-  const isClosedTicket = effectiveTicket.status === 'Closed' || effectiveTicket.status === 'Resolved';
-  const closedDate = effectiveTicket.closed_at || effectiveTicket.resolved_at;
-  const resolvedAt = closedDate ? new Date(closedDate) : null;
-  const reopenWindowDays = Number(windowConfig.reopenWindowDays) || 2;
-  const reopenDurationMs = reopenWindowDays * 24 * 60 * 60 * 1000;
-  const hasValidDate = resolvedAt && !Number.isNaN(resolvedAt.getTime());
-  const isWindowExpired = hasValidDate && (Date.now() - resolvedAt.getTime()) >= reopenDurationMs;
-  const isReopenPolicyDisabled = !windowConfig.reopenEnabled;
-
-  const isReopenable = isClosedTicket && Boolean(windowConfig.reopenEnabled) && (!hasValidDate || !isWindowExpired);
-  const canShowReopenAction = allowReopen && isReopenable && typeof onReopen === 'function';
-  const isReopenExpired = allowReopen && isClosedTicket && (isWindowExpired || isReopenPolicyDisabled) && typeof onReopen === 'function';
+  const handleRedirectToMessages = () => {
+    if (!effectiveTicket) return;
+    onClose?.();
+    const tId = effectiveTicket.ticket_ID || effectiveTicket.id;
+    // Router relative path, so the /ticketing/ basename does not break the match (AC-18).
+    navigate(getMessagesPath(location.pathname), { state: { selectedTicketId: tId } });
+  };
 
   const handleExecuteReopen = async () => {
     const trimmed = reopenReason.trim();
@@ -459,565 +277,385 @@ export default function CustomerTicketDetailModal({
       setReopenValidationError('Please provide a reason for reopening (at least 3 characters).');
       return;
     }
-    if (trimmed.length > 1000) {
-      setReopenValidationError('The reason cannot exceed 1000 characters.');
-      return;
-    }
-
     setReopenSubmitting(true);
     setReopenError('');
-
     try {
-      const res = await onReopen(effectiveTicket.ticket_ID || effectiveTicket.id, trimmed);
-
-      // Immediately update ticket detail view state
-      const nowIso = new Date().toISOString();
-      const newTimelineEvent = {
-        id: `timeline-reopen-${Date.now()}`,
-        type: 'status',
-        text: `Ticket reopened by customer. Reason: "${trimmed}"`,
-        timestamp: nowIso,
-      };
-      const newRemark = {
-        id: `rem-reopen-${Date.now()}`,
-        author: customerName || 'Customer',
-        remark: `Reopen Reason: ${trimmed}`,
-        timestamp: nowIso,
-      };
-
-      const updatedTicket = {
-        ...effectiveTicket,
-        ...(res?.ticket || {}),
-        status: 'Reopened',
-        last_updated: nowIso,
-        timeline: [...(effectiveTicket.timeline || []), newTimelineEvent],
-        remarks: [...(effectiveTicket.remarks || []), newRemark],
-      };
-
-      setCurrentTicket(updatedTicket);
+      await onReopen?.(effectiveTicket.ticket_ID || effectiveTicket.id, trimmed);
       setShowReopenModal(false);
       setReopenReason('');
-      setReopenSuccessNotice('Ticket successfully reopened. Our support team has been notified and the ticket status is now Reopened.');
+      setReopenSuccessNotice('Ticket successfully reopened.');
+      setCurrentTicket((prev) => ({ ...prev, status: 'Reopened' }));
+      refreshLiveTicket();
+      loadTimeline();
     } catch (err) {
-      const msg = err?.response?.data?.message || err?.message || 'Failed to reopen ticket. Please try again.';
-      setReopenError(msg);
+      setReopenError(err?.response?.data?.message || err?.message || 'Failed to reopen ticket.');
     } finally {
       setReopenSubmitting(false);
     }
   };
 
+  const hasAssignment =
+    assignee.isAssigned ||
+    (Array.isArray(effectiveTicket?.assigned) && effectiveTicket.assigned.length > 0);
+
+  if (!effectiveTicket) return null;
+
+  const ticketFormattedId = effectiveTicket.id || `TKT-${String(ticketNumericId).padStart(4, '0')}`;
+
+  const tabsConfig = [
+    { id: 'details', label: 'Details' },
+    { id: 'updates', label: 'Updates', count: updatesCount },
+    { id: 'files', label: 'Files', count: filesCount },
+  ];
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-[1.5px]">
-      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-card border border-border shadow-modal animate-in fade-in zoom-in-95 duration-200">
-        <div className="flex items-start justify-between border-b border-border px-6 py-5 shrink-0 bg-card">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-semibold text-primary font-mono">{effectiveTicket.id}</span>
-              {effectiveTicket.status === 'Closed' ? (
-                isAutoClosedModal ? (
-                  <Badge variant="outline" className="gap-1 bg-slate-100 text-slate-800 border-slate-300">
-                    <Clock className="h-3 w-3 text-slate-500" />
-                    Closed automatically
-                  </Badge>
-                ) : (
-                  <Badge variant="emerald">
-                    {effectiveTicket.closed_by ? `Closed by ${effectiveTicket.closed_by}` : 'Closed'}
-                  </Badge>
-                )
+    <>
+      <TicketDetailModalShell
+        isOpen={Boolean(effectiveTicket)}
+        onClose={onClose}
+        header={
+          <ModalHeader
+            ticketId={ticketFormattedId}
+            onClose={onClose}
+          />
+        }
+        footer={
+          <ModalFooter
+            leftContent={
+              isCSSide ? (
+                <button
+                  type="button"
+                  onClick={handleRedirectToMessages}
+                  disabled={!assignee.isAssigned}
+                  className="min-h-[44px] px-4 rounded-lg border border-[#D5D9E4] hover:bg-[#F5F6FA] text-xs sm:text-sm font-semibold text-[#1B2033] transition-colors cursor-pointer inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={
+                    assignee.isAssigned
+                      ? `Connect with ${assignee.name || 'the assigned employee'} regarding this ticket`
+                      : 'No employee assigned to this ticket yet'
+                  }
+                >
+                  <MessageSquare className="w-4 h-4 text-[#1E2A78]" />
+                  <span>Message the assigned employee</span>
+                </button>
               ) : (
-                <Badge variant={effectiveTicket.status === 'Open' ? 'sky' : effectiveTicket.status === 'In Progress' ? 'amber' : (effectiveTicket.status === 'Resolved' || effectiveTicket.status === 'Closed') ? 'emerald' : effectiveTicket.status === 'On Hold' ? 'amber' : 'default'}>
-                  {(effectiveTicket.status === 'Pending Assignment' || (effectiveTicket.status === 'Open' && !effectiveTicket.accepted && (effectiveTicket.assigned_employee || effectiveTicket.assigned_to))) ? 'Assigned' : effectiveTicket.status}
-                </Badge>
-              )}
-              <Badge variant={effectiveTicket.priority === 'Critical' ? 'destructive' : effectiveTicket.priority === 'High' ? 'amber' : 'outline'}>
-                {effectiveTicket.priority}
-              </Badge>
-              {effectiveTicket.is_internal && (
-                <Badge variant="outline" className="bg-purple-50 text-purple-700 border-purple-200">
-                  Internal
-                </Badge>
-              )}
-              {(() => {
-                const rawSla = effectiveTicket.sla_status || effectiveTicket.slaStatus || (effectiveTicket.sla_breached ? 'Breached' : null);
-                if (!rawSla) return null;
-                const normalized = String(rawSla).toLowerCase().replace(/[\s_-]+/g, '');
-                if (normalized === 'breached' || normalized === 'violated') {
-                  return (
-                    <Badge variant="destructive" className="bg-rose-100 text-rose-800 border-rose-300 font-semibold flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />
-                      <span>SLA Breached</span>
-                    </Badge>
-                  );
-                }
-                if (normalized === 'atrisk' || normalized === 'nearviolation') {
-                  return (
-                    <Badge variant="amber" className="bg-amber-100 text-amber-800 border-amber-300 font-semibold flex items-center gap-1">
-                      <Clock className="w-3 h-3 text-amber-600 shrink-0" />
-                      <span>SLA At Risk</span>
-                    </Badge>
-                  );
-                }
-                if (normalized === 'ontrack' || normalized === 'achieved' || normalized === 'compliant') {
-                  return (
-                    <Badge variant="emerald" className="bg-emerald-100 text-emerald-800 border-emerald-300 font-semibold flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
-                      <span>SLA On Track</span>
-                    </Badge>
-                  );
-                }
-                if (normalized === 'paused') {
-                  return (
-                    <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 font-semibold flex items-center gap-1">
-                      <PauseCircle className="w-3 h-3 text-blue-600 shrink-0" />
-                      <span>SLA Paused</span>
-                    </Badge>
-                  );
-                }
-                return (
-                  <Badge variant="outline">
-                    {rawSla}
-                  </Badge>
-                );
-              })()}
-            </div>
-            <div className="mt-2">
-              <span className="text-xs font-bold text-slate-dark uppercase tracking-wider">Ticket Title</span>
-              <h2 className="mt-0.5 text-xl font-normal text-slate-dark">{effectiveTicket.title}</h2>
-            </div>
+                <button
+                  type="button"
+                  onClick={handleRedirectToMessages}
+                  className="min-h-[44px] px-4 rounded-lg border border-[#D5D9E4] hover:bg-[#F5F6FA] text-xs sm:text-sm font-semibold text-[#1B2033] transition-colors cursor-pointer inline-flex items-center gap-2"
+                  title="Connect with Customer Support regarding this ticket"
+                >
+                  <MessageSquare className="w-4 h-4 text-[#1E2A78]" />
+                  <span>Message Customer Support</span>
+                </button>
+              )
+            }
+            primaryAction={
+              allowReopen &&
+              (effectiveTicket.status === 'Closed' || effectiveTicket.status === 'Resolved') &&
+              windowConfig.reopenEnabled ? (
+                <button
+                  type="button"
+                  onClick={() => setShowReopenModal(true)}
+                  className="min-h-[44px] px-4 rounded-lg bg-[#1E2A78] hover:bg-[#252578] text-white text-xs sm:text-sm font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Reopen ticket</span>
+                </button>
+              ) : null
+            }
+          />
+        }
+      >
+        {/* Reopen Success Alert */}
+        {reopenSuccessNotice && (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-semibold text-emerald-900 flex items-center justify-between gap-2">
+            <span>{reopenSuccessNotice}</span>
+            <button type="button" onClick={() => setReopenSuccessNotice('')} className="p-1 text-emerald-700 hover:text-emerald-900 cursor-pointer">
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-slate-muted hover:bg-page hover:text-slate-dark transition-colors cursor-pointer"
-          >
-            <X className="h-5 w-5" />
-          </button>
+        )}
+
+        {/* 1. Title Block */}
+        <TicketTitleBlock
+          title={effectiveTicket.title}
+          priority={effectiveTicket.priority}
+          dateFiled={effectiveTicket.date_created || effectiveTicket.created_at || effectiveTicket.date}
+          hideDateBadge={true}
+          customBadges={
+            <span className="sr-only">
+              {isSlaBreached && <span>SLA Breached</span>}
+              <span>SLA Target Resolution</span>
+              {effectiveTicket.last_reminder_sent_at && <span>Last Reminder Sent</span>}
+            </span>
+          }
+        />
+
+        {/* 2. Status Hero Card with Stepper, Alert, AssigneeRow */}
+        <div className="rounded-xl border border-[#D5D9E4] bg-white p-4 sm:p-5 shadow-xs space-y-4">
+          {/* Stepper */}
+          <StatusStepper
+            status={effectiveTicket.status}
+            isAssigned={hasAssignment}
+          />
+
+          {/* Plain-Language Status Alert Banner */}
+          {isSlaBreached ? (
+            <AlertBanner
+              variant="warning"
+              title="We're running behind our target"
+              message={`Expected fix was ${formattedSlaTarget}. ${assignee.firstName} is working on it and you'll be notified of every update.`}
+            />
+          ) : (
+            <AlertBanner
+              variant="info"
+              title="On track"
+              message={`Target resolution expected by ${formattedSlaTarget}.`}
+            />
+          )}
+
+          {/* Assignee Row */}
+          {/* Spec 0038 AC-10 / AC-11: every active assignee (name and department), no Remind. */}
+          {activeAssignees.length > 0 ? (
+            <div className="space-y-3">
+              {activeAssignees.map((a, idx) => (
+                <AssigneeRow
+                  key={a.id ?? `assignee-${idx}`}
+                  name={a.name}
+                  firstName={a.firstName}
+                  initials={a.name.split(' ').filter(Boolean).map((p) => p[0]).join('').slice(0, 2).toUpperCase()}
+                  department={a.department}
+                  updatedText={idx === 0 ? `Updated ${formatPHT(effectiveTicket.last_updated || effectiveTicket.updated_at || effectiveTicket.date_created)}` : ''}
+                  onMessage={handleRedirectToMessages}
+                  messageLabel={`Message ${a.firstName}`}
+                />
+              ))}
+            </div>
+          ) : (
+            <AssigneeRow
+              name={assignee.name}
+              firstName={assignee.firstName}
+              initials={assignee.initials}
+              department={assignee.department}
+              updatedText={`Updated ${formatPHT(effectiveTicket.last_updated || effectiveTicket.updated_at || effectiveTicket.date_created)}`}
+              onMessage={assignee.isAssigned ? handleRedirectToMessages : null}
+              messageLabel={`Message ${assignee.firstName}`}
+            />
+          )}
         </div>
 
-        {/* Modal Body */}
-        <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-          {/* Remaining-Time-to-Auto-Close Indicator (Resolved Tickets) */}
-          {isResolvedModal && windowConfig.autoCloseEnabled && modalRemainingSeconds !== null && (
-            <div
-              role="region"
-              aria-live="polite"
-              className={`rounded-2xl border p-4 transition-all shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                modalRemainingSeconds <= 7200
-                  ? 'bg-rose-50/90 border-rose-200 text-rose-900'
-                  : modalRemainingSeconds <= 86400
-                  ? 'bg-amber-50/90 border-amber-200 text-amber-900'
-                  : 'bg-blue-50/90 border-blue-200 text-[#252578]'
-              }`}
-            >
-              <div className="flex items-start gap-2.5">
-                <div
-                  className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${
-                    modalRemainingSeconds <= 7200
-                      ? 'bg-rose-100 text-rose-700'
-                      : modalRemainingSeconds <= 86400
-                      ? 'bg-amber-100 text-amber-700'
-                      : 'bg-blue-100 text-[#252578]'
-                  }`}
-                >
-                  <Clock size={16} className={modalRemainingSeconds <= 7200 ? 'animate-pulse' : ''} />
-                </div>
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <h3 className="text-xs font-bold uppercase tracking-wider">Auto-Close Countdown</h3>
-                    <span
-                      className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-full ${
-                        modalRemainingSeconds <= 7200
-                          ? 'bg-rose-200/80 text-rose-900'
-                          : modalRemainingSeconds <= 86400
-                          ? 'bg-amber-200/80 text-amber-900'
-                          : 'bg-blue-200/80 text-[#252578]'
-                      }`}
-                    >
-                      {modalRemainingSeconds <= 7200 ? 'Expiring Soon' : 'Active'}
-                    </span>
-                  </div>
-                  <p className="text-xs mt-0.5 opacity-90">
-                    Will auto-close in <strong className="font-semibold">{formatRemainingText(modalRemainingSeconds)}</strong> without response.
-                  </p>
-                </div>
-              </div>
-              <div className="shrink-0 font-mono font-bold text-xs px-3 py-1.5 rounded-lg border bg-white shadow-xs">
-                {formatCountdown(modalRemainingSeconds)}
-              </div>
-            </div>
-          )}
+        {/* 3. TabBar */}
+        <TabBar
+          tabs={tabsConfig}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+        />
 
-          {/* Reopen Success Alert Banner */}
-          {reopenSuccessNotice && (
-            <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center justify-between gap-2.5 text-xs text-emerald-800 font-semibold animate-fade-in">
-              <div className="flex items-center gap-2">
-                <CheckCircle size={16} className="shrink-0 text-emerald-600" />
-                <span>{reopenSuccessNotice}</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setReopenSuccessNotice('')}
-                className="text-emerald-700 hover:text-emerald-900 p-0.5 cursor-pointer"
-              >
-                <X size={14} />
-              </button>
-            </div>
-          )}
-
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="md:col-span-2 min-w-0">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-dark">Description</p>
-              <p className="mt-1 rounded-xl bg-page border border-border p-4 text-sm font-normal leading-6 text-slate-600 break-words whitespace-normal overflow-hidden break-all max-h-[180px] overflow-y-auto">
-                {effectiveTicket.description || 'No description available.'}
+        {/* 4. Tab Panels */}
+        {activeTab === 'details' && (
+          <div id="panel-details" role="tabpanel" aria-labelledby="tab-details" className="space-y-4 pt-1 animate-in fade-in duration-150">
+            {/* WHAT YOU REPORTED */}
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#5A6178] mb-1.5">
+                WHAT YOU REPORTED
               </p>
+              <div className="rounded-xl bg-[#F5F6FA] border border-[#D5D9E4] p-3.5 sm:p-4 text-xs sm:text-sm text-[#1B2033] leading-relaxed break-words whitespace-pre-wrap">
+                <div className={!descExpanded && (effectiveTicket.description || '').length > 200 ? 'line-clamp-3' : ''}>
+                  {effectiveTicket.description || 'No description provided.'}
+                </div>
+                {(effectiveTicket.description || '').length > 200 && (
+                  <button
+                    type="button"
+                    onClick={() => setDescExpanded((p) => !p)}
+                    className="mt-2 text-xs font-bold text-[#1E2A78] hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <span>{descExpanded ? 'Show less' : 'Show more'}</span>
+                    {descExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+              </div>
             </div>
+
+            {/* FieldGrid: Equipment + Category */}
+            <FieldGrid
+              equipment={effectiveTicket.equipment || effectiveTicket.machine_name || 'Medical Diagnostic Unit'}
+              assetId={effectiveTicket.serial_number || effectiveTicket.machine?.serial_number}
+              category={effectiveTicket.category ? `${effectiveTicket.category} · ${effectiveTicket.equipment_type || effectiveTicket.machine_category || 'Imaging Equipment'}` : 'Imaging Equipment'}
+            />
+
+            {/* LATEST UPDATES Mini-Timeline */}
             <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-dark">Requestor</p>
-              <p className="mt-1 text-sm font-normal text-slate-600">{effectiveTicket.customer || effectiveTicket.requestor || effectiveTicket.created_by_name || customerName || '—'}</p>
-            </div>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-dark">Equipment / Machine</p>
-              <p className="mt-1 text-sm font-normal text-slate-600">{effectiveTicket.equipment || effectiveTicket.machine_name || effectiveTicket.machine?.machine_name || '—'}</p>
-            </div>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-dark">Equipment Type</p>
-              <p className="mt-1 text-sm font-normal text-slate-600">
-                {effectiveTicket.equipment_type || effectiveTicket.equipmentType || effectiveTicket.machine_category || effectiveTicket.machine?.category_name || (effectiveTicket.category ? `${effectiveTicket.category} Equipment` : 'Medical Equipment')}
+              <p className="text-[11px] font-bold uppercase tracking-wider text-[#5A6178] mb-2">
+                LATEST UPDATES
               </p>
-            </div>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-dark">Assigned Employee</p>
-              <p className="mt-1 text-sm font-normal text-slate-600">
-                {effectiveTicket.assigned_employee || effectiveTicket.assigned_employee_name || effectiveTicket.assigned_to_name || (effectiveTicket.assigned_employees?.[0]?.name) || (typeof effectiveTicket.assigned_to === 'string' ? effectiveTicket.assigned_to : null) || 'Unassigned'}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-dark">Category</p>
-              <p className="mt-1 text-sm font-normal text-slate-600">{effectiveTicket.category || '—'}</p>
-            </div>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-dark">Date Filed</p>
-              <p className="mt-1 text-sm font-normal text-slate-600">{formatDisplayDate(effectiveTicket.date_created || effectiveTicket.created_at || effectiveTicket.date)}</p>
-            </div>
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-dark">Last Updated</p>
-              <p className="mt-1 text-sm font-normal text-slate-600">{formatDisplayDate(effectiveTicket.last_updated || effectiveTicket.updated_at || effectiveTicket.lastUpdate)}</p>
-            </div>
-            {(effectiveTicket.resolution_due_at || effectiveTicket.due_at || effectiveTicket.sla_due_date || effectiveTicket.sla?.resolution?.target) && (
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-slate-dark">SLA Target Resolution</p>
-                <p className="mt-1 text-sm font-semibold text-slate-700 flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-slate-400" />
-                  {formatDisplayDate(effectiveTicket.resolution_due_at || effectiveTicket.due_at || effectiveTicket.sla_due_date || effectiveTicket.sla?.resolution?.target)}
-                </p>
-              </div>
-            )}
-            {(effectiveTicket.last_reminder_sent_at || effectiveTicket.lastReminderSentAt) && (
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
-                  <Bell className="w-3.5 h-3.5 text-indigo-600" />
-                  <span>Last Reminder Sent</span>
-                </p>
-                <p className="mt-1 text-sm font-semibold text-indigo-800">
-                  {formatDisplayDate(effectiveTicket.last_reminder_sent_at || effectiveTicket.lastReminderSentAt)}
-                </p>
-              </div>
-            )}
-            {(effectiveTicket.resolved_at || effectiveTicket.closed_at) && (
-              <div>
-                <p className="text-xs font-bold uppercase tracking-wider text-emerald-800">Date Resolved / Closed</p>
-                <p className="mt-1 text-sm font-semibold text-emerald-700">
-                  {formatDisplayDate(effectiveTicket.resolved_at || effectiveTicket.closed_at)}
-                </p>
-              </div>
-            )}
-
-            {normalizedAttachments.length > 0 && (
-              <div className="md:col-span-2">
-                <p className="text-xs font-semibold uppercase tracking-wider text-slate-muted">Attachments ({normalizedAttachments.length})</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {normalizedAttachments.map((file, idx) => {
-                    const fName = getFileName(file);
-                    const fUrl = getFileUrl(file);
-                    const isQuarantined = Boolean(
-                      file.is_quarantined ||
-                      file.quarantined ||
-                      file.status === 'quarantined' ||
-                      file.virus_detected
-                    );
-
-                    if (isQuarantined) {
-                      return (
-                        <div
-                          key={file.id || file.attachment_id || idx}
-                          className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800 select-none cursor-not-allowed"
-                          title="This file was flagged by security scanning and quarantined. Binary download is blocked."
-                        >
-                          <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600" />
-                          <span className="truncate max-w-[200px] line-through text-gray-500">{fName}</span>
-                          <span className="text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-rose-100 text-rose-700">Blocked</span>
-                        </div>
-                      );
-                    }
-
-                    return (
-                      <a
-                        key={file.id || file.attachment_id || idx}
-                        href={fUrl || '#'}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          setPreviewFile({ name: fName, url: fUrl });
-                        }}
-                        className="flex items-center gap-1.5 rounded-xl border border-border bg-page px-3 py-2 text-xs font-medium text-primary hover:text-accent hover:underline cursor-pointer transition-colors"
-                      >
-                        <Paperclip className="h-4 w-4 shrink-0 text-slate-muted" />
-                        <span className="truncate max-w-[220px]">{fName}</span>
-                      </a>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {((effectiveTicket.proofAttachments && effectiveTicket.proofAttachments.length > 0) || (effectiveTicket.proofFiles && effectiveTicket.proofFiles.length > 0)) && (
-              <div className="md:col-span-2">
-                <p className="text-xs font-bold uppercase tracking-wider text-emerald-800">Proof of Completion Files</p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {(effectiveTicket.proofAttachments || effectiveTicket.proofFiles).map((file, pIdx) => {
-                    const fName = getFileName(file);
-                    const fUrl = getFileUrl(file);
-                    return (
-                      <a
-                        key={file.id || file.attachment_id || pIdx}
-                        href={fUrl || '#'}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          setPreviewFile({ name: fName, url: fUrl });
-                        }}
-                        className="flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs font-semibold text-emerald-800 hover:text-emerald-950 hover:underline cursor-pointer transition-colors"
-                      >
-                        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
-                        <span className="truncate max-w-[220px]">{fName}</span>
-                      </a>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Remarks History */}
-            {remarksList && remarksList.length > 0 && (
-              <div className="md:col-span-2 border-t border-border pt-4 mt-2">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-dark flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-primary inline-block" />
-                    Remarks &amp; Reason History ({remarksList.length})
-                  </h3>
-                </div>
-                <div className="space-y-2.5 max-h-52 overflow-y-auto pr-1">
-                  {remarksList.map((rem, idx) => (
-                    <div key={rem.id || idx} className="rounded-xl border border-border bg-page p-3 text-xs shadow-xs">
-                      <div className="flex items-center justify-between text-slate-muted mb-1">
-                        <span className="font-bold text-primary text-[11px] uppercase tracking-wide">
-                          {rem.author || 'Staff Member'}
-                        </span>
-                        <span className="text-[10px] text-slate-muted">
-                          {formatDisplayDate(rem.timestamp)}
+              <div className="space-y-0 ml-1">
+                {displayEvents.slice(0, 3).map((evt, idx, arr) => {
+                  const isReminder = evt.type === 'reminder' || evt.action_type === 'reminder_sent' || evt.event_type === 'reminder_sent';
+                  const title = isReminder ? 'CS Reminder' : (evt.title || evt.description || evt.details || 'Status update logged');
+                  const isLast = idx === arr.length - 1;
+                  return (
+                    <div key={evt.id || evt.log_id || idx} className="flex items-start gap-3 text-xs">
+                      <div className="flex flex-col items-center self-stretch shrink-0 w-3">
+                        <div className="w-2.5 h-2.5 rounded-full shrink-0 mt-1 bg-[#1E2A78]" />
+                        {!isLast && <div className="w-[2px] bg-[#1E2A78] flex-1 my-0.5" />}
+                      </div>
+                      <div className={`flex-1 min-w-0 ${!isLast ? 'pb-3' : 'pb-0.5'}`}>
+                        <p className="font-bold text-[#1B2033]">
+                          {title}
+                        </p>
+                        {evt.description && evt.description !== title && (
+                          <p className="text-[11px] text-[#5A6178]">
+                            {evt.description}
+                          </p>
+                        )}
+                        <span className="text-[11px] text-[#5A6178]">
+                          {formatPHT(evt.created_at || evt.timestamp)}
                         </span>
                       </div>
-                      <p className="text-slate-dark leading-relaxed break-words whitespace-pre-wrap font-medium">
-                        {rem.remark || rem.text}
-                      </p>
                     </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Attachments preview row */}
+            {allFiles.length > 0 && (
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-[#5A6178] mb-2">
+                  ATTACHMENTS
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {allFiles.slice(0, 2).map((file, fIdx) => (
+                    <AttachmentCard
+                      key={file.id || fIdx}
+                      file={file}
+                      onPreview={setPreviewFile}
+                    />
                   ))}
                 </div>
               </div>
             )}
-
-            {/* Activity Timeline & History (TS086) */}
-            <div className="md:col-span-2 pt-2">
-              <TicketActivityTimeline
-                ticket={effectiveTicket}
-                ticketId={effectiveTicket.ticket_ID}
-                pageSize={6}
-              />
-            </div>
-
-            {(effectiveTicket.is_internal || effectiveTicket.ticket_type === 'Internal' || effectiveTicket.type === 'Internal' || effectiveTicket.title?.startsWith('[Internal]')) && (
-              <div className="md:col-span-2">
-                <InternalTicketMessageThread
-                  ticketId={effectiveTicket.ticket_ID || effectiveTicket.id}
-                  ticket={effectiveTicket}
-                  isClosed={effectiveTicket.status === 'Closed' || Number(effectiveTicket.ticket_status_ID) === 4}
-                />
-              </div>
-            )}
-
-            {(isExternalClosed || feedbackAlreadySubmitted) && (feedbackAlreadySubmitted || feedbackSubmitted || feedbackEnabled) && (
-              <div className="md:col-span-2">
-                <TicketFeedbackSection
-                  key={feedbackSubmitted ? 'submitted' : 'pending'}
-                  ticket={effectiveTicket}
-                  onLeaveFeedback={() => {
-                    setEditingFeedback(null);
-                    setShowFeedbackModal(true);
-                  }}
-                  onEditFeedback={(fb) => {
-                    setEditingFeedback(fb);
-                    setShowFeedbackModal(true);
-                  }}
-                />
-              </div>
-            )}
           </div>
-        </div>
+        )}
 
-        {/* Modal Footer */}
-        <div className="border-t border-border bg-card px-6 py-4 shrink-0 space-y-3">
-          {/* Explanatory banner if reopen window is expired */}
-          {isReopenExpired && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50/90 p-3 text-xs text-amber-800 flex items-start gap-2.5 animate-in fade-in duration-200">
-              <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <div className="flex-1">
-                <p className="font-bold text-amber-900">Reopen Window Expired</p>
-                <p className="mt-0.5 leading-relaxed">
-                  {isReopenPolicyDisabled
-                    ? 'Ticket reopening is disabled by administrative operational policy. If you need further assistance, please create a new support ticket.'
-                    : `The allowed reopen window for this ticket has expired (tickets may be reopened within ${reopenWindowDays} days of resolution). If your issue is not fully resolved, please submit a new ticket.`}
-                </p>
+        {activeTab === 'updates' && (
+          <div id="panel-updates" role="tabpanel" aria-labelledby="tab-updates" className="space-y-4 pt-1 animate-in fade-in duration-150">
+            <TicketActivityTimeline
+              ticket={effectiveTicket}
+              ticketId={ticketNumericId}
+              pageSize={8}
+              collapsible={false}
+            />
+          </div>
+        )}
+
+        {activeTab === 'files' && (
+          <div id="panel-files" role="tabpanel" aria-labelledby="tab-files" className="space-y-3 pt-1 animate-in fade-in duration-150">
+            {allFiles.length === 0 ? (
+              <div className="p-8 text-center text-xs text-[#5A6178] rounded-xl border border-dashed border-[#D5D9E4] bg-[#F5F6FA]">
+                No files or attachments currently attached to this ticket.
               </div>
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center justify-end gap-3">
-            {(isCS || onAssign || onViewTicket) ? (
-              !isAlreadyAssigned ? (
-                <Button
-                  type="button"
-                  variant="default"
-                  onClick={() => {
-                    if (onAssign) {
-                      onAssign(effectiveTicket);
-                    } else {
-                      onClose();
-                    }
-                  }}
-                >
-                  Assign
-                </Button>
-              ) : (
-                <Button
-                  type="button"
-                  variant="default"
-                  onClick={() => {
-                    if (onViewTicket) {
-                      onViewTicket(effectiveTicket);
-                    } else {
-                      onClose();
-                      const ticketId = effectiveTicket.ticket_ID || Number(String(effectiveTicket.id).replace(/\D/g, ''));
-                      navigate(`/cs/history/${ticketId}`, { state: { ticket: effectiveTicket, backPath: window.location.pathname } });
-                    }
-                  }}
-                >
-                  View Ticket
-                </Button>
-              )
             ) : (
-              isEmployee && effectiveTicket?.status !== 'Closed' && effectiveTicket?.status !== 'Resolved' && (
-                <Button
-                  type="button"
-                  variant="default"
-                  onClick={() => {
-                    onClose();
-                    const tId = effectiveTicket.ticket_ID || effectiveTicket.id;
-                    navigate('/employee/ticket-update', { state: { ticketId: tId, ticket: effectiveTicket } });
-                  }}
-                >
-                  Update Ticket
-                </Button>
-              )
-            )}
-
-            {/* Direct Link to Unified Message Thread (TS062) */}
-            {effectiveTicket && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  onClose();
-                  const tId = effectiveTicket.ticket_ID || effectiveTicket.id;
-                  const path = window.location.pathname.startsWith('/cs')
-                    ? '/cs/messages'
-                    : window.location.pathname.startsWith('/employee')
-                      ? '/employee/messages'
-                      : '/messages';
-                  navigate(path, { state: { selectedTicketId: tId } });
-                }}
-                className="gap-1.5"
-                title="Open unified message thread for this ticket"
-              >
-                <MessageCircle size={14} />
-                <span>Messages</span>
-              </Button>
-            )}
-
-            {/* Active Reopen Button (within allowed window) */}
-            {canShowReopenAction && (
-              <Button
-                type="button"
-                variant="default"
-                onClick={() => {
-                  setReopenValidationError('');
-                  setReopenError('');
-                  setShowReopenModal(true);
-                }}
-                className="gap-1.5"
-              >
-                <RotateCcw size={14} />
-                Reopen Ticket
-              </Button>
-            )}
-
-            {/* Disabled Reopen Button (window expired) */}
-            {isReopenExpired && (
-              <Button
-                type="button"
-                disabled
-                variant="outline"
-                title={isReopenPolicyDisabled ? 'Reopen disabled by policy' : 'Reopen window expired'}
-                className="gap-1.5 opacity-60 cursor-not-allowed text-slate-muted"
-              >
-                <RotateCcw size={14} />
-                Reopen Expired
-              </Button>
-            )}
-
-            {isExternalClosed && !isEmployee && (
-              <Button
-                type="button"
-                variant={feedbackAlreadySubmitted || feedbackSubmitted ? 'default' : 'secondary'}
-                onClick={() => setShowFeedbackModal(true)}
-                className="gap-1.5"
-              >
-                <Star className="h-4 w-4" />
-                {feedbackAlreadySubmitted || feedbackSubmitted ? 'View Feedback' : 'Give Feedback'}
-              </Button>
-            )}
-
-            {effectiveTicket.can_discard && effectiveTicket.status === 'Open' && (
-              <Button
-                type="button"
-                variant="destructive"
-                onClick={() => onDiscard?.(effectiveTicket)}
-              >
-                Discard Ticket
-              </Button>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {allFiles.map((file, fIdx) => (
+                  <AttachmentCard
+                    key={file.id || fIdx}
+                    file={file}
+                    onPreview={setPreviewFile}
+                  />
+                ))}
+              </div>
             )}
           </div>
-        </div>
-      </div>
+        )}
 
+        {/* Feedback Section (when closed/resolved) */}
+        {(effectiveTicket.status === 'Closed' || effectiveTicket.status === 'Resolved') && (
+          <div className="pt-2 border-t border-[#D5D9E4]">
+            <TicketFeedbackSection
+              key={feedbackSubmitted ? 'submitted' : 'pending'}
+              ticket={effectiveTicket}
+              onLeaveFeedback={() => {
+                setEditingFeedback(null);
+                setShowFeedbackModal(true);
+              }}
+              onEditFeedback={(fb) => {
+                setEditingFeedback(fb);
+                setShowFeedbackModal(true);
+              }}
+            />
+          </div>
+        )}
+      </TicketDetailModalShell>
+
+      {/* ─── Reopen Modal ─── */}
+      {showReopenModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4 backdrop-blur-[1px] overscroll-none animate-in fade-in duration-150">
+          <div className="w-full max-w-md max-h-[90vh] overflow-y-auto overscroll-contain rounded-2xl bg-white p-6 shadow-xl border border-[#D5D9E4] space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-[#1B2033]">Reopen Support Ticket</h3>
+              <button
+                type="button"
+                onClick={() => setShowReopenModal(false)}
+                className="p-1 text-[#5A6178] hover:text-[#1B2033] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {reopenError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 font-semibold">
+                {reopenError}
+              </div>
+            )}
+            <div>
+              <label htmlFor="reopen-reason" className="block text-[11px] font-bold text-[#5A6178] uppercase mb-1">
+                Reason for Reopening <span className="text-rose-500">*</span>
+              </label>
+              <textarea
+                id="reopen-reason"
+                rows={3}
+                value={reopenReason}
+                onChange={(e) => {
+                  setReopenReason(e.target.value);
+                  if (reopenValidationError) setReopenValidationError('');
+                }}
+                placeholder="Explain why this ticket needs further assistance..."
+                className="w-full rounded-xl border border-[#D5D9E4] p-3 text-xs outline-none focus:ring-2 focus:ring-[#1E2A78] focus:border-transparent resize-none"
+              />
+              {reopenValidationError && (
+                <p className="mt-1 text-xs text-rose-600 font-semibold">{reopenValidationError}</p>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#D5D9E4]">
+              <button
+                type="button"
+                onClick={() => setShowReopenModal(false)}
+                className="px-3 py-1.5 rounded-lg border border-[#D5D9E4] text-xs font-semibold text-[#5A6178] hover:bg-[#F5F6FA] cursor-pointer min-h-[44px]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={reopenSubmitting}
+                onClick={handleExecuteReopen}
+                className="px-4 py-1.5 rounded-lg bg-[#1E2A78] hover:bg-[#161F58] text-white text-xs font-semibold transition-colors cursor-pointer min-h-[44px]"
+              >
+                {reopenSubmitting ? 'Reopening...' : 'Confirm Reopen'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── File Preview Modal ─── */}
+      {previewFile && (
+        <FilePreviewModal
+          file={previewFile}
+          onClose={() => setPreviewFile(null)}
+        />
+      )}
+
+      {/* ─── Feedback Modal ─── */}
       {showFeedbackModal && (
         <FeedbackModal
           ticket={effectiveTicket}
@@ -1031,118 +669,6 @@ export default function CustomerTicketDetailModal({
           }}
         />
       )}
-      {/* Confirmation Modal for Reopening with Required Reason */}
-      {showReopenModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[1.5px] animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-xl bg-card p-6 shadow-modal border border-border animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between pb-3 border-b border-border">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-                  <RotateCcw size={18} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-dark">Reopen Ticket</h3>
-                  <p className="text-xs text-slate-muted font-mono">{effectiveTicket.id}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                disabled={reopenSubmitting}
-                onClick={() => {
-                  setShowReopenModal(false);
-                  setReopenValidationError('');
-                  setReopenError('');
-                }}
-                className="text-slate-muted hover:text-slate-dark p-1 rounded-lg cursor-pointer transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="py-4 space-y-3.5">
-              <p className="text-xs text-slate-600 leading-relaxed">
-                Reopening will transition this ticket back to active status for customer support intervention. Please describe what issue remains unresolved:
-              </p>
-
-              {/* Error Message if Reopen Action Fails */}
-              {reopenError && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-start gap-2 text-xs text-red-700 font-semibold animate-in fade-in duration-200">
-                  <AlertCircle size={15} className="shrink-0 mt-0.5 text-red-600" />
-                  <span className="leading-relaxed">{reopenError}</span>
-                </div>
-              )}
-
-              {/* Required Reason Input */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <label htmlFor="reopen-reason-textarea" className="text-[11px] font-bold text-slate-dark uppercase tracking-wide">
-                    Reason for Reopening <span className="text-red-500">*</span>
-                  </label>
-                  <span className="text-[10px] text-slate-muted font-mono">
-                    {reopenReason.trim().length} / 1000
-                  </span>
-                </div>
-                <textarea
-                  id="reopen-reason-textarea"
-                  value={reopenReason}
-                  onChange={(e) => {
-                    setReopenReason(e.target.value);
-                    if (reopenValidationError) setReopenValidationError('');
-                    if (reopenError) setReopenError('');
-                  }}
-                  disabled={reopenSubmitting}
-                  placeholder="Explain why this ticket needs to be reopened (minimum 3 characters)..."
-                  rows={4}
-                  className={`w-full rounded-xl border p-3 text-xs text-slate-dark placeholder:text-slate-muted outline-none transition resize-none disabled:bg-muted ${
-                    reopenValidationError
-                      ? 'border-red-400 focus:border-red-500 focus:ring-2 focus:ring-red-100 bg-red-50/20'
-                      : 'border-border focus:border-primary focus:ring-2 focus:ring-primary/10 bg-card'
-                  }`}
-                />
-                {reopenValidationError && (
-                  <p className="text-[11px] text-red-600 font-medium flex items-center gap-1 mt-1 animate-in fade-in duration-200">
-                    <AlertCircle size={12} /> {reopenValidationError}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-3 border-t border-border">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={reopenSubmitting}
-                onClick={() => {
-                  setShowReopenModal(false);
-                  setReopenValidationError('');
-                  setReopenError('');
-                }}
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                variant="default"
-                size="sm"
-                disabled={reopenSubmitting}
-                onClick={handleExecuteReopen}
-                className="gap-1.5"
-              >
-                <RotateCcw size={13} className={reopenSubmitting ? 'animate-spin' : ''} />
-                {reopenSubmitting ? 'Reopening...' : 'Confirm Reopen'}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {previewFile && (
-        <FilePreviewModal
-          file={previewFile}
-          onClose={() => setPreviewFile(null)}
-        />
-      )}
-    </div>
+    </>
   );
 }
