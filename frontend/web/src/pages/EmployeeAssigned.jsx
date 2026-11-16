@@ -172,6 +172,15 @@ export default function EmployeeAssigned() {
     loadTickets({ forceRefresh: true });
   }, [loadTickets]);
 
+  // Handle incoming tab switching from search query or route state
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tabParam = params.get('tab') || location.state?.tab;
+    if (tabParam === 'pending_reassignment' || tabParam === 'incoming' || tabParam === 'all') {
+      setIncomingTab(tabParam);
+    }
+  }, [location.search, location.state]);
+
   // Handle notification-triggered ticket opens
   useEffect(() => {
     const focusId = location.state?.focusTicketId;
@@ -324,26 +333,28 @@ export default function EmployeeAssigned() {
   }, [filtered, page, itemsPerPage]);
 
   const handleAcceptAssignment = useCallback(async (id) => {
-    const ticketObj = tickets.find((t) => t.id === id);
-    if (!ticketObj) return;
+    const ticketObj = tickets.find((t) => t.id === id || t.ticket_ID === id);
+    const numericId = ticketObj?.ticket_ID || Number(String(id).replace(/\D/g, ''));
+    if (!numericId) return;
 
-    const numericId = ticketObj.ticket_ID || Number(String(id).replace(/\D/g, ''));
     setIsAccepting(true);
     try {
       await acceptTicket({
         ticketId: numericId,
       });
       setIsAccepting(false);
-      setPendingTicket(null);
-      setTickets((prev) => prev.filter((t) => t.id !== id));
+      setPendingTicket((prev) => (prev ? { ...prev, accepted: true, status: 'In Progress' } : null));
+      setTickets((prev) =>
+        prev.map((t) => (t.id === id || t.ticket_ID === numericId ? { ...t, accepted: true, status: 'In Progress' } : t))
+      );
       window.dispatchEvent(new Event('notifications:updated'));
-      navigate('/employee/machine');
     } catch (err) {
       console.error('Failed to accept assignment on backend:', err);
       setIsAccepting(false);
       window.alert(err?.response?.data?.message || 'Failed to accept assignment. Please try again.');
+      throw err;
     }
-  }, [tickets, navigate]);
+  }, [tickets]);
 
   const handleRejectAssignment = useCallback((id) => {
     setTickets((prev) =>
@@ -435,8 +446,9 @@ export default function EmployeeAssigned() {
         setInfoTicket(t);
         return;
       }
-      // Not yet accepted → show full Accept/Reject modal
-      if (!t.accepted) {
+      // Check if ticket is already accepted (status is In Progress, On Hold, Pending, or accepted flag is true)
+      const isAlreadyAccepted = Boolean(t.accepted || ['In Progress', 'On Hold', 'Pending', 'Pending Evaluation'].includes(t.status));
+      if (!isAlreadyAccepted) {
         setPendingTicket(t);
         return;
       }
@@ -766,9 +778,32 @@ export default function EmployeeAssigned() {
           onClose={() => setPendingTicket(null)}
           onStatusChange={handleStatusChange}
           onAccept={handleAcceptAssignment}
-          onRequestReassign={(t) => {
-            setPendingTicket(null);
-            setReassignTicket(t);
+          onRequestReassign={(t, reason) => {
+            setPendingTicket((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    reassignmentRequested: true,
+                    reassignmentStatus: 'Pending',
+                    reassignmentReason: reason,
+                    status: 'Pending Reassignment',
+                  }
+                : null
+            );
+            setTickets((prev) =>
+              prev.map((item) =>
+                item.id === t.id || item.ticket_ID === t.ticket_ID
+                  ? {
+                      ...item,
+                      reassignmentRequested: true,
+                      reassignmentStatus: 'Pending',
+                      reassignmentReason: reason,
+                      status: 'Pending Reassignment',
+                    }
+                  : item
+              )
+            );
+            loadTickets({ forceRefresh: true });
           }}
           isAccepting={isAccepting}
         />
@@ -799,6 +834,8 @@ export default function EmployeeAssigned() {
                   : t
               )
             );
+            setIncomingTab('pending_reassignment');
+            setInfoTicket(null);
             loadTickets({ forceRefresh: true });
           }}
         />
@@ -808,7 +845,10 @@ export default function EmployeeAssigned() {
       {deniedReassignTicket && (
         <TicketInfoModal
           ticket={deniedReassignTicket}
-          onClose={() => setDeniedReassignTicket(null)}
+          onClose={() => {
+            setDeniedReassignTicket(null);
+            navigate('/employee/machine');
+          }}
           onReassignSuccess={(id, reason) => {
             setTickets((prev) =>
               prev.map((t) =>

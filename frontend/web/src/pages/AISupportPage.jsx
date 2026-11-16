@@ -1,16 +1,13 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
-import { Bot, Send, Paperclip, ChevronDown, ChevronUp, X, CheckCircle, CheckCircle2, AlertTriangle, Plus, MessageSquare, Trash2, ArrowLeft, Clock, Menu, Loader2, RefreshCw } from 'lucide-react';
+import { Bot, Send, ChevronDown, ChevronUp, X, CheckCircle, CheckCircle2, AlertTriangle, Plus, MessageSquare, Trash2, ArrowLeft, Clock, Menu } from 'lucide-react';
 import axiosInstance from '@/api/axiosInstance';
 import { AI_API_URL } from '@/config/api.config';
 import { getTicketFormOptions, createTicket, getCustomerTickets, saveTicketDraft } from '@/services/ticketService';
-import useCategoryPreview, { isSoftwareCategory, isServiceCategory } from '@/hooks/useCategoryPreview';
-import { buildTicketTitle, FALLBACK_PROBLEM } from '@/utils/ticketTitle';
 import TitleCasingModal from '@/components/TitleCasingModal';
 import DuplicateTicketModal from '@/components/DuplicateTicketModal';
 import { formatProperTitleCase, needsProperCasing } from '@/utils/titleCaseUtils';
-import { resolveRegisteredMachine, formatMachineLabel, buildEscalationDescription } from '@/utils/machineMatching';
 import SkeletonLoader from '@/components/SkeletonLoader.jsx';
 
 const formatTime = (iso) => {
@@ -34,8 +31,6 @@ const formatShortTime = (iso) => {
 };
 
 function FormattedText({ text, isUser = false }) {
-  const [completedSteps, setCompletedSteps] = useState({});
-
   if (typeof text !== 'string') return text;
 
   if (isUser) {
@@ -47,117 +42,44 @@ function FormattedText({ text, isUser = false }) {
   }
 
   const lines = text.split('\n');
-  const stepRegex = /^(?:\*\*step\s*(\d+)[:\.\-]?\*\*|step\s*(\d+)[:\.\-]|(\d+)[\.\)])\s*(.*)$/i;
-
-  const totalDetectedSteps = lines.reduce((acc, line) => {
-    const trimmed = line.trim();
-    const isBullet = trimmed.startsWith('- ') || trimmed.startsWith('* ');
-    const cleanLine = isBullet ? trimmed.substring(2) : trimmed;
-    return stepRegex.test(cleanLine) ? acc + 1 : acc;
-  }, 0);
-
-  const completedCount = Object.values(completedSteps).filter(Boolean).length;
 
   const renderInlineTokens = (rawStr) =>
     rawStr.split(/(\*\*.*?\*\*|\*.*?\*|`.*?`)/g).map((part, idx) => {
       if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
-        return <strong key={idx} className="font-bold text-slate-900">{part.slice(2, -2)}</strong>;
+        return <strong key={idx} className="font-semibold text-slate-900">{part.slice(2, -2)}</strong>;
       }
       if (part.startsWith('*') && part.endsWith('*') && part.length >= 2) {
         return <em key={idx} className="italic">{part.slice(1, -1)}</em>;
       }
       if (part.startsWith('`') && part.endsWith('`') && part.length >= 2) {
-        return <code key={idx} className="bg-white border border-gray-200 px-1.5 py-0.5 rounded text-xs font-mono text-[#252578]">{part.slice(1, -1)}</code>;
+        return <code key={idx} className="bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-xs font-mono text-[#252578]">{part.slice(1, -1)}</code>;
       }
       return part;
     });
 
   return (
-    <div className="text-sm leading-relaxed break-words space-y-1.5">
-      {totalDetectedSteps >= 2 && (
-        <div className="mb-2.5 flex items-center justify-between gap-2 rounded-xl bg-[#252578]/5 border border-[#252578]/15 px-3 py-2 text-xs">
-          <span className="font-bold text-[#252578] flex items-center gap-1.5">
-            <CheckCircle2 size={14} className="text-[#2E85D8]" />
-            Guided Troubleshooting Steps
-          </span>
-          <span className="text-[11px] font-semibold text-slate-600 bg-white px-2 py-0.5 rounded-full border border-slate-200">
-            {completedCount} / {totalDetectedSteps} Completed
-          </span>
-        </div>
-      )}
+    <div className="text-sm leading-relaxed break-words space-y-1 text-slate-800">
       {lines.map((line, lineIdx) => {
         const trimmed = line.trim();
-        const isBullet = trimmed.startsWith('- ') || trimmed.startsWith('* ');
-        const cleanLine = isBullet ? trimmed.substring(2) : trimmed;
-
-        // Structured step detection: "Step 1: ...", "**Step 1:** ...", "1. ...", "2) ..."
-        const stepMatch = cleanLine.match(stepRegex);
-        if (stepMatch) {
-          const stepNum = stepMatch[1] || stepMatch[2] || stepMatch[3];
-          const stepBody = stepMatch[4] || '';
-          const isDone = Boolean(completedSteps[stepNum]);
-
-          // Extract optional leading bold title e.g. "**Power Cycle Unit** — Unplug the main cord..."
-          const titleMatch = stepBody.match(/^\*\*(.+?)\*\*\s*(?:[:\-—–]\s*)?(.*)$/);
-          const stepTitle = titleMatch ? titleMatch[1] : null;
-          const stepDesc = titleMatch ? titleMatch[2] : stepBody;
-
-          return (
-            <div
-              key={lineIdx}
-              onClick={() => setCompletedSteps((prev) => ({ ...prev, [stepNum]: !prev[stepNum] }))}
-              className={`my-2 p-3.5 rounded-xl border transition-all cursor-pointer flex items-start gap-3 text-left shadow-xs ${
-                isDone
-                  ? 'bg-emerald-50/70 border-emerald-200'
-                  : 'bg-blue-50/60 hover:bg-blue-50/90 border-blue-200/80'
-              }`}
-              title="Click to mark step as completed"
-            >
-              <div className="flex items-center gap-2 shrink-0 mt-0.5">
-                <span
-                  className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-colors ${
-                    isDone
-                      ? 'bg-emerald-600 text-white'
-                      : 'bg-[#252578] text-white'
-                  }`}
-                >
-                  {isDone ? '✓' : stepNum}
-                </span>
-                <span
-                  className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
-                    isDone
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : 'bg-[#252578]/10 text-[#252578]'
-                  }`}
-                >
-                  Step {stepNum}
-                </span>
-              </div>
-              <div className={`flex-1 text-xs leading-relaxed ${isDone ? 'line-through text-slate-500' : 'text-slate-800 font-medium'}`}>
-                {stepTitle && (
-                  <p className={`font-bold text-xs mb-0.5 ${isDone ? 'text-emerald-800' : 'text-[#252578]'}`}>
-                    {stepTitle}
-                  </p>
-                )}
-                <div>{renderInlineTokens(stepDesc || stepTitle || '')}</div>
-              </div>
-            </div>
-          );
+        if (!trimmed) {
+          return <div key={lineIdx} className="h-1.5" />;
         }
 
+        const isBullet = trimmed.startsWith('- ') || trimmed.startsWith('* ');
+        const cleanLine = isBullet ? trimmed.substring(2) : trimmed;
         const elements = renderInlineTokens(cleanLine);
 
         if (isBullet) {
           return (
             <div key={lineIdx} className="flex items-start gap-2 pl-2">
               <span className="text-[#252578] font-bold flex-shrink-0 select-none">•</span>
-              <div>{elements}</div>
+              <div className="flex-1">{elements}</div>
             </div>
           );
         }
 
         return (
-          <p key={lineIdx} className={lineIdx > 0 && line === '' ? 'h-2' : ''}>
+          <p key={lineIdx} className="leading-relaxed">
             {elements}
           </p>
         );
@@ -170,40 +92,39 @@ const isTroubleshootingResponse = (content) => {
   if (typeof content !== 'string' || !content.trim()) return false;
   const lower = content.toLowerCase();
 
-  // If it's a pure greeting, acknowledgment, or informational request without troubleshooting steps, do NOT prompt
-  const isGreetingOrClarification =
+  // Pure greeting, acknowledgment, or question prompts should never show the feedback resolution
+  if (
     lower.startsWith('hello') ||
     lower.startsWith('hi') ||
     lower.startsWith('hey') ||
     lower.startsWith('greetings') ||
-    lower.includes('describe the machine') ||
-    lower.includes('what machine are you having') ||
-    lower.includes('what is the brand') ||
+    lower.includes('how can i help you today') ||
     lower.includes('how can i assist you today') ||
-    lower.includes('how can i help you today');
-
-  // Check for troubleshooting steps or actionable directives
-  const hasStructuredSteps = /^(?:step\s*\d+|[1-9]\s*[\.\)]|\*|\-)\s+/im.test(content);
-  const hasTroubleshootingKeywords =
-    lower.includes('step 1') ||
-    lower.includes('troubleshoot') ||
-    lower.includes('try the following') ||
-    lower.includes('to resolve this') ||
-    lower.includes('check if') ||
-    lower.includes('power cycle') ||
-    lower.includes('restart the') ||
-    lower.includes('unplug') ||
-    lower.includes('disconnect') ||
-    lower.includes('clear the jam') ||
-    lower.includes('reinstall') ||
-    lower.includes('inspect the') ||
-    lower.includes('replace the');
-
-  if (isGreetingOrClarification && !hasStructuredSteps) {
-    return false;
+    lower.includes('what machine are you having') ||
+    lower.includes('can you provide') ||
+    lower.includes('describe the machine')
+  ) {
+    if (!/\bstep\s*1\b/i.test(content) && !/^\s*(?:1[\.\)]|\*\*1[\.\)]\*\*)\s+/m.test(content)) {
+      return false;
+    }
   }
 
-  return hasStructuredSteps || hasTroubleshootingKeywords;
+  // Count sequential action steps in the message
+  const lines = content.split('\n');
+  const stepLineRegex = /^(?:\*\*step\s*\d+[:\.\-]?\*\*|step\s*\d+[:\.\-]|(?:\*\*)?\d+[\.\)](?:\*\*)?)\s+/i;
+  let count = 0;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    const clean = (trimmed.startsWith('- ') || trimmed.startsWith('* ')) ? trimmed.substring(2) : trimmed;
+    if (stepLineRegex.test(clean)) {
+      count++;
+    }
+  }
+
+  const hasExplicitStepKeyword = /\bstep\s*1\b/i.test(content) || /\bstep\s*one\b/i.test(content);
+
+  // Strictly only show feedback when the message actually presents actionable troubleshooting steps
+  return count >= 2 || (count >= 1 && hasExplicitStepKeyword);
 };
 
 const suggestionChips = [
@@ -320,7 +241,7 @@ function AISourceList({ sources }) {
 // AI conversation statuses (ai-service) meaning the chat already ended in a ticket.
 const FINISHED_CONVERSATION_STATUSES = ['ticket_created', 'escalated'];
 
-function TicketRecommendationCard({ onCreateTicket, onContinue, isPreparing = false }) {
+function TicketRecommendationCard({ onCreateTicket, onContinue }) {
   return (
     <div className="flex justify-start">
       <div className="max-w-[75%] w-full">
@@ -336,11 +257,8 @@ function TicketRecommendationCard({ onCreateTicket, onContinue, isPreparing = fa
                 <button
                   type="button"
                   onClick={onCreateTicket}
-                  disabled={isPreparing}
-                  aria-busy={isPreparing}
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer disabled:opacity-70"
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl transition-all cursor-pointer"
                 >
-                  {isPreparing && <Loader2 size={14} className="animate-spin" aria-hidden="true" />}
                   Create Ticket
                 </button>
                 <button
@@ -359,60 +277,31 @@ function TicketRecommendationCard({ onCreateTicket, onContinue, isPreparing = fa
   );
 }
 
-function TicketReviewModal({ isOpen, data, machines = [], categories = [], optionsError = false, onRetryOptions, conversationId = null, onClose, onSubmit, onSaveDraft }) {
+function TicketReviewModal({ isOpen, data, machines = [], onClose, onSubmit, onSaveDraft }) {
   const navigate = useNavigate();
   const [form, setForm] = useState(data || {});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [showBackConfirm, setShowBackConfirm] = useState(false);
   const [titleCasingData, setTitleCasingData] = useState(null);
   const [showTitleCasingModal, setShowTitleCasingModal] = useState(false);
   const [isTitleManuallyEdited, setIsTitleManuallyEdited] = useState(false);
   const [submitError, setSubmitError] = useState(null);
-  const [machineError, setMachineError] = useState(null);
-  // The customer picks the category; the AI suggestion fills it until they choose one themselves.
-  // Service needs a machine, Software hides the equipment field.
-  const [categoryTouched, setCategoryTouched] = useState(false);
-  const categoryPreview = useCategoryPreview({
-    title: form.problemSummary || '',
-    description: form.conversationSummary || '',
-    categories,
-    enabled: Boolean(isOpen) && !categoryTouched,
-  });
-  useEffect(() => {
-    if (categoryTouched || !categoryPreview.category) return;
-    const suggested = String(categoryPreview.category.problem_category_ID);
-    setForm((prev) => (String(prev.problem_category_ID || '') === suggested ? prev : { ...prev, problem_category_ID: suggested }));
-  }, [categoryPreview.category, categoryTouched]);
-  const selectedCategory = categories.find((c) => String(c.problem_category_ID) === String(form.problem_category_ID || '')) || null;
-  const requiresEquipment = isServiceCategory(selectedCategory);
-  const showEquipment = !isSoftwareCategory(selectedCategory);
-  const selectedMachine = machines.find((m) => String(m.machine_ID) === String(form.machine_ID)) || null;
 
   useEffect(() => {
     if (data) {
       setForm(data);
       setIsSubmitting(false);
       setIsSavingDraft(false);
+      setShowBackConfirm(false);
       setTitleCasingData(null);
       setShowTitleCasingModal(false);
       setIsTitleManuallyEdited(false);
       setSubmitError(null);
-      setMachineError(null);
-      setCategoryTouched(false);
     }
   }, [data, isOpen]);
 
   if (!isOpen) return null;
-
-  /** AC-3: a Service ticket cannot be submitted without a registered machine. */
-  const validateMachine = () => {
-    if (requiresEquipment && !form.machine_ID) {
-      setMachineError('Select your machine before submitting this ticket.');
-      return false;
-    }
-    setMachineError(null);
-    return true;
-  };
 
   const handleSaveDraft = async () => {
     if (isSubmitting || isSavingDraft || !onSaveDraft) return;
@@ -429,7 +318,6 @@ function TicketReviewModal({ isOpen, data, machines = [], categories = [], optio
 
   const handleSubmit = async () => {
     if (isSubmitting || isSavingDraft) return;
-    if (!validateMachine()) return;
 
     const summaryTrimmed = (form.problemSummary || '').trim();
     // Only prompt for proper casing if the user manually edited the title
@@ -446,7 +334,7 @@ function TicketReviewModal({ isOpen, data, machines = [], categories = [], optio
     setIsSubmitting(true);
     setSubmitError(null);
     try {
-      await onSubmit(showEquipment ? form : { ...form, machine_ID: null, machineModel: '' });
+      await onSubmit(form);
     } catch (err) {
       const msg = err?.response?.data?.message || err?.message || 'Failed to submit ticket.';
       setSubmitError(msg);
@@ -478,8 +366,20 @@ function TicketReviewModal({ isOpen, data, machines = [], categories = [], optio
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4 backdrop-blur-[1.5px]">
       <div className="w-full max-w-2xl rounded-xl bg-white shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 flex-shrink-0">
-          <h2 className="text-lg font-bold text-gray-900">Review Support Ticket</h2>
-          <button onClick={onClose} disabled={isSubmitting} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 cursor-pointer disabled:opacity-50">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowBackConfirm(true)}
+              disabled={isSubmitting}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-gray-100 text-gray-600 hover:text-gray-900 transition-colors cursor-pointer text-xs font-semibold"
+              title="Back to Chat"
+            >
+              <ArrowLeft size={16} />
+              <span>Back</span>
+            </button>
+            <h2 className="text-lg font-bold text-gray-900">Review Support Ticket</h2>
+          </div>
+          <button onClick={() => setShowBackConfirm(true)} disabled={isSubmitting} className="p-1 rounded-lg hover:bg-gray-100 text-gray-400 hover:text-gray-600 cursor-pointer disabled:opacity-50">
             <X size={20} />
           </button>
         </div>
@@ -496,76 +396,41 @@ function TicketReviewModal({ isOpen, data, machines = [], categories = [], optio
           </div>
         )}
         <div className="overflow-y-auto px-6 py-4 space-y-4 flex-1">
-          {optionsError && (
-            <div role="alert" className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3">
-              <AlertTriangle size={16} className="text-red-600 flex-shrink-0" />
-              <p className="flex-1 text-xs text-red-700 font-medium">We could not load your machines and categories.</p>
-              {onRetryOptions && (
-                <button type="button" onClick={onRetryOptions} className="inline-flex items-center gap-1 text-xs font-semibold text-red-700 hover:underline cursor-pointer">
-                  <RefreshCw size={12} aria-hidden="true" />
-                  Retry
-                </button>
-              )}
-            </div>
-          )}
-          {showEquipment && (
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
-                  Machine / Equipment {requiresEquipment ? <span className="text-red-500">*</span> : <span className="normal-case font-normal text-gray-400">(optional)</span>}
-                </label>
-                <select
-                  aria-label="Machine / Equipment"
-                  aria-invalid={Boolean(machineError)}
-                  value={form.machine_ID ? String(form.machine_ID) : ''}
-                  onChange={(e) => {
-                    const picked = machines.find(m => String(m.machine_ID) === e.target.value) || null;
-                    const next = {
-                      ...form,
-                      machine_ID: picked ? picked.machine_ID : null,
-                      machineModel: picked ? formatMachineLabel(picked) : '',
-                    };
-                    // AC-3 / AC-4: the auto title follows the machine until the customer edits it by hand.
-                    if (!isTitleManuallyEdited && form.titleParts) {
-                      next.problemSummary = buildTicketTitle({ ...form.titleParts, machineName: picked?.machine_name || '' });
-                    }
-                    setForm(next);
-                    if (picked) setMachineError(null);
-                  }}
-                  className={`w-full rounded-lg border px-3 py-2 text-sm outline-none focus:border-transparent focus:ring-2 focus:ring-[#252578] bg-white ${machineError ? 'border-red-400' : 'border-gray-200'}`}
-                >
-                  <option value="">Select your machine</option>
-                  {machines.map((m) => (
-                    <option key={m.machine_ID} value={String(m.machine_ID)}>
-                      {formatMachineLabel(m)}
-                    </option>
-                  ))}
-                </select>
-                {machineError ? (
-                  <p role="alert" className="text-[11px] text-red-600 mt-1">{machineError}</p>
-                ) : (
-                  <p className="text-[11px] text-gray-400 mt-1">
-                    {machines.length === 0
-                      ? 'No registered machines were found on your account.'
-                      : 'Select the specific machine experiencing the problem. Tickets are tracked per machine.'}
-                  </p>
-                )}
-              </div>
-              <div>
-                <label htmlFor="review-serial" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Serial Number</label>
-                <input
-                  id="review-serial"
-                  type="text"
-                  readOnly
-                  tabIndex={-1}
-                  value={selectedMachine?.serial_number || ''}
-                  placeholder="Select a machine"
-                  className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-700 outline-none"
-                />
-              </div>
-            </div>
-          )}
           <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                Machine / Equipment <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                list="review-machines-list"
+                value={form.machineModel || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  const matched = machines.find(m =>
+                    m.machine_name?.toLowerCase() === val.toLowerCase() ||
+                    m.model?.toLowerCase() === val.toLowerCase()
+                  );
+                  setForm({
+                    ...form,
+                    machineModel: val,
+                    machine_ID: matched ? matched.machine_ID : form.machine_ID
+                  });
+                }}
+                placeholder="Select or enter machine..."
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-transparent focus:ring-2 focus:ring-[#252578]"
+              />
+              <datalist id="review-machines-list">
+                {machines.map((m) => (
+                  <option key={m.machine_ID} value={m.machine_name}>
+                    {m.serial_number ? `${m.machine_name} (${m.serial_number})` : m.machine_name}
+                  </option>
+                ))}
+              </datalist>
+              <p className="text-[11px] text-gray-400 mt-1">
+                Select the specific machine experiencing the problem. Tickets are tracked per machine.
+              </p>
+            </div>
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Company Name</label>
               <input
@@ -575,6 +440,8 @@ function TicketReviewModal({ isOpen, data, machines = [], categories = [], optio
                 className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-transparent focus:ring-2 focus:ring-[#252578]"
               />
             </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Purchase Date</label>
               <input
@@ -584,29 +451,19 @@ function TicketReviewModal({ isOpen, data, machines = [], categories = [], optio
                 className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-transparent focus:ring-2 focus:ring-[#252578]"
               />
             </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
             <div>
-              <label htmlFor="review-category" className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Category</label>
-              <div className="relative">
-                <select
-                  id="review-category"
-                  value={form.problem_category_ID || ''}
-                  onChange={(e) => {
-                    setCategoryTouched(true);
-                    setForm({ ...form, problem_category_ID: e.target.value });
-                  }}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-transparent focus:ring-2 focus:ring-[#252578] bg-white"
-                >
-                  <option value="">Let AI decide</option>
-                  {categories.map((c) => (
-                    <option key={c.problem_category_ID} value={c.problem_category_ID}>{c.category_name}</option>
-                  ))}
-                </select>
-                {categoryPreview.loading && !categoryTouched && (
-                  <Loader2 size={14} className="pointer-events-none absolute right-8 top-3 animate-spin text-gray-400" aria-hidden="true" />
-                )}
-              </div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Suggested Category</label>
+              <select
+                value={form.category || 'Hardware'}
+                onChange={(e) => setForm({ ...form, category: e.target.value })}
+                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-transparent focus:ring-2 focus:ring-[#252578] bg-white"
+              >
+                <option>Hardware</option>
+                <option>Software</option>
+                <option>Network</option>
+                <option>Consumables</option>
+                <option>Other</option>
+              </select>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -625,7 +482,7 @@ function TicketReviewModal({ isOpen, data, machines = [], categories = [], optio
             </div>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Ticket Title</label>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Problem Summary</label>
             <textarea
               rows={3}
               value={form.problemSummary || ''}
@@ -664,9 +521,9 @@ function TicketReviewModal({ isOpen, data, machines = [], categories = [], optio
               onClose();
               navigate('/create-ticket', {
                 state: {
-                  conversationId,
-                  conversation_id: conversationId,
-                  fromConversationId: conversationId,
+                  conversationId: activeConversationId,
+                  conversation_id: activeConversationId,
+                  fromConversationId: activeConversationId,
                   fromAiChat: true,
                   prefillData: {
                     title: form.problemSummary || form.title || '',
@@ -690,11 +547,12 @@ function TicketReviewModal({ isOpen, data, machines = [], categories = [], optio
           <div className="flex items-center gap-3 ml-auto">
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => setShowBackConfirm(true)}
               disabled={isSubmitting || isSavingDraft}
-              className="px-4 py-2.5 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100 transition-all cursor-pointer disabled:opacity-50"
+              className="px-4 py-2.5 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100 transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
             >
-              Cancel
+              <ArrowLeft size={14} />
+              <span>Back</span>
             </button>
             {onSaveDraft && (
               <button
@@ -733,6 +591,58 @@ function TicketReviewModal({ isOpen, data, machines = [], categories = [], optio
           </div>
         </div>
       </div>
+
+      {showBackConfirm && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl border border-gray-200 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-gray-900">Return to AI Chatbot?</h3>
+                <p className="text-xs text-gray-600 leading-relaxed">
+                  Are you sure you want to go back to the AI chatbot? You can save your ticket as a draft before leaving, or return without saving.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowBackConfirm(false)}
+                className="w-full sm:w-auto px-3.5 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowBackConfirm(false);
+                  onClose();
+                }}
+                className="w-full sm:w-auto px-3.5 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-lg transition-colors cursor-pointer"
+              >
+                Go Back without Saving
+              </button>
+              {onSaveDraft && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setShowBackConfirm(false);
+                    await handleSaveDraft();
+                  }}
+                  disabled={isSavingDraft}
+                  className="w-full sm:w-auto px-4 py-2 text-xs font-semibold text-white bg-[#252578] hover:bg-[#1d1d60] rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 shadow-xs"
+                >
+                  {isSavingDraft ? <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : null}
+                  <span>Save to Draft</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <TitleCasingModal
         isOpen={showTitleCasingModal}
@@ -890,9 +800,6 @@ function AISupportPage() {
   const [conversationPhase, setConversationPhase] = useState(0);
   const [escalationTicketData, setEscalationTicketData] = useState(null);
   const [ticketOptions, setTicketOptions] = useState(null);
-  // Spec 0043 (AC-2): the review modal opens only after the form options resolve.
-  const [ticketOptionsError, setTicketOptionsError] = useState(false);
-  const [preparingReview, setPreparingReview] = useState(false);
   const [feedbackMap, setFeedbackMap] = useState({});
 
   useEffect(() => {
@@ -1110,8 +1017,7 @@ function AISupportPage() {
               title: c.title ? c.title.replace(/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i, '').trim() : 'AI Support Session'
             }));
           setConversations(prev => {
-            // Keep a local draft only while it is still the open chat; once sent it exists on the server.
-            const activeDraft = prev.find(c => String(c.id).startsWith('draft-') && c.id === activeConvIdRef.current);
+            const activeDraft = prev.find(c => String(c.id).startsWith('draft-'));
             return activeDraft ? [activeDraft, ...cleanConvs] : cleanConvs;
           });
         }
@@ -1141,10 +1047,43 @@ function AISupportPage() {
               title: c.title ? c.title.replace(/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i, '').trim() : 'AI Support Session'
             }));
           setConversations(fetched);
-          // Always open on a clean New Support Session by default instead of loading stale test chats
-          handleNewChat();
+          const incomingDraft = location.state?.draft;
+          const resumeConvId = location.state?.activeConversationId || location.state?.conversationId || incomingDraft?.conversation_id;
+          if (resumeConvId) {
+            loadConversation(resumeConvId);
+          } else {
+            handleNewChat();
+          }
+          if (incomingDraft) {
+            setEscalationTicketData({
+              title: incomingDraft.title || '',
+              machine_ID: incomingDraft.machine_ID || null,
+              problem_category_ID: incomingDraft.problem_category_ID || null,
+              conversationSummary: incomingDraft.description || '',
+              problemSummary: incomingDraft.description || '',
+              draftId: incomingDraft.id,
+            });
+            setShowTicketCard(true);
+          }
         } else {
-          handleNewChat();
+          const incomingDraft = location.state?.draft;
+          const resumeConvId = location.state?.activeConversationId || location.state?.conversationId || incomingDraft?.conversation_id;
+          if (resumeConvId) {
+            loadConversation(resumeConvId);
+          } else {
+            handleNewChat();
+          }
+          if (incomingDraft) {
+            setEscalationTicketData({
+              title: incomingDraft.title || '',
+              machine_ID: incomingDraft.machine_ID || null,
+              problem_category_ID: incomingDraft.problem_category_ID || null,
+              conversationSummary: incomingDraft.description || '',
+              problemSummary: incomingDraft.description || '',
+              draftId: incomingDraft.id,
+            });
+            setShowTicketCard(true);
+          }
         }
       })
       .catch(err => {
@@ -1255,13 +1194,6 @@ function AISupportPage() {
         }
         if (returnedConvId !== activeConversationId) {
           setActiveConversationId(returnedConvId);
-          // The server created the real conversation (with a proper title), so the local
-          // "New Conversation" draft is replaced instead of lingering in the sidebar.
-          if (String(sendingConvId).startsWith('draft-')) {
-            activeConvIdRef.current = returnedConvId;
-            delete conversationStateRef.current[sendingConvId];
-            setConversations(prev => prev.filter(c => c.id !== sendingConvId));
-          }
         }
 
         if (res.data.is_duplicate && res.data.conversation_id) {
@@ -1319,11 +1251,9 @@ function AISupportPage() {
               <button
                 type="button"
                 onClick={handleCreateTicket}
-                disabled={preparingReview}
-                aria-busy={preparingReview}
-                className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-all cursor-pointer inline-flex items-center gap-1.5 disabled:opacity-70"
+                className="px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-all cursor-pointer inline-flex items-center gap-1.5"
               >
-                {preparingReview ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Plus size={14} />}
+                <Plus size={14} />
                 Create Ticket With Context
               </button>
               <button
@@ -1416,7 +1346,7 @@ function AISupportPage() {
     existingTicket: null,
   });
 
-  const generateRealReviewData = useCallback((escData, optionsOverride = null) => {
+  const generateRealReviewData = useCallback((escData) => {
     const activeConv = conversations.find(c => c.id === activeConversationId);
 
     const greetingsList = [
@@ -1450,93 +1380,182 @@ function AISupportPage() {
       .map(m => m.content.trim())
       .filter(txt => txt.length > 0 && !isPureGreeting(txt));
 
+    let resolvedTitle = escData?.title || escData?.problemSummary || '';
+    if (resolvedTitle) {
+      resolvedTitle = cleanProblemText(resolvedTitle);
+    }
+
+    if (!resolvedTitle || isPureGreeting(resolvedTitle)) {
+      if (activeConv?.title && !['New Conversation', 'New Chat', 'Support Inquiry'].includes(activeConv.title) && !isPureGreeting(activeConv.title)) {
+        resolvedTitle = cleanProblemText(activeConv.title);
+      }
+    }
+    if (!resolvedTitle || isPureGreeting(resolvedTitle)) {
+      const substantive = userMsgs.map(cleanProblemText).filter(txt => txt.length >= 3 && !isPureGreeting(txt));
+      // If substantive[0] is just a machine name and substantive[1] is the problem, combine them
+      if (substantive.length >= 2 && substantive[0].length < 30) {
+        resolvedTitle = `${substantive[0]} - ${substantive[1]}`;
+      } else if (substantive.length > 0) {
+        resolvedTitle = substantive[0];
+      }
+    }
+    if (!resolvedTitle || isPureGreeting(resolvedTitle)) {
+      resolvedTitle = 'Equipment Technical Support Request';
+    }
+
+    // Capitalize & apply proper title casing automatically for AI generated title
+    resolvedTitle = cleanProblemText(resolvedTitle);
+    if (resolvedTitle.length > 0) {
+      resolvedTitle = formatProperTitleCase(resolvedTitle);
+    }
+    const convoTitle = resolvedTitle.length > 70 ? resolvedTitle.slice(0, 70) + '...' : resolvedTitle;
+
     const userOrg = user?.company_name || user?.organization || user?.client_name || user?.company ||
       (user?.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : '') || 'Customer Organization';
 
-    // ─── REGISTERED MACHINE RESOLUTION (spec 0038, AC-1 / AC-2) ───
-    // The machine comes only from the customer's registered machines. Gemini's
-    // machine string (`machine` or `machineModel`) is matched against the same
-    // catalog; it is never used as a machine name on its own.
-    const registeredMachines = (optionsOverride || ticketOptions)?.machines || [];
-    const geminiMachine = escData?.machineModel || escData?.machine || '';
-    const matchedMachine = resolveRegisteredMachine(registeredMachines, [...userMsgs, geminiMachine]);
-    const matchedMachineId = matchedMachine ? matchedMachine.machine_ID : null;
-    const model = matchedMachine ? formatMachineLabel(matchedMachine) : '';
+    // ─── DYNAMIC MACHINE MODEL RESOLUTION ─────────────────────
+    let model = escData?.machineModel;
+    let matchedMachineId = escData?.machine_ID || null;
+    let isExplicitMachine = false;
 
-    // Spec 0043 (AC-3): `<machine_name> - <Problem>`; never the first chat message on its own.
-    const titleParts = {
-      geminiTitle: escData?.title || '',
-      problemSummary: escData?.problemSummary || '',
-      userMessages: userMsgs,
-    };
-    const convoTitle = buildTicketTitle({ ...titleParts, machineName: matchedMachine?.machine_name || '' });
+    if (model && model.trim() !== '' && model.toLowerCase() !== 'unknown machine' && model.toLowerCase() !== 'general equipment') {
+      model = cleanProblemText(model.trim());
+      isExplicitMachine = true;
+    } else {
+      model = null;
+    }
 
-    // AC-4: no Machine line, problem details listed once.
-    const convSummary = buildEscalationDescription(convoTitle, userMsgs);
+    // Match chat messages against database equipment list
+    if (!model && ticketOptions?.machines && ticketOptions.machines.length > 0) {
+      const combinedChatText = userMsgs.join(' ').toLowerCase();
+      const matchedMachine = ticketOptions.machines.find(m => {
+        const nameMatch = m.machine_name && combinedChatText.includes(m.machine_name.toLowerCase());
+        const modelMatch = m.model && combinedChatText.includes(m.model.toLowerCase());
+        const brandMatch = m.brand && combinedChatText.includes(m.brand.toLowerCase());
+        return nameMatch || modelMatch || brandMatch;
+      });
+
+      if (matchedMachine) {
+        matchedMachineId = matchedMachine.machine_ID;
+        const brandStr = matchedMachine.brand ? `${matchedMachine.brand} ` : '';
+        const modelStr = matchedMachine.model ? `${matchedMachine.model} ` : '';
+        model = `${brandStr}${modelStr}(${matchedMachine.machine_name})`.trim();
+        isExplicitMachine = true;
+      }
+    }
+
+    // Fallback to user's chat message answers if no database match
+    if (!model) {
+      if (userMsgs.length >= 2 && userMsgs[1].length < 80) {
+        model = cleanProblemText(`${userMsgs[1]} ${userMsgs[0]}`);
+        isExplicitMachine = true;
+      } else if (userMsgs.length >= 1 && userMsgs[0].length < 80) {
+        model = cleanProblemText(userMsgs[0]);
+        isExplicitMachine = true;
+      } else if (ticketOptions?.machines && ticketOptions.machines.length > 0) {
+        const first = ticketOptions.machines[0];
+        matchedMachineId = first.machine_ID;
+        model = `${first.brand || ''} ${first.model || ''} (${first.machine_name})`.trim();
+        isExplicitMachine = false;
+      } else {
+        model = 'Equipment Support Request';
+        isExplicitMachine = false;
+      }
+    }
+
+    let convSummary = escData?.conversationSummary;
+    if (convSummary && typeof convSummary === 'string') {
+      convSummary = convSummary
+        .replace(/(?:\b|\n)(?:\d+[\.\)]|Step \d+:|-|\*)\s+[^\n]+/gi, '')
+        .replace(/\n{2,}/g, '\n\n')
+        .trim();
+    }
+
+    if (!convSummary || convSummary.trim() === '') {
+      const userProblemDetails = userMsgs.length > 0 ? userMsgs.join('. ') : 'Issue reported via AI Assistant.';
+      convSummary = `Customer reported an issue regarding "${convoTitle}". Machine: ${model}. Problem details: ${userProblemDetails}. Automated troubleshooting was attempted but the issue persists. Ticket escalated to technical team for follow-up.`;
+    }
 
     return {
       machineModel: model,
       machine_ID: matchedMachineId,
-      isExplicitMachine: Boolean(matchedMachine),
+      isExplicitMachine,
       companyName: userOrg,
       purchaseDate: new Date().toISOString().split('T')[0],
       problemSummary: convoTitle,
-      titleParts,
+      category: escData?.category || 'Hardware',
       priority: escData?.priority || 'Medium',
       conversationSummary: convSummary,
-      conversation_id: activeConversationId,
     };
   }, [conversations, activeConversationId, messages, user, ticketOptions]);
 
-  const loadTicketOptions = useCallback(async () => {
-    try {
-      const opts = await getTicketFormOptions({ forceRefresh: !ticketOptions });
-      setTicketOptions(opts);
-      setTicketOptionsError(false);
-      return opts;
-    } catch (err) {
-      console.warn('Failed to load ticket form options:', err);
-      setTicketOptionsError(true);
-      return null;
-    }
-  }, [ticketOptions]);
-
   const handleCreateTicket = useCallback(async () => {
-    if (preparingReview) return;
-    setPreparingReview(true);
-    try {
-      // AC-2: build the review only once the machines and categories are known.
-      const opts = ticketOptions || await loadTicketOptions();
-      const review = generateRealReviewData(escalationTicketData, opts);
-      setReviewData(opts ? review : { ...review, machine_ID: null, machineModel: '' });
-      setShowReviewModal(true);
-    } finally {
-      setPreparingReview(false);
-    }
-  }, [preparingReview, ticketOptions, loadTicketOptions, generateRealReviewData, escalationTicketData]);
+    const review = generateRealReviewData(escalationTicketData);
+    let targetMachineId = review.machine_ID || null;
+    const targetModel = (review.machineModel || '').trim().toLowerCase();
 
-  const handleRetryTicketOptions = useCallback(async () => {
-    const opts = await loadTicketOptions();
-    if (opts) {
-      setReviewData((prev) => {
-        const fresh = generateRealReviewData(escalationTicketData, opts);
-        // Keep anything the customer already resolved (AC-2): never reset a chosen machine.
-        return prev?.machine_ID ? { ...fresh, ...prev } : { ...fresh, ...prev, machine_ID: fresh.machine_ID, machineModel: fresh.machineModel };
-      });
+    if (!targetMachineId && ticketOptions?.machines && targetModel) {
+      const found = ticketOptions.machines.find(m =>
+        m.machine_name?.toLowerCase().includes(targetModel) ||
+        m.model?.toLowerCase().includes(targetModel) ||
+        targetModel.includes(m.machine_name?.toLowerCase())
+      );
+      if (found) targetMachineId = found.machine_ID;
     }
-  }, [loadTicketOptions, generateRealReviewData, escalationTicketData]);
+
+    let targetCategoryId = review.problem_category_ID || null;
+    const targetCategory = (review.category || '').trim().toLowerCase();
+    if (!targetCategoryId && ticketOptions?.problem_categories && targetCategory) {
+      const foundCat = ticketOptions.problem_categories.find(c =>
+        c.category_name?.toLowerCase() === targetCategory ||
+        targetCategory.includes(c.category_name?.toLowerCase())
+      );
+      if (foundCat) targetCategoryId = foundCat.problem_category_ID;
+    }
+
+    const prefill = {
+      title: review.problemSummary || '',
+      problemSummary: review.problemSummary || '',
+      machine_ID: targetMachineId || review.machine_ID || '',
+      machineModel: review.machineModel || '',
+      machine_name: review.machineModel || '',
+      problem_category_ID: targetCategoryId || review.problem_category_ID || '',
+      category: review.category || '',
+      category_name: review.category || '',
+      description: review.conversationSummary || '',
+      conversationSummary: review.conversationSummary || '',
+    };
+
+    navigate('/create-ticket', {
+      state: {
+        conversationId: activeConversationId,
+        conversation_id: activeConversationId,
+        fromConversationId: activeConversationId,
+        fromAiChat: true,
+        prefillData: prefill,
+      },
+    });
+  }, [activeConversationId, escalationTicketData, generateRealReviewData, ticketOptions, navigate]);
 
   const handleSubmitTicket = useCallback(async (formData) => {
     try {
       const options = await getTicketFormOptions().catch(() => null);
 
-      // The machine is whatever registered machine the customer picked in the
-      // review modal (spec 0038 AC-3). No name matching, no first machine fallback.
-      const registered = options?.machines || ticketOptions?.machines || [];
-      const matchedMachine = formData.machine_ID
-        ? registered.find(m => String(m.machine_ID) === String(formData.machine_ID)) || null
-        : null;
-      const machineId = matchedMachine ? matchedMachine.machine_ID : null;
+      let matchedMachine = null;
+      let machineId = 1;
+      if (options?.machines && options.machines.length > 0) {
+        matchedMachine = options.machines.find(m =>
+          (m.machine_name && formData.machineModel && m.machine_name.toLowerCase().trim() === formData.machineModel.toLowerCase().trim()) ||
+          (m.machine_name && formData.machineModel && formData.machineModel.toLowerCase().includes(m.machine_name.toLowerCase())) ||
+          (m.machine_name && formData.machineModel && m.machine_name.toLowerCase().includes(formData.machineModel.toLowerCase())) ||
+          (m.model && formData.machineModel && formData.machineModel.toLowerCase().includes(m.model.toLowerCase()))
+        );
+        if (matchedMachine) {
+          machineId = matchedMachine.machine_ID;
+        } else {
+          machineId = formData.machine_ID || options.machines[0].machine_ID;
+        }
+      }
 
       // Check ongoing tickets for this user
       const existingTickets = await getCustomerTickets({ createdBy: currentUserId || 1, forceRefresh: true }).catch(() => []);
@@ -1568,6 +1587,15 @@ function AISupportPage() {
         return;
       }
 
+      let categoryId = 1;
+      if (options?.problem_categories && options.problem_categories.length > 0) {
+        const found = options.problem_categories.find(c =>
+          c.category_name?.toLowerCase() === (formData.category || '').toLowerCase()
+        );
+        if (found) categoryId = found.problem_category_ID;
+        else categoryId = options.problem_categories[0].problem_category_ID;
+      }
+
       let priorityId = 2;
       if (options?.ticket_priorities && options.ticket_priorities.length > 0) {
         const found = options.ticket_priorities.find(p =>
@@ -1577,13 +1605,19 @@ function AISupportPage() {
         else priorityId = options.ticket_priorities[0].priority_ID;
       }
 
-      // Spec 0043 (AC-3, AC-4): the title is the built or hand edited title, kept as is.
-      const ticketTitle = (formData.problemSummary || '').trim() || FALLBACK_PROBLEM;
+      const activeConv = conversations.find(c => c.id === activeConversationId);
+      let ticketTitle = (formData.problemSummary || activeConv?.title || 'Support Ticket').trim();
+      ticketTitle = ticketTitle.replace(/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i, '').trim();
+      if (ticketTitle.length > 0) {
+        ticketTitle = formatProperTitleCase(ticketTitle);
+      } else {
+        ticketTitle = 'Equipment Support Request';
+      }
 
       const payload = new FormData();
       payload.append('title', ticketTitle);
-      if (machineId) payload.append('machine_ID', machineId);
-      if (formData.problem_category_ID) payload.append('problem_category_ID', formData.problem_category_ID);
+      payload.append('machine_ID', machineId);
+      payload.append('problem_category_ID', categoryId);
       payload.append('priority_ID', priorityId);
       payload.append('description', formData.conversationSummary || formData.problemSummary || 'Submitted via AI Support Assistant.');
 
@@ -1595,7 +1629,7 @@ function AISupportPage() {
         const objPayload = {
           title: ticketTitle,
           machine_ID: machineId,
-          problem_category_ID: formData.problem_category_ID ? Number(formData.problem_category_ID) : null,
+          problem_category_ID: categoryId,
           priority_ID: priorityId,
           description: formData.conversationSummary || formData.problemSummary || 'Submitted via AI Support Assistant.',
         };
@@ -1648,24 +1682,39 @@ function AISupportPage() {
 
       throw err;
     }
-  }, [addMessage, activeConversationId, currentUserId, ticketOptions]);
+  }, [addMessage, conversations, activeConversationId, currentUserId]);
 
   const handleSaveTicketDraft = useCallback(async (formData) => {
     try {
       const options = ticketOptions || await getTicketFormOptions().catch(() => null);
 
-      // The machine is whatever registered machine the customer picked in the
-      // review modal (spec 0038 AC-3). No name matching, no first machine fallback.
-      const registered = options?.machines || ticketOptions?.machines || [];
-      const matchedMachine = formData.machine_ID
-        ? registered.find(m => String(m.machine_ID) === String(formData.machine_ID)) || null
-        : null;
-      const machineId = matchedMachine ? matchedMachine.machine_ID : null;
+      let matchedMachine = null;
+      let machineId = 1;
+      if (options?.machines && options.machines.length > 0) {
+        matchedMachine = options.machines.find(m =>
+          (m.machine_name && formData.machineModel && m.machine_name.toLowerCase().trim() === formData.machineModel.toLowerCase().trim()) ||
+          (m.machine_name && formData.machineModel && formData.machineModel.toLowerCase().includes(m.machine_name.toLowerCase())) ||
+          (m.machine_name && formData.machineModel && m.machine_name.toLowerCase().includes(formData.machineModel.toLowerCase())) ||
+          (m.model && formData.machineModel && formData.machineModel.toLowerCase().includes(m.model.toLowerCase()))
+        );
+        if (matchedMachine) {
+          machineId = matchedMachine.machine_ID;
+        } else {
+          machineId = formData.machine_ID || options.machines[0].machine_ID;
+        }
+      }
 
       // Check ongoing tickets for this user for duplicate detection
       const existingTickets = await getCustomerTickets({ createdBy: currentUserId || 1, forceRefresh: true }).catch(() => []);
 
-      const ticketTitle = (formData.problemSummary || '').trim() || FALLBACK_PROBLEM;
+      const activeConv = conversations.find(c => c.id === activeConversationId);
+      let ticketTitle = (formData.problemSummary || activeConv?.title || 'Support Ticket').trim();
+      ticketTitle = ticketTitle.replace(/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i, '').trim();
+      if (ticketTitle.length > 0) {
+        ticketTitle = formatProperTitleCase(ticketTitle);
+      } else {
+        ticketTitle = 'Equipment Support Request';
+      }
 
       // Duplicate protection: block if an active ongoing ticket exists for this machine or identical problem
       const ongoingSameMachine = (existingTickets || []).find(t => {
@@ -1696,6 +1745,15 @@ function AISupportPage() {
         return;
       }
 
+      let categoryId = 1;
+      if (options?.problem_categories && options.problem_categories.length > 0) {
+        const found = options.problem_categories.find(c =>
+          c.category_name?.toLowerCase() === (formData.category || '').toLowerCase()
+        );
+        if (found) categoryId = found.problem_category_ID;
+        else categoryId = options.problem_categories[0].problem_category_ID;
+      }
+
       let priorityId = 2;
       if (options?.ticket_priorities && options.ticket_priorities.length > 0) {
         const found = options.ticket_priorities.find(p =>
@@ -1708,7 +1766,7 @@ function AISupportPage() {
       const draftPayload = {
         title: ticketTitle,
         machine_ID: machineId,
-        problem_category_ID: formData.problem_category_ID ? Number(formData.problem_category_ID) : null,
+        problem_category_ID: categoryId,
         priority_ID: priorityId,
         description: formData.conversationSummary || formData.problemSummary || 'Draft created from AI Support Assistant.',
       };
@@ -1725,12 +1783,12 @@ function AISupportPage() {
       console.error('Failed to save draft from AI Support:', err);
       throw err;
     }
-  }, [currentUserId, ticketOptions, navigate]);
+  }, [currentUserId, conversations, activeConversationId, ticketOptions, navigate]);
 
   const handleViewTicket = useCallback(() => {
     setShowSuccess(false);
-    navigate('/my-tickets');
-  }, [navigate]);
+    navigate('/my-tickets', { state: { openTicketId: ticketNumber } });
+  }, [navigate, ticketNumber]);
 
   const handleCloseSuccess = useCallback(() => {
     setShowSuccess(false);
@@ -2075,11 +2133,9 @@ function AISupportPage() {
                                           setFeedbackMap(prev => ({ ...prev, [msg.id]: 'escalated' }));
                                           handleCreateTicket();
                                         }}
-                                        disabled={preparingReview}
-                                        aria-busy={preparingReview}
-                                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg transition cursor-pointer text-xs inline-flex items-center gap-1 shadow-xs disabled:opacity-70"
+                                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg transition cursor-pointer text-xs inline-flex items-center gap-1 shadow-xs"
                                       >
-                                        {preparingReview ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Plus size={13} />}
+                                        <Plus size={13} />
                                         Create a Support Ticket
                                       </button>
                                     </div>
@@ -2147,7 +2203,6 @@ function AISupportPage() {
             {showTicketCard && (
               <TicketRecommendationCard
                 onCreateTicket={handleCreateTicket}
-                isPreparing={preparingReview}
                 onContinue={handleContinueChatting}
               />
             )}
@@ -2157,13 +2212,6 @@ function AISupportPage() {
 
           <div className="px-3 sm:px-6 py-2.5 sm:py-3 border-t border-border bg-card shrink-0">
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                className="p-2 rounded-xl text-slate-muted hover:text-slate-dark hover:bg-slate-100 transition-all shrink-0 cursor-pointer"
-                title="Attach file"
-              >
-                <Paperclip size={18} />
-              </button>
               <textarea
                 ref={inputRef}
                 rows={1}
@@ -2189,10 +2237,6 @@ function AISupportPage() {
         isOpen={showReviewModal}
         data={reviewData}
         machines={ticketOptions?.machines || []}
-        categories={ticketOptions?.problem_categories || []}
-        optionsError={ticketOptionsError}
-        onRetryOptions={handleRetryTicketOptions}
-        conversationId={activeConversationId}
         onClose={() => setShowReviewModal(false)}
         onSubmit={handleSubmitTicket}
         onSaveDraft={handleSaveTicketDraft}

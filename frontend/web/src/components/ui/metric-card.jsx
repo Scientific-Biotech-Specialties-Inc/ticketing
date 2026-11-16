@@ -15,9 +15,11 @@ export function MetricCard({
   iconBg,
   loading = false,
   className,
+  valueClassName,
   onClick,
   variant = "default",
   showTooltip = true,
+  wrapValue = false,
 }) {
   if (loading) {
     return (
@@ -60,7 +62,14 @@ export function MetricCard({
     return null;
   };
 
-  const valueStr = value != null ? String(value) : '';
+  const valueStr =
+    typeof value === 'string' || typeof value === 'number'
+      ? String(value)
+      : React.isValidElement(value) && typeof value.props?.title === 'string'
+      ? value.props.title
+      : React.isValidElement(value) && typeof value.props?.children === 'string'
+      ? value.props.children
+      : '';
   const isVeryLong = typeof value === 'string' && value.length > 8; // e.g. "Unavailable" (11 chars)
   const isMediumLong = typeof value === 'string' && value.length > 5; // e.g. "No data" (7 chars), "100.0%" (6 chars)
 
@@ -90,10 +99,13 @@ export function MetricCard({
         </p>
         <div className="flex items-center justify-between gap-1.5 sm:gap-2 min-w-0">
           <p
-            title={showTooltip ? valueStr : undefined}
+            title={showTooltip && valueStr ? valueStr : undefined}
             className={cn(
-              "font-bold text-dark-slate font-sans tracking-tight min-w-0 flex-1 truncate",
-              isVeryLong
+              "font-bold text-dark-slate font-sans tracking-tight min-w-0 flex-1",
+              wrapValue ? "whitespace-normal break-words leading-tight" : "truncate",
+              valueClassName
+                ? valueClassName
+                : isVeryLong
                 ? "text-sm sm:text-base lg:text-lg leading-tight"
                 : isMediumLong
                 ? "text-base sm:text-lg lg:text-2xl leading-tight"

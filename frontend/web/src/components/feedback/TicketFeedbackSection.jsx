@@ -1,36 +1,38 @@
 import React, { useState, useEffect } from 'react';
 import { Pencil, X, Clock, CheckCircle2, Star, HelpCircle } from 'lucide-react';
 import EmployeeFeedbackCard from './EmployeeFeedbackCard';
-import { getTicketEmployees, fetchFeedbackForTicket, feedbackTicketId } from '@/data/mockFeedbackData';
+import { getTicketFeedback, getTicketEmployees, fetchFeedbackForTicket, feedbackTicketId } from '@/data/mockFeedbackData';
 
 export default function TicketFeedbackSection({ ticket, onLeaveFeedback, onEditFeedback, readOnly = false }) {
   const ticketId = feedbackTicketId(ticket);
-  // Spec 0038 AC-36: saved feedback is read from GET /feedback/ticket/{id} only, never browser storage.
-  const [feedback, setFeedback] = useState(null);
+  const [feedback, setFeedback] = useState(() => getTicketFeedback(ticketId));
   const [isDismissed, setIsDismissed] = useState(false);
-  const [reloadTick, setReloadTick] = useState(0);
 
+  // Sync feedback on prop change, backend fetch, or custom events
   useEffect(() => {
     let isMounted = true;
-    setFeedback(null);
-    fetchFeedbackForTicket(ticketId)
-      .then((fb) => {
-        if (isMounted) setFeedback(fb || null);
-      })
-      .catch(() => {
-        if (isMounted) setFeedback(null);
-      });
+    const local = getTicketFeedback(ticketId);
+    if (local) setFeedback(local);
+
+    if (typeof fetchFeedbackForTicket === 'function') {
+      fetchFeedbackForTicket(ticketId)
+        ?.then((fb) => {
+          if (isMounted && fb) {
+            setFeedback(fb);
+          }
+        })
+        ?.catch(() => {});
+    }
 
     return () => {
       isMounted = false;
     };
-  }, [ticketId, reloadTick]);
+  }, [ticketId]);
 
-  // Submissions, edits, and deletes elsewhere on the page trigger a fresh API read.
   useEffect(() => {
     const handleUpdate = () => {
+      setFeedback(getTicketFeedback(ticketId));
       setIsDismissed(false);
-      setReloadTick((n) => n + 1);
     };
     window.addEventListener('customer_feedback_submitted', handleUpdate);
     window.addEventListener('customer_feedback_updated', handleUpdate);
@@ -61,8 +63,8 @@ export default function TicketFeedbackSection({ ticket, onLeaveFeedback, onEditF
   const isWithinEditWindow = submissionTime > 0 && timeSinceSubmission < editWindowMs;
   const hoursRemaining = isWithinEditWindow ? Math.max(1, Math.round((editWindowMs - timeSinceSubmission) / (60 * 60 * 1000))) : 0;
 
-  // In readOnly mode without feedback, show clean informative placeholder
-  if (readOnly && (!feedback || !feedback.submitted)) {
+  // In readOnly mode without feedback (or when user cannot leave feedback), show clean informative placeholder
+  if ((readOnly || !onLeaveFeedback) && (!feedback || !feedback.submitted)) {
     return (
       <div className="rounded-xl border border-dashed border-border bg-page p-4 text-center">
         <p className="text-xs font-medium text-slate-muted">
@@ -72,8 +74,17 @@ export default function TicketFeedbackSection({ ticket, onLeaveFeedback, onEditF
     );
   }
 
-  // If dismissed and no feedback submitted, show minimal banner
+  // If dismissed and no feedback submitted, show minimal banner (only for users with feedback authority)
   if (isDismissed && (!feedback || !feedback.submitted)) {
+    if (readOnly || !onLeaveFeedback) {
+      return (
+        <div className="rounded-xl border border-dashed border-border bg-page p-4 text-center">
+          <p className="text-xs font-medium text-slate-muted">
+            No customer feedback submitted yet for this ticket.
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="rounded-xl border border-border bg-page p-4 flex items-center justify-between text-xs text-slate-muted">
         <span>Feedback prompt dismissed. You can share your feedback whenever you are ready.</span>

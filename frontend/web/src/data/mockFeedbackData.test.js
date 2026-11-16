@@ -92,12 +92,13 @@ describe('feedback requests to the analytics service (spec 0034)', () => {
     expect(JSON.parse(localStorage.getItem('customer_feedback') || '{}')['5001']).toBeUndefined();
   });
 
-  it('reports an unreachable analytics service and does not save feedback locally (spec 0038 AC-37)', async () => {
+  it('keeps the saved local copy when the analytics service cannot be reached at all', async () => {
     global.fetch = vi.fn(async () => { throw new TypeError('Failed to fetch'); });
 
-    await expect(saveFeedback('5001', { 501: 5 }, {}, 'Not saved')).rejects.toThrow('Feedback cannot be verified right now');
+    await saveFeedback('5001', { 501: 5 }, {}, 'Still saved locally');
 
-    expect(JSON.parse(localStorage.getItem('customer_feedback') || '{}')['5001']).toBeUndefined();
+    const stored = JSON.parse(localStorage.getItem('customer_feedback'));
+    expect(stored['5001'].overallComment).toBe('Still saved locally');
   });
 
   it('uses the numeric ticket_ID, not the display number, for backend calls', () => {

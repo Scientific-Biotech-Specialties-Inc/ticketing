@@ -67,15 +67,17 @@ STEP 5 Unplug and plug`;
       expect(container.querySelectorAll('button').length).toBe(0);
     });
 
-    it('renders AI troubleshooting steps as interactive checklist when isUser=false', () => {
+    it('renders AI troubleshooting steps as plain text and not a checklist when isUser=false', () => {
       const aiTroubleshootingText = `Step 1: Check the power cable
 Step 2: Restart the machine`;
 
       const { container } = render(<FormattedText text={aiTroubleshootingText} isUser={false} />);
 
-      expect(screen.getByText(/guided troubleshooting steps/i)).toBeDefined();
-      expect(screen.getByText(/0 \/ 2 completed/i)).toBeDefined();
-      expect(container.querySelectorAll('.cursor-pointer').length).toBe(2);
+      expect(screen.queryByText(/guided troubleshooting steps/i)).toBeNull();
+      expect(screen.queryByText(/completed/i)).toBeNull();
+      expect(container.querySelectorAll('.cursor-pointer').length).toBe(0);
+      expect(screen.getByText(/Step 1: Check the power cable/i)).toBeDefined();
+      expect(screen.getByText(/Step 2: Restart the machine/i)).toBeDefined();
     });
 
     it('renders AI non-troubleshooting text with inline tokens as normal paragraphs', () => {
@@ -160,6 +162,16 @@ Step 2: Restart the machine`;
       // Click close button to close drawer
       fireEvent.click(closeButton);
       expect(screen.queryByTestId('mobile-sidebar-backdrop')).toBeNull();
+    });
+
+    it('does not render a file attachment button in AI chat messaging service', async () => {
+      render(<AISupportPage />);
+
+      await waitFor(() => {
+        expect(screen.queryByTestId('chat-messages-skeleton')).toBeNull();
+      });
+
+      expect(screen.queryByTitle(/attach file/i)).toBeNull();
     });
   });
 });

@@ -6,8 +6,6 @@ import { useAuth } from '@/context/AuthContext';
 import ForceChangePasswordModal from './ForceChangePasswordModal';
 import MaintenanceGate from './MaintenanceGate';
 
-const IS_CUSTOMER_SITE = import.meta.env.VITE_APP_MODE === 'customer';
-
 export default function EmployeeLayout() {
   const { isFirstLogin } = useAuth();
   const [sidebarHovered, setSidebarHovered] = useState(false);
@@ -25,8 +23,7 @@ export default function EmployeeLayout() {
         </div>
       </main>
 
-      {/* Customer password flows never show to SSO staff (spec 0044, AC-14) */}
-      {IS_CUSTOMER_SITE && isFirstLogin && <ForceChangePasswordModal />}
+      {isFirstLogin && <ForceChangePasswordModal />}
     </div>
   );
 }

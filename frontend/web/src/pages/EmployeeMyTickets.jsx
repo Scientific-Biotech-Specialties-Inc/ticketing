@@ -957,12 +957,12 @@ export default function EmployeeMyTickets({ roleContext }) {
 
       {confirmDiscard && (
         <ConfirmationModal
-          isOpen={!!confirmDiscard}
-          onClose={() => setConfirmDiscard(null)}
+          open={!!confirmDiscard}
+          onOpenChange={(open) => !open && setConfirmDiscard(null)}
           title="Discard this ticket?"
           description={`This will mark ${confirmDiscard.id} as Discarded.`}
           confirmLabel="Discard"
-          variant="destructive"
+          badgeVariant="destructive"
           onConfirm={handleConfirmDiscard}
         />
       )}

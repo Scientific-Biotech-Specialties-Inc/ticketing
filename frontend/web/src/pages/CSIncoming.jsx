@@ -3,8 +3,6 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Search, RotateCcw, Loader2, AlertTriangle, Clock, CheckCircle2, PauseCircle, ArrowUpDown } from 'lucide-react';
 import Pagination from '@/components/Pagination';
 import { TicketSummary, AssignModal } from '@/components/CSModals';
-import AssigneeChips, { assigneeListFor } from '@/components/AssigneeChips';
-import { ticketNeedsClassification, CLASSIFY_BEFORE_ASSIGN } from '@/components/ClassifyTicketPanel';
 import SlaStatusBadge, { getTicketSlaStatus, getTicketSlaDueDate } from '@/components/sla/SlaStatusBadge';
 import { formatDisplayDate, parseUTCDate } from '@/utils/dateUtils';
 import { useAuth } from '@/context/AuthContext';
@@ -314,8 +312,9 @@ export default function CSIncoming() {
         assigneesResult.value.map((row) => ({
           id: Number(row.id ?? row.emp_id),
           name: row.name || `${row.first_name || ''} ${row.last_name || ''}`.trim() || row.email,
-          status: row.is_active ? 'active' : 'inactive',
+          status: row.account_active === false ? 'inactive' : 'active',
           presence: row.presence || (row.is_active ? 'online' : 'offline'),
+          is_active: Boolean(row.is_active || row.account_active),
           department: row.department?.trim() || 'Unassigned',
           branch: row.branch || row.branch_name || 'Main',
           position_level: (row.position_level && !['senior', 'mid', 'junior'].includes(String(row.position_level).toLowerCase()))
@@ -470,10 +469,8 @@ export default function CSIncoming() {
   }, [csFilterOptions.statuses]);
 
   const departmentOptions = useMemo(() => {
-    const fromDeps = departments.map((d) => d.name || d);
-    const fromTickets = tickets.map((t) => t.department).filter(Boolean);
-    return ['All Departments', ...Array.from(new Set([...fromDeps, ...fromTickets])).sort()];
-  }, [departments, tickets]);
+    return ['All Departments', 'IT', 'Customer Service', 'Service'];
+  }, []);
 
   const hasActiveFilters = Boolean(
     search.trim() ||
@@ -520,17 +517,40 @@ export default function CSIncoming() {
 
   const paginated = filtered;
 
+  const isTicketAssigned = (t) => {
+    if (!t) return false;
+    // Tickets with an active reassignment request should open the CS triage decision card in summary view
+    if (t.reassignmentRequested) return true;
+    const rawStatus = String(t.status || '').toLowerCase().trim();
+    if (rawStatus === 'pending assignment' || rawStatus === 'open') return false;
+    if (Array.isArray(t.assigned_employees) && t.assigned_employees.length > 0) return true;
+    if (Array.isArray(t.assigned) && t.assigned.length > 0) return true;
+    if (t.assigned_to && String(t.assigned_to).toLowerCase() !== 'unassigned') return true;
+    if (t.assigned_employee && String(t.assigned_employee).toLowerCase() !== 'unassigned') return true;
+    if (t.assigned_to_name && String(t.assigned_to_name).toLowerCase() !== 'unassigned') return true;
+    return false;
+  };
+
   const handleRowAction = async (t) => {
-    const isSummary = t.status === 'Pending Assignment' || t.status === 'Resolved' || t.status === 'In Progress' || t.status === 'Pending' || t.status === 'Pending Evaluation' || t.status === 'On Hold' || t.status === 'Closed' || t.status === 'Reopened';
-    if (isSummary) {
+    const assigned = isTicketAssigned(t);
+    if (!assigned) {
       setModalLoading(true);
       try {
         const ticketId = t.ticket_ID || Number(String(t.id).replace(/\D/g, ''));
         const details = await getTicketDetails(ticketId);
-        setModal({ mode: 'summary', ticket: details });
+        setModal({
+          mode: 'assign',
+          ticket: {
+            ...t,
+            ...details,
+            description: details.description || t.description,
+            attachments: details.attachments || t.attachments || [],
+            proofAttachments: details.proofAttachments || [],
+          },
+        });
       } catch (err) {
-        console.warn('Failed to load full ticket details, fallback to list item:', err);
-        setModal({ mode: 'summary', ticket: t });
+        console.warn('Failed to load full ticket details for assign, fallback to list item:', err);
+        setModal({ mode: 'assign', ticket: t });
       } finally {
         setModalLoading(false);
       }
@@ -539,10 +559,10 @@ export default function CSIncoming() {
       try {
         const ticketId = t.ticket_ID || Number(String(t.id).replace(/\D/g, ''));
         const details = await getTicketDetails(ticketId);
-        setModal({ mode: 'assign', ticket: { ...t, ...details, description: details.description || t.description, attachments: details.attachments || t.attachments || [], proofAttachments: details.proofAttachments || [] } });
+        setModal({ mode: 'summary', ticket: details });
       } catch (err) {
-        console.warn('Failed to load full ticket details for assign, fallback to list item:', err);
-        setModal({ mode: 'assign', ticket: t });
+        console.warn('Failed to load full ticket details, fallback to list item:', err);
+        setModal({ mode: 'summary', ticket: t });
       } finally {
         setModalLoading(false);
       }
@@ -581,18 +601,12 @@ export default function CSIncoming() {
       });
 
       // Optimistically update tickets immediately so the UI reflects Pending Assignment with zero delay
-      const chosenIds = (updated.assigned || []).map(Number);
       const refreshedTicket = {
         ...updated,
         ticket_ID: targetTicketId,
         status: 'Pending Assignment',
         assigned: updated.assigned,
         accepted: false,
-        // Spec 0043 (AC-18): show every chosen employee right away, not only the first.
-        assigned_employees: chosenIds.map((id) => {
-          const emp = employees.find((e) => Number(e.id) === id);
-          return { id, name: emp?.name || `Employee #${id}`, department: emp?.department || null, assignment_status: 'assigned' };
-        }),
       };
 
       setTickets((prev) =>
@@ -911,13 +925,8 @@ export default function CSIncoming() {
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="font-medium text-foreground max-w-[18rem]">
-                      <div className="truncate">{t.title}</div>
-                      {t.status === 'Pending Assignment' && assigneeListFor(t).length > 0 && (
-                        <div className="mt-1 font-normal">
-                          <AssigneeChips ticket={t} />
-                        </div>
-                      )}
+                    <TableCell className="font-medium text-foreground max-w-[18rem] truncate">
+                      {t.title}
                     </TableCell>
                     <TableCell>
                       <Badge variant={getStatusBadgeVariant(t.priority || 'Medium')}>
@@ -925,14 +934,7 @@ export default function CSIncoming() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {ticketNeedsClassification(t) ? (
-                        <span
-                          className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold border border-amber-300 bg-amber-50 text-amber-800"
-                          title={CLASSIFY_BEFORE_ASSIGN}
-                        >
-                          Needs Classification
-                        </span>
-                      ) : t.category}
+                      {t.category}
                     </TableCell>
                     <TableCell>
                       <Badge variant={getStatusBadgeVariant(getDisplayStatus(t))}>
@@ -1028,10 +1030,6 @@ export default function CSIncoming() {
                 });
               }
             } catch (err) {
-              // Spec 0038 AC-32: let the modal show a refused proof approval instead of hiding it.
-              if (['PROOF_NOT_VIEWED', 'PROOF_CHECK_UNAVAILABLE'].includes(err?.response?.data?.code)) {
-                throw err;
-              }
               console.error('Failed to update ticket status on backend:', err);
             }
           }}
@@ -1048,12 +1046,6 @@ export default function CSIncoming() {
           onClose={() => setModal(null)}
           onSave={handleSave}
           onCloseTicket={handleCloseWithoutAssigning}
-          onClassified={(fields) => {
-            const targetId = modal.ticket.ticket_ID;
-            setTickets((prev) => prev.map((t) => (
-              (targetId && t.ticket_ID === targetId) || t.id === modal.ticket.id ? { ...t, ...fields } : t
-            )));
-          }}
         />
       )}
     </div>
