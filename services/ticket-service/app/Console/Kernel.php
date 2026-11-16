@@ -20,6 +20,10 @@ class Kernel extends ConsoleKernel
         $schedule->command('tickets:check-sla-alerts')->everyMinute();
         // Spec 0031 AC-13: the only employee directory sync; request paths never call the auth module for it.
         $schedule->command('employees:sync-directory')->everyMinute()->withoutOverlapping();
+        // Spec 3.1: CMS equipment pull. Incremental (updated_since) every 15 minutes, a full read nightly
+        // to retire machines the CMS no longer lists. A dead CMS tunnel only records a warning.
+        $schedule->command('cms:sync')->everyFifteenMinutes()->withoutOverlapping()->runInBackground();
+        $schedule->command('cms:sync', ['--full'])->dailyAt('03:00')->withoutOverlapping()->runInBackground();
         // Precompute the longest horizon the UI offers (30 days) so both the 7 and 30 day views are served from fresh rows.
         $schedule->command('tickets:calculate-forecasts', ['--horizon' => 30])->dailyAt('02:00')->onOneServer()->runInBackground();
 

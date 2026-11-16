@@ -45,6 +45,9 @@ class TicketController extends Controller
         if ($user instanceof \App\Models\Client) {
             $machines = \Illuminate\Support\Facades\DB::table('machines')
                 ->where('client_ID', (int) $user->id)
+                // Spec 3.1: hide machines whose CMS contract ended (null = not from the CMS).
+                ->where(fn ($q) => $q->whereNull('cms_contract_active')->orWhere('cms_contract_active', true))
+                ->where(fn ($q) => $q->whereNull('contract_end_date')->orWhere('contract_end_date', '>=', now()->toDateString()))
                 ->orderBy('machine_name')
                 ->get(['machine_ID', 'machine_name', 'serial_number']);
             $options['machines'] = $machines;

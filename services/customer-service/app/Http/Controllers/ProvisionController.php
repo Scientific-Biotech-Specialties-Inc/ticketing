@@ -21,8 +21,12 @@ class ProvisionController extends Controller
         $validator = Validator::make($request->all(), [
             'client_name'    => 'required|string|max:255',
             'email'          => 'required|email|max:255',
-            'address'        => 'required|string|max:500',
-            'contact_number' => 'required|string|max:50',
+            // Optional: the CRMS machine sync only knows a customer's name and email.
+            'address'        => 'nullable|string|max:500',
+            'contact_number' => 'nullable|string|max:50',
+            // Spec 3.1: the CMS equipment sync creates accounts silently (false). Default true keeps
+            // every other caller's welcome email with the temporary password.
+            'send_welcome_email' => 'sometimes|boolean',
         ]);
 
         if ($validator->fails()) {
@@ -53,8 +57,8 @@ class ProvisionController extends Controller
             $client = Client::create([
                 'client_name'    => $validated['client_name'],
                 'email'          => $validated['email'],
-                'address'        => $validated['address'],
-                'contact_number' => $validated['contact_number'],
+                'address'        => $validated['address'] ?? '',
+                'contact_number' => $validated['contact_number'] ?? '',
                 'status'         => true,
             ]);
 
@@ -75,6 +79,19 @@ class ProvisionController extends Controller
                 'message' => 'Failed to provision customer account.',
                 'error'   => $e->getMessage()
             ], 500);
+        }
+
+        // Spec 3.1: no welcome email when the caller opts out. The customer gets in later through
+        // Forgot Password (an OTP to their own email), which replaces the unsent temporary password.
+        if (!filter_var($validated['send_welcome_email'] ?? true, FILTER_VALIDATE_BOOLEAN)) {
+            Log::info('Customer provisioned without a welcome email', ['client_id' => $client->id]);
+
+            return response()->json([
+                'id'      => $client->id,
+                'message' => 'Customer provisioned successfully.',
+                'status'  => 'created',
+                'welcome_email_sent' => false,
+            ], 201);
         }
 
         // Send Email notification
