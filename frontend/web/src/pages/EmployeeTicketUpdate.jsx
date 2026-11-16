@@ -20,11 +20,14 @@ import {
   History,
   UserCheck,
   Download,
+  ReceiptText,
 } from 'lucide-react';
 import { formatDisplayDate } from '@/utils/dateUtils';
 import { getTicketDetails, updateEmployeeTicket, saveWorkLog, getAssignableEmployees, acceptTicket, getInternalNotes } from '@/services/ticketService';
 import { getTicketMessages } from '@/services/messagingService';
 import ProofCompletionModal from '@/components/employee/ProofCompletionModal';
+import SermsReimbursementModal from '@/components/employee/SermsReimbursementModal';
+import { getTicketReimbursement } from '@/data/sermsReimbursementData';
 import ActionErrorModal, { getActionError } from '@/components/employee/ActionErrorModal';
 import ReassignmentModal from '@/components/employee/ReassignmentModal';
 import DelegateTicketModal from '@/components/employee/DelegateTicketModal';
@@ -69,6 +72,7 @@ export default function EmployeeTicketUpdate() {
   const [actionError, setActionError] = useState(null);
 
   const [showProofModal, setShowProofModal] = useState(false);
+  const [showSermsModal, setShowSermsModal] = useState(false);
   const [showReassignModal, setShowReassignModal] = useState(false);
   const [showDelegateModal, setShowDelegateModal] = useState(false);
   const [assignableEmployees, setAssignableEmployees] = useState([]);
@@ -502,7 +506,7 @@ export default function EmployeeTicketUpdate() {
   };
 
   return (
-    <div className="space-y-6 w-full min-w-0 max-w-full">
+    <div className="space-y-6 w-full max-w-5xl mx-auto pb-10">
       {/* Back button */}
       <div>
         <Button
@@ -569,6 +573,20 @@ export default function EmployeeTicketUpdate() {
                   Request Reassignment Again
                 </Button>
               )}
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowSermsModal(true)}
+                className={`border-[#252578]/30 bg-[#252578]/5 hover:bg-[#252578]/10 text-[#252578] text-xs font-semibold gap-1.5 cursor-pointer ${
+                  !isEscalated && !isReassignmentDenied(ticket) ? 'ml-auto' : 'ml-2'
+                }`}
+              >
+                <ReceiptText className="h-3.5 w-3.5 text-[#252578]" />
+                {getTicketReimbursement(ticket.ticket_ID || ticket.id)
+                  ? 'View Reimbursement'
+                  : 'Request Reimbursement'}
+              </Button>
             </div>
 
             <h1 className="text-2xl font-bold text-foreground mb-1">{ticket.title}</h1>
@@ -665,6 +683,54 @@ export default function EmployeeTicketUpdate() {
               </div>
             )}
 
+            {/* Dedicated SERMS Expense Reimbursement Section */}
+            <div className="rounded-xl border border-border bg-card p-6 shadow-xs">
+              {(() => {
+                const existingClaim = getTicketReimbursement(ticket.ticket_ID || ticket.id);
+                return (
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div className="flex items-start gap-3.5">
+                      <div className="w-10 h-10 rounded-xl bg-[#252578] text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+                        <ReceiptText className="w-5 h-5 text-white" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-sm font-bold text-foreground uppercase tracking-wider">
+                            Expense Reimbursement (SERMS)
+                          </h3>
+                          {existingClaim ? (
+                            <Badge variant="outline" className="text-amber-800 bg-amber-50 border-amber-300 font-bold text-xs">
+                              Claim #{existingClaim.claimNumber} · ₱{Number(existingClaim.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })} ({existingClaim.status})
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-emerald-700 bg-emerald-50 border-emerald-300 font-semibold text-xs">
+                              Eligible for Claim
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1 max-w-2xl">
+                          {existingClaim
+                            ? `Claim filed on ${new Date(existingClaim.submittedAt).toLocaleDateString()} for ${existingClaim.category} (₱${Number(existingClaim.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}). Click to view details.`
+                            : 'Incurred out-of-pocket expenses (transportation, emergency parts, meals) while resolving this ticket? Submit a reimbursement claim to SERMS.'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="default"
+                      size="sm"
+                      onClick={() => setShowSermsModal(true)}
+                      className="bg-[#252578] hover:bg-[#1e1e62] text-white shrink-0 gap-2 font-bold text-xs h-9 px-4 self-start sm:self-center cursor-pointer"
+                    >
+                      <ReceiptText className="w-4 h-4" />
+                      {existingClaim ? 'View Reimbursement' : 'Request Reimbursement'}
+                    </Button>
+                  </div>
+                );
+              })()}
+            </div>
+
             {/* Proof of Completion Card */}
             {(statusDraft === 'Resolved' ||
               ticket.status === 'Resolved' ||
@@ -756,6 +822,54 @@ export default function EmployeeTicketUpdate() {
                     </div>
                   </div>
                 )}
+
+                {/* SERMS Reimbursement Integration Banner */}
+                <div className="w-full mt-4 pt-4 border-t border-border">
+                  {(() => {
+                    const existingClaim = getTicketReimbursement(ticket.ticket_ID || ticket.id);
+                    return (
+                      <div className="bg-gradient-to-r from-blue-50/70 to-indigo-50/70 border border-blue-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div className="flex items-start gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-[#252578] text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                            <ReceiptText className="w-5 h-5 text-white" />
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-bold text-[#252578] uppercase tracking-wider">
+                                Expense Reimbursement (SERMS)
+                              </span>
+                              {existingClaim ? (
+                                <span className="text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">
+                                  Claim #{existingClaim.claimNumber} · ₱{Number(existingClaim.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })} ({existingClaim.status})
+                                </span>
+                              ) : (
+                                <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                                  Eligible for Claim
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-600 mt-1">
+                              {existingClaim
+                                ? `Claim filed on ${new Date(existingClaim.submittedAt).toLocaleDateString()} for ${existingClaim.category}. Click to review details.`
+                                : 'Incurred out-of-pocket expenses (transportation, emergency parts, meals)? Request reimbursement via SERMS.'}
+                            </p>
+                          </div>
+                        </div>
+
+                        <Button
+                          type="button"
+                          variant="default"
+                          size="sm"
+                          onClick={() => setShowSermsModal(true)}
+                          className="bg-[#252578] hover:bg-[#1e1e62] text-white shrink-0 gap-1.5 self-start sm:self-center font-bold text-xs h-9 px-3.5"
+                        >
+                          <ReceiptText className="w-4 h-4" />
+                          {existingClaim ? 'View Reimbursement' : 'Request Reimbursement'}
+                        </Button>
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
             )}
 
@@ -1231,6 +1345,15 @@ export default function EmployeeTicketUpdate() {
           onStatusChange={(id, newStatus) =>
             setTicket((prev) => ({ ...prev, status: newStatus }))
           }
+        />
+      )}
+
+      {showSermsModal && (
+        <SermsReimbursementModal
+          ticket={ticket}
+          open={showSermsModal}
+          onClose={() => setShowSermsModal(false)}
+          onReimbursementSubmitted={() => setShowSermsModal(false)}
         />
       )}
 

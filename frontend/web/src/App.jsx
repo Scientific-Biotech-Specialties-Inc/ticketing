@@ -54,6 +54,7 @@ const Profile = React.lazy(() => import('./pages/Profile.jsx'));
 
 // Lazy loaded SuperAdmin page and layout components
 const SuperAdminLayout = React.lazy(() => import('./components/SuperAdminLayout.jsx'));
+const SuperAdminCMSIntegration = React.lazy(() => import('./pages/SuperAdminCMSIntegration.jsx'));
 const SuperAdminTicketConfig = React.lazy(() => import('./pages/SuperAdminTicketConfig.jsx'));
 const SuperAdminAuditLogs = React.lazy(() => import('./pages/SuperAdminAuditLogs.jsx'));
 const SuperAdminHistory = React.lazy(() => import('./pages/SuperAdminHistory.jsx'));
@@ -398,6 +399,7 @@ function App() {
               >
                 <Route index element={<Navigate to="dashboard" replace />} />
                 <Route path="dashboard" element={<AdminDashboard />} />
+                <Route path="cms-integration" element={<SuperAdminCMSIntegration />} />
                 <Route path="departments" element={<AdminDashboard initialTab="departments" />} />
                 <Route path="employees" element={<AdminDashboard initialTab="employees" />} />
                 <Route path="predictive" element={<AdminDashboard initialTab="predictive" />} />
