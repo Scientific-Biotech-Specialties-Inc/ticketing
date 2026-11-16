@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ReceiptText, CheckCircle2 } from 'lucide-react';
 import { updateEmployeeTicket } from '@/services/ticketService';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import useMaxFileCount from '@/hooks/useMaxFileCount';
 import ActionErrorModal, { getActionError } from './ActionErrorModal';
+import SermsReimbursementModal from './SermsReimbursementModal';
 
 function ProofFileItem({ file, onRemove }) {
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -61,6 +63,8 @@ export default function ProofCompletionModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [remarks, setRemarks] = useState('');
   const [submitError, setSubmitError] = useState(null);
+  const [showReimbursementPrompt, setShowReimbursementPrompt] = useState(false);
+  const [showSermsModal, setShowSermsModal] = useState(false);
 
   useEffect(() => {
     setProofFiles([]);
@@ -69,6 +73,8 @@ export default function ProofCompletionModal({
     setIsSubmitting(false);
     setRemarks('');
     setSubmitError(null);
+    setShowReimbursementPrompt(false);
+    setShowSermsModal(false);
   }, [ticket]);
 
   if (!ticket) return null;
@@ -152,12 +158,7 @@ export default function ProofCompletionModal({
       setSuccessMessage(`Proof of completion submitted successfully! Status updated to ${targetStatus}.`);
       setErrorMessage('');
       setProofFiles([]);
-      
-      // Briefly delay closing and redirect to progress queue
-      setTimeout(() => {
-        onClose();
-        navigate('/employee/machine');
-      }, 1500);
+      setShowReimbursementPrompt(true);
     } catch (err) {
       // Every failed submission opens a modal explaining why; the inline text stays as a reminder.
       const notice = getActionError(err, 'Failed to submit proof.');
@@ -220,160 +221,231 @@ export default function ProofCompletionModal({
 
         {/* Content Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
-          {successMessage && (
-            <div className="rounded-xl bg-green-50 border border-green-200 text-green-800 p-4 text-xs font-semibold flex items-center gap-2.5 font-sans">
-              <svg className="w-5 h-5 text-green-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span>{successMessage}</span>
-            </div>
-          )}
-
-          {errorMessage && (
-            <div className={`rounded-xl p-4 text-xs font-semibold flex items-start gap-2.5 font-sans border transition-all ${
-              errorMessage.includes('Security threat')
-                ? 'bg-red-50/90 text-red-800 border-red-200 shadow-md ring-2 ring-red-500/20'
-                : 'bg-red-50 border border-red-200 text-red-800'
-            }`}>
-              <svg className="w-5 h-5 text-red-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                {errorMessage.includes('Security threat') ? (
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                ) : (
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                )}
-              </svg>
-              <div>{errorMessage}</div>
-            </div>
-          )}
-
-          {/* Proof Rejected Alert Warning Banner */}
-          {isProofRejected && (
-            <div className="bg-orange-50 border border-orange-200 text-orange-800 p-4 rounded-xl text-xs font-semibold font-sans">
-              <div className="flex items-center gap-2 mb-1.5 text-orange-900">
-                <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
-                <span>Proof of Completion Rejected</span>
-              </div>
-              <p className="font-medium text-gray-700">Reason: &quot;{ticket.rejectionReason}&quot;</p>
-              <p className="text-[10px] text-gray-500 mt-1 font-normal">Please address the feedback above and re-upload the correct documentation below.</p>
-            </div>
-          )}
-
-          <div className="bg-gray-50/50 rounded-xl p-5 border border-gray-100">
-            <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wide mb-2.5 font-sans">
-              Proof of Completion Requirements
-            </h3>
-
-            {/* Clear 3-card requirement summary */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-sans mb-3.5">
-              <div className="bg-white border border-gray-150 rounded-xl p-2.5 flex flex-col justify-between">
-                <div>
-                  <span className="block text-[10px] uppercase font-bold text-gray-400">Supported Formats</span>
-                  <span className="font-semibold text-gray-800 text-xs">PDF, PNG, Word</span>
-                </div>
-                <span className="text-[10px] text-gray-400 mt-1">.pdf, .png, .docx, .doc</span>
-              </div>
-              <div className="bg-white border border-gray-150 rounded-xl p-2.5 flex flex-col justify-between">
-                <div>
-                  <span className="block text-[10px] uppercase font-bold text-gray-400">Max File Size</span>
-                  <span className="font-semibold text-gray-800 text-xs">{MAX_FILE_SIZE_MB} MB per file</span>
-                </div>
-                <span className="text-[10px] text-gray-400 mt-1">Individual file limit</span>
-              </div>
-              <div className="bg-white border border-gray-150 rounded-xl p-2.5 flex flex-col justify-between">
-                <div>
-                  <span className="block text-[10px] uppercase font-bold text-gray-400">Max Total Size</span>
-                  <span className="font-semibold text-[#252578] text-xs">{MAX_TOTAL_SIZE_MB} MB total</span>
-                </div>
-                <span className="text-[10px] text-gray-400 mt-1">Combined all attachments</span>
-              </div>
-            </div>
-
-            <form onSubmit={handleProofSubmit} className="mt-4 space-y-4">
-              <div className="border-2 border-dashed border-gray-200 hover:border-[#252578] rounded-xl p-6 transition-all bg-white text-center cursor-pointer group relative">
-                <input
-                  type="file"
-                  multiple
-                  accept=".pdf,.png,.docx,.doc"
-                  onChange={handleFileChange}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                  required={proofFiles.length === 0}
-                  disabled={isSubmitting}
-                />
-                <svg className="w-8 h-8 text-gray-400 group-hover:text-[#252578] mx-auto mb-2 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
-                </svg>
-                <p className="text-xs font-semibold text-[#252578] font-sans">Click to browse files</p>
-                <p className="text-[10px] text-gray-400 mt-0.5 font-sans">PDF, PNG, Word · Up to 15MB each · 45MB total</p>
+          {showReimbursementPrompt ? (
+            <div className="space-y-4 text-center font-sans">
+              <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center">
+                <CheckCircle2 className="w-8 h-8" />
               </div>
 
-              {proofFiles.length > 0 && (
-                <div className="space-y-1.5 bg-white border border-gray-150 rounded-xl p-3 max-h-48 overflow-y-auto">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide font-sans">
-                      Files Selected ({proofFiles.length})
+              <div>
+                <h3 className="text-lg font-bold text-gray-900">Proof Submitted Successfully!</h3>
+                <p className="text-xs text-gray-500 mt-1">
+                  Ticket status is now{' '}
+                  <span className="font-semibold text-emerald-700">{isInternal ? 'Resolved' : 'Pending Evaluation'}</span>.
+                </p>
+              </div>
+
+              {/* SERMS Reimbursement Option Box */}
+              <div className="bg-gradient-to-r from-blue-50/80 to-indigo-50/80 border border-blue-200 rounded-2xl p-5 text-left space-y-3">
+                <div className="flex items-start gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#252578] text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+                    <ReceiptText className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-[#252578]">Request Expense Reimbursement?</h4>
+                    <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">
+                      Did you incur out-of-pocket expenses (transportation, emergency parts, meals) during this ticket resolution? You can submit an expense claim directly to the <span className="font-semibold text-[#252578]">SERMS</span> (Smart Expense Reimbursement Management System).
                     </p>
-                    <span className={`text-[10px] font-semibold font-sans px-2.5 py-0.5 rounded-full ${
-                      totalSizeBytes > MAX_TOTAL_SIZE_BYTES
-                        ? 'bg-red-100 text-red-700'
-                        : 'bg-blue-50 text-[#252578] border border-blue-100'
-                    }`}>
-                      {totalSizeMB} MB / {MAX_TOTAL_SIZE_MB} MB Total
-                    </span>
                   </div>
-                  <div className="space-y-1.5">
-                    {proofFiles.map((file, idx) => (
-                      <ProofFileItem
-                        key={idx}
-                        file={file}
-                        onRemove={() => setProofFiles((prev) => prev.filter((_, i) => i !== idx))}
-                      />
-                    ))}
-                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-2.5 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowSermsModal(true)}
+                    className="w-full sm:w-auto flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#252578] hover:bg-[#1e1e62] text-white text-xs font-bold shadow-md transition-all cursor-pointer"
+                  >
+                    <ReceiptText className="w-4 h-4" />
+                    Request Reimbursement (SERMS)
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      navigate('/employee/machine');
+                    }}
+                    className="w-full sm:w-auto inline-flex items-center justify-center px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold transition-colors cursor-pointer"
+                  >
+                    No Expenses / Back to Queue
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {successMessage && (
+                <div className="rounded-xl bg-green-50 border border-green-200 text-green-800 p-4 text-xs font-semibold flex items-center gap-2.5 font-sans">
+                  <svg className="w-5 h-5 text-green-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>{successMessage}</span>
                 </div>
               )}
 
-              <div>
-                <div className="flex justify-between items-end mb-1.5">
-                  <label className="block text-xs font-semibold text-gray-500 font-sans">
-                    Remarks / Completion Notes <span className="text-red-500">*</span>
-                  </label>
-                  <span className={`text-[10px] font-medium font-sans ${remarks.length >= 250 ? 'text-red-500' : 'text-gray-400'}`}>
-                    {remarks.length}/250 characters
-                  </span>
+              {errorMessage && (
+                <div className={`rounded-xl p-4 text-xs font-semibold flex items-start gap-2.5 font-sans border transition-all ${
+                  errorMessage.includes('Security threat')
+                    ? 'bg-red-50/90 text-red-800 border-red-200 shadow-md ring-2 ring-red-500/20'
+                    : 'bg-red-50 border border-red-200 text-red-800'
+                }`}>
+                  <svg className="w-5 h-5 text-red-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    {errorMessage.includes('Security threat') ? (
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    ) : (
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    )}
+                  </svg>
+                  <div>{errorMessage}</div>
                 </div>
-                <textarea
-                  placeholder="Provide details of the resolution or notes for validation..."
-                  value={remarks}
-                  disabled={isSubmitting}
-                  onChange={(e) => {
-                    const val = e.target.value;
-                    if (val.length <= 250) {
-                      setRemarks(val);
-                    }
-                  }}
-                  rows={3}
-                  maxLength={250}
-                  className="w-full text-xs border border-gray-200 rounded-xl p-3 bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#252578]/25 resize-none font-sans"
-                  required
-                />
-              </div>
+              )}
 
-              <div className="flex gap-3 pt-2">
-                <button
-                  type="submit"
-                  disabled={isSubmitting || proofFiles.length === 0 || !remarks.trim()}
-                  className="flex-1 py-2.5 bg-green-700 hover:bg-green-800 disabled:bg-gray-300 text-white text-xs font-semibold rounded-xl transition-all shadow-md shadow-green-700/20 disabled:shadow-none disabled:cursor-not-allowed font-sans"
-                >
-                  {isSubmitting ? 'Saving...' : 'Save'}
-                </button>
+              {/* Proof Rejected Alert Warning Banner */}
+              {isProofRejected && (
+                <div className="bg-orange-50 border border-orange-200 text-orange-800 p-4 rounded-xl text-xs font-semibold font-sans">
+                  <div className="flex items-center gap-2 mb-1.5 text-orange-900">
+                    <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
+                    <span>Proof of Completion Rejected</span>
+                  </div>
+                  <p className="font-medium text-gray-700">Reason: &quot;{ticket.rejectionReason}&quot;</p>
+                  <p className="text-[10px] text-gray-500 mt-1 font-normal">Please address the feedback above and re-upload the correct documentation below.</p>
+                </div>
+              )}
+
+              <div className="bg-gray-50/50 rounded-xl p-5 border border-gray-100">
+                <h3 className="text-xs font-bold text-gray-700 uppercase tracking-wide mb-2.5 font-sans">
+                  Proof of Completion Requirements
+                </h3>
+
+                {/* Clear 3-card requirement summary */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs font-sans mb-3.5">
+                  <div className="bg-white border border-gray-150 rounded-xl p-2.5 flex flex-col justify-between">
+                    <div>
+                      <span className="block text-[10px] uppercase font-bold text-gray-400">Supported Formats</span>
+                      <span className="font-semibold text-gray-800 text-xs">PDF, PNG, Word</span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 mt-1">.pdf, .png, .docx, .doc</span>
+                  </div>
+                  <div className="bg-white border border-gray-150 rounded-xl p-2.5 flex flex-col justify-between">
+                    <div>
+                      <span className="block text-[10px] uppercase font-bold text-gray-400">Max File Size</span>
+                      <span className="font-semibold text-gray-800 text-xs">{MAX_FILE_SIZE_MB} MB per file</span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 mt-1">Individual file limit</span>
+                  </div>
+                  <div className="bg-white border border-gray-150 rounded-xl p-2.5 flex flex-col justify-between">
+                    <div>
+                      <span className="block text-[10px] uppercase font-bold text-gray-400">Max Total Size</span>
+                      <span className="font-semibold text-[#252578] text-xs">{MAX_TOTAL_SIZE_MB} MB total</span>
+                    </div>
+                    <span className="text-[10px] text-gray-400 mt-1">Combined all attachments</span>
+                  </div>
+                </div>
+
+                <form onSubmit={handleProofSubmit} className="mt-4 space-y-4">
+                  <div className="border-2 border-dashed border-gray-200 hover:border-[#252578] rounded-xl p-6 transition-all bg-white text-center cursor-pointer group relative">
+                    <input
+                      type="file"
+                      multiple
+                      accept=".pdf,.png,.docx,.doc"
+                      onChange={handleFileChange}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      required={proofFiles.length === 0}
+                      disabled={isSubmitting}
+                    />
+                    <svg className="w-8 h-8 text-gray-400 group-hover:text-[#252578] mx-auto mb-2 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" />
+                    </svg>
+                    <p className="text-xs font-semibold text-[#252578] font-sans">Click to browse files</p>
+                    <p className="text-[10px] text-gray-400 mt-0.5 font-sans">PDF, PNG, Word · Up to 15MB each · 45MB total</p>
+                  </div>
+
+                  {proofFiles.length > 0 && (
+                    <div className="space-y-1.5 bg-white border border-gray-150 rounded-xl p-3 max-h-48 overflow-y-auto">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wide font-sans">
+                          Files Selected ({proofFiles.length})
+                        </p>
+                        <span className={`text-[10px] font-semibold font-sans px-2.5 py-0.5 rounded-full ${
+                          totalSizeBytes > MAX_TOTAL_SIZE_BYTES
+                            ? 'bg-red-100 text-red-700'
+                            : 'bg-blue-50 text-[#252578] border border-blue-100'
+                        }`}>
+                          {totalSizeMB} MB / {MAX_TOTAL_SIZE_MB} MB Total
+                        </span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {proofFiles.map((file, idx) => (
+                          <ProofFileItem
+                            key={idx}
+                            file={file}
+                            onRemove={() => setProofFiles((prev) => prev.filter((_, i) => i !== idx))}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  <div>
+                    <div className="flex justify-between items-end mb-1.5">
+                      <label className="block text-xs font-semibold text-gray-500 font-sans">
+                        Remarks / Completion Notes <span className="text-red-500">*</span>
+                      </label>
+                      <span className={`text-[10px] font-medium font-sans ${remarks.length >= 250 ? 'text-red-500' : 'text-gray-400'}`}>
+                        {remarks.length}/250 characters
+                      </span>
+                    </div>
+                    <textarea
+                      placeholder="Provide details of the resolution or notes for validation..."
+                      value={remarks}
+                      disabled={isSubmitting}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val.length <= 250) {
+                          setRemarks(val);
+                        }
+                      }}
+                      rows={3}
+                      maxLength={250}
+                      className="w-full text-xs border border-gray-200 rounded-xl p-3 bg-white text-gray-800 outline-none focus:ring-2 focus:ring-[#252578]/25 resize-none font-sans"
+                      required
+                    />
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      type="submit"
+                      disabled={isSubmitting || proofFiles.length === 0 || !remarks.trim()}
+                      className="flex-1 py-2.5 bg-green-700 hover:bg-green-800 disabled:bg-gray-300 text-white text-xs font-semibold rounded-xl transition-all shadow-md shadow-green-700/20 disabled:shadow-none disabled:cursor-not-allowed font-sans"
+                    >
+                      {isSubmitting ? 'Saving...' : 'Save'}
+                    </button>
+                  </div>
+                </form>
               </div>
-            </form>
-          </div>
+            </>
+          )}
         </div>
       </div>
     </div>
     {/* Sibling of the backdrop so clicks in the notice do not bubble to the backdrop's onClose. */}
     <ActionErrorModal error={submitError} onClose={() => setSubmitError(null)} />
+
+    {/* SERMS Expense Reimbursement Dialog */}
+    <SermsReimbursementModal
+      ticket={ticket}
+      open={showSermsModal}
+      onClose={() => {
+        setShowSermsModal(false);
+        onClose();
+        navigate('/employee/machine');
+      }}
+      onReimbursementSubmitted={() => {
+        setShowSermsModal(false);
+        onClose();
+        navigate('/employee/machine');
+      }}
+    />
     </>
   );
 }

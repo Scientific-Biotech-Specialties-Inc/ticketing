@@ -14,10 +14,13 @@ import {
   ShieldAlert,
   MessageSquare,
   Pencil,
+  ReceiptText,
 } from 'lucide-react';
 import { formatDisplayDate } from '@/utils/dateUtils';
 import FilePreviewModal from '@/components/FilePreviewModal';
 import AuthenticatedImage from '@/components/AuthenticatedImage';
+import SermsReimbursementModal from '@/components/employee/SermsReimbursementModal';
+import { getTicketReimbursement } from '@/data/sermsReimbursementData';
 import ReassignmentDisapprovalBanner from '@/components/employee/ReassignmentDisapprovalBanner';
 import { getTicketDetails, reopenTicket } from '@/services/ticketService';
 import { getWindowConfiguration, getCachedWindowConfiguration } from '@/services/configurationService';
@@ -71,6 +74,7 @@ export default function EmployeeHistoryDetail() {
   const [timelineSortOrder, setTimelineSortOrder] = useState('asc'); // 'asc' or 'desc'
   const [now, setNow] = useState(Date.now());
   const [showConversationModal, setShowConversationModal] = useState(false);
+  const [showSermsModal, setShowSermsModal] = useState(false);
 
   // Reopen State
   const [showReopenModal, setShowReopenModal] = useState(false);
@@ -893,6 +897,54 @@ export default function EmployeeHistoryDetail() {
               );
             })}
           </div>
+
+          {/* SERMS Reimbursement Integration Card */}
+          <div className="mt-4 pt-4 border-t border-emerald-500/20">
+            {(() => {
+              const existingClaim = getTicketReimbursement(ticket.ticket_ID || ticket.id);
+              return (
+                <div className="bg-gradient-to-r from-blue-50/70 to-indigo-50/70 border border-blue-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-[#252578] text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                      <ReceiptText className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-bold text-[#252578] uppercase tracking-wider">
+                          SERMS Expense Reimbursement
+                        </span>
+                        {existingClaim ? (
+                          <span className="text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">
+                            Claim #{existingClaim.claimNumber} · ₱{Number(existingClaim.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })} ({existingClaim.status})
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                            Eligible for Claim
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-600 mt-1">
+                        {existingClaim
+                          ? `Claim filed on ${new Date(existingClaim.submittedAt).toLocaleDateString()} for ${existingClaim.category}. Click to review details.`
+                          : 'Incurred out-of-pocket expenses (transportation, emergency parts, meals)? Request reimbursement via SERMS.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    variant="default"
+                    size="sm"
+                    onClick={() => setShowSermsModal(true)}
+                    className="bg-[#252578] hover:bg-[#1e1e62] text-white shrink-0 gap-1.5 self-start sm:self-center font-bold text-xs h-9 px-3.5"
+                  >
+                    <ReceiptText className="w-4 h-4" />
+                    {existingClaim ? 'View Reimbursement' : 'Request Reimbursement'}
+                  </Button>
+                </div>
+              );
+            })()}
+          </div>
         </div>
       )}
 
@@ -1097,6 +1149,15 @@ export default function EmployeeHistoryDetail() {
         <FilePreviewModal
           file={previewFile}
           onClose={() => setPreviewFile(null)}
+        />
+      )}
+
+      {showSermsModal && (
+        <SermsReimbursementModal
+          ticket={ticket}
+          open={showSermsModal}
+          onClose={() => setShowSermsModal(false)}
+          onReimbursementSubmitted={() => setShowSermsModal(false)}
         />
       )}
     </div>
