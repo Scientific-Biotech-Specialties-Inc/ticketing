@@ -202,6 +202,54 @@ The CRMS pushes customer machines into the ticketing system so customers can pic
   { "summary": { "received": 3, "created": 2, "updated": 0, "unchanged": 0, "failed": 1 }, "results": [ { "index": 0, "status": "created", "...": "..." } ] }
   ```
 
+### CMS Equipment Sync (Spec 3.1, outbound read only)
+
+The CMS (Contract Management System) is the source of truth for customers' equipment. ticket-service pulls it with `GET` only. Nothing is ever written back to the CMS.
+
+```text
+ticket-scheduler (cms:sync)          CMS (via trycloudflare tunnel)
+  every 15 min (incremental)  --GET-->  {CMS_TS_BASE_URL}/sync?updated_since=...
+  03:00 daily  (full)         --GET-->  {CMS_TS_BASE_URL}/sync
+          |
+          +--> customer-service POST /api/customers/provision   (find or create the customer)
+          +--> machines upsert (equipment_uid, then serial_number)
+          +--> cache: cms_ts:status (read by the UI banner), cms_ts:cursor
+```
+
+* **Configuration** (root `.env` only, passed to `ticket-service` and `ticket-scheduler`):
+
+  | Variable | Example | Notes |
+  | :--- | :--- | :--- |
+  | `CMS_TS_BASE_URL` | `https://<tunnel>.trycloudflare.com/api/contract/integrations/v1/ts` | Through the CMS gateway. Blank disables the sync |
+  | `CMS_TS_INTEGRATION_KEY` | (shared secret) | Sent as `X-Internal-Secret`. Blank disables the sync |
+  | `CMS_TS_CONNECT_TIMEOUT` / `CMS_TS_TIMEOUT` | `3` / `5` | Seconds |
+  | `CMS_TS_SEND_WELCOME_EMAIL` | `false` | `false` creates CMS customers silently (`send_welcome_email: false` to `customers/provision`). They sign in through Forgot Password. `true` sends the usual welcome email with a temporary password |
+
+  A trycloudflare URL changes whenever the CMS tunnel restarts. Update `CMS_TS_BASE_URL`, then recreate `ticket-service` and `ticket-scheduler`.
+* **Command**: `php artisan cms:sync [--full] [--include-pending]`. The first run, and every `--full` run, reads everything. Other runs send `updated_since` (the newest CMS `updated_at` already seen). It always exits 0, so a dead tunnel never breaks the scheduler.
+* **Field mapping** (`machines`):
+
+  | CMS field | TS column | Notes |
+  | :--- | :--- | :--- |
+  | `equipment_uid` | `equipment_uid` | Upsert key (`EQP-{contract_id}`). Falls back to `serial_number`, which links machines from the CRMS push |
+  | `equipment.serial_number` | `serial_number` | Follows the CMS when a known `equipment_uid` changes serial |
+  | `equipment.equipment_name` | `machine_name` | When null: brand + model, then `item_code`, then the serial |
+  | `equipment.brand` / `model` | `brand` / `model` | Nullable |
+  | `customer_uid` | `cms_customer_uid` | `BP-*`, `SUP-*` or `CUST-*` |
+  | `customer.customer_name` / `customer_email` | `client_ID` | Found or created through customer-service. The welcome email depends on `CMS_TS_SEND_WELCOME_EMAIL` |
+  | `sbsi_branch` | `branch_id` | Matched by name, code or slug. Legacy names map to current ones (`Main Office` is `SBSI Makati Branch`). Unknown names leave the branch empty |
+  | `contract_code` / `end_date` | `contract_code` / `contract_end_date` | |
+  | `approval_status`, `lifecycle_status`, `end_date` | `cms_contract_active` | `1` when Approved, not expired or inactive, and not past `end_date` |
+
+* **Skipped rows**: a row without `equipment_uid` or serial, or whose customer has no valid email or name, is skipped and counted (`skipped_reasons`). A customer needs an email to get a portal account, so nothing is half written.
+* **Retired contracts**: a complete full read sets `cms_contract_active = 0` on CMS machines it no longer lists. An empty full read retires nothing. Machines are never deleted, because tickets reference them. The customer machine picker (`GET /ticket-form-options`) hides inactive machines and machines past `contract_end_date`.
+* **CMS unreachable**: a 401/403, any 5xx (including 530 from a dead tunnel), a timeout or blank configuration changes nothing locally. The failure is recorded in `cms_ts:status` and the UI shows a persistent warning banner.
+
+| Method | Endpoint | Auth | Description |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/integrations/cms/status` | `auth.subsystem` (any signed in user) | `{configured, reachable, message, last_attempt_at, last_success_at, reason, summary}`. Customers do not get `reason` or `summary` |
+| `POST` | `/integrations/cms/sync` | Admin or SuperAdmin | Runs a sync now (`{"full": true}` optional). 200 synced, 409 already running, 502 CMS unreachable, 503 not configured. Throttled to 6 per minute |
+
 ---
 
 ## 3. `attachment-service` Endpoints

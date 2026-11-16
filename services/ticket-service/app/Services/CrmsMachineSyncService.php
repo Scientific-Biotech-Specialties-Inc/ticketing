@@ -22,29 +22,61 @@ class CrmsMachineSyncService
 {
     public const DEFAULT_CATEGORY = 'Uncategorized';
 
+    /** Normalized legacy branch name => normalized current name ("Main Office" is now "SBSI Makati Branch"). */
+    private const LEGACY_BRANCH_NAMES = [
+        'mainoffice' => 'makati',
+        'northluzonhub' => 'isabela',
+        'cebucityoffice' => 'cebu',
+    ];
+
     /**
-     * @param  array{machine_name:string, brand:?string, serial_number:string, customer_name:string, customer_email:string, branch:string}  $record
-     * @return array{status:string, machine_ID:int, client_ID:int, customer_status:string, branch_id:string, serial_number:string}
+     * Shared by the CRMS push (POST /internal/crms/machines) and the CMS pull (cms:sync, spec 3.1).
+     *
+     * @param  array{machine_name:string, brand:?string, serial_number:string, customer_name:string, customer_email:string, branch?:string, customer_contact_number?:?string, customer_address?:?string}  $record
+     * @param  object|null  $branch  resolved SBSI branch; null leaves the machine without a branch
+     * @param  array<string, mixed>  $extra  more machines columns to write (CMS keys, model, contract data)
+     * @param  string|null  $equipmentUid  CMS equipment_uid, matched before serial_number when given
+     * @return array{status:string, machine_ID:int, client_ID:int, customer_status:string, branch_id:?string, serial_number:string}
      *
      * @throws CustomerProvisioningException when customer-service cannot provision the customer
      */
-    public function sync(array $record, object $branch): array
+    public function sync(array $record, ?object $branch, array $extra = [], ?string $equipmentUid = null): array
     {
         $serial = trim($record['serial_number']);
         [$clientId, $customerStatus] = $this->provisionCustomer(
             trim($record['customer_name']),
-            strtolower(trim($record['customer_email']))
+            strtolower(trim($record['customer_email'])),
+            array_filter([
+                'contact_number' => $record['customer_contact_number'] ?? null,
+                'address' => $record['customer_address'] ?? null,
+            ], fn ($value) => is_string($value) && trim($value) !== '') + (
+                // Only sent when the caller decides; customer-service defaults to sending it.
+                array_key_exists('send_welcome_email', $record) ? ['send_welcome_email' => (bool) $record['send_welcome_email']] : []
+            )
         );
 
         $attributes = [
             'machine_name' => trim($record['machine_name']),
             'brand' => isset($record['brand']) && trim((string) $record['brand']) !== '' ? trim($record['brand']) : null,
             'client_ID' => $clientId,
-            'branch_id' => $branch->slug,
-        ];
+            'branch_id' => $branch?->slug,
+        ] + $extra;
 
-        [$status, $machineId] = DB::transaction(function () use ($serial, $attributes) {
-            $existing = DB::table('machines')->where('serial_number', $serial)->lockForUpdate()->first();
+        if ($equipmentUid !== null) {
+            $attributes['equipment_uid'] = $equipmentUid;
+        }
+
+        [$status, $machineId] = DB::transaction(function () use ($serial, $attributes, $equipmentUid) {
+            $existing = $equipmentUid !== null
+                ? DB::table('machines')->where('equipment_uid', $equipmentUid)->lockForUpdate()->first()
+                : null;
+
+            if ($existing) {
+                // The CMS is the source of truth: a corrected serial on a known contract follows it.
+                $attributes['serial_number'] = $serial;
+            } else {
+                $existing = DB::table('machines')->where('serial_number', $serial)->lockForUpdate()->first();
+            }
 
             if (!$existing) {
                 $id = DB::table('machines')->insertGetId($attributes + [
@@ -86,7 +118,7 @@ class CrmsMachineSyncService
             'machine_ID' => $machineId,
             'client_ID' => $clientId,
             'customer_status' => $customerStatus,
-            'branch_id' => $branch->slug,
+            'branch_id' => $branch?->slug,
             'serial_number' => $serial,
         ];
     }
@@ -101,6 +133,8 @@ class CrmsMachineSyncService
         if ($needle === '') {
             return null;
         }
+        // The CMS still uses pre-rename branch names (see 2026_11_12_000001_seed_sbsi_branches).
+        $needle = self::LEGACY_BRANCH_NAMES[$needle] ?? $needle;
 
         $branches = DB::table('branches')->orderByDesc('is_active')->orderBy('id')->get(['id', 'slug', 'name', 'code', 'is_active']);
 
@@ -130,7 +164,7 @@ class CrmsMachineSyncService
     /**
      * @return array{0:int, 1:string} client id and "created" or "exists"
      */
-    private function provisionCustomer(string $name, string $email): array
+    private function provisionCustomer(string $name, string $email, array $contact = []): array
     {
         $base = rtrim((string) config('services.customer.url'), '/');
 
@@ -141,7 +175,7 @@ class CrmsMachineSyncService
                 ->post($base . '/api/customers/provision', [
                     'client_name' => $name,
                     'email' => $email,
-                ]);
+                ] + $contact);
         } catch (\Throwable $e) {
             Log::error('CRMS sync: customer-service unreachable', ['error' => $e->getMessage()]);
             throw new CustomerProvisioningException('Customer service is unreachable.');

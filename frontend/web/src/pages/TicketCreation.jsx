@@ -24,6 +24,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { PersistentBanner } from '@/components/ui/alert-banner';
 import { resolveRegisteredMachine } from '@/utils/machineMatching';
+import CmsSyncBanner from '@/components/CmsSyncBanner';
 import { useToast } from '@/context/ToastContext';
 import {
   ArrowLeft,
@@ -706,6 +707,9 @@ export default function TicketCreation() {
             </Button>
           }
         />
+
+        {/* Spec 3.1: the machine list comes from the CMS; warn when it may be stale. */}
+        <CmsSyncBanner />
 
         {isFromAi && (
           <div className="rounded-xl p-3.5 bg-blue-50/80 border border-blue-200 text-xs text-primary flex items-center justify-between shadow-xs">
