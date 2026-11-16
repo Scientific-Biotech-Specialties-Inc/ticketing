@@ -161,14 +161,14 @@ export default function ReassignDialog({
               type="button"
               disabled={isSubmitting}
               onClick={onClose}
-              className="min-h-[44px] px-5 py-2.5 rounded-lg border border-[#D5D9E4] bg-white text-[#5A6178] hover:text-[#1B2033] hover:bg-[#F5F6FA] font-semibold text-xs transition-colors cursor-pointer disabled:opacity-50"
+              className="h-9 px-4 rounded-lg border border-[#D5D9E4] bg-white text-[#5A6178] hover:text-[#1B2033] hover:bg-[#F5F6FA] font-semibold text-xs transition-colors cursor-pointer disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isSubmitting || !reason.trim()}
-              className="min-h-[44px] px-6 py-2.5 rounded-lg bg-[#1E2A78] hover:bg-[#151E56] text-white font-semibold text-xs transition-colors cursor-pointer shadow-xs flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="h-9 px-4 rounded-lg bg-[#1E2A78] hover:bg-[#151E56] text-white font-semibold text-xs transition-colors cursor-pointer shadow-xs flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isSubmitting ? (
                 <>

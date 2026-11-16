@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import NotificationModal from '@/components/NotificationModal';
 import TitleCasingModal from '@/components/TitleCasingModal';
-import useCategoryPreview, { isSoftwareCategory, isServiceCategory } from '@/hooks/useCategoryPreview';
+import AIDepartmentModal from '@/components/AIDepartmentModal';
+import CustomerTicketDetailModal from '@/components/CustomerTicketDetailModal';
 import {
   getTicketFormOptions,
   createTicket,
@@ -11,6 +12,8 @@ import {
   getTicketDraft,
   uploadAttachments,
   getEscalateHandoff,
+  classifyDepartment,
+  suggestProblemCategory,
 } from '@/services/ticketService';
 import { getSystemStatus, getFileLimitsConfig } from '@/services/configurationService';
 import { normalizeCasing } from '@/utils/normalizeCasing';
@@ -36,7 +39,6 @@ import {
   Trash2,
   AlertTriangle,
   Sparkles,
-  Loader2,
 } from 'lucide-react';
 
 export default function TicketCreation() {
@@ -51,6 +53,7 @@ export default function TicketCreation() {
   const [savingDraft, setSavingDraft] = useState(false);
   const [draftMessage, setDraftMessage] = useState('');
   const [existingDraftAttachments, setExistingDraftAttachments] = useState([]);
+  const [showAiBackConfirm, setShowAiBackConfirm] = useState(false);
 
   const incomingPrefill = location.state?.prefillData || null;
   const isFromAi = Boolean(
@@ -71,16 +74,27 @@ export default function TicketCreation() {
     conversation_id: location.state?.conversationId || location.state?.conversation_id || location.state?.fromConversationId || undefined,
   });
 
+  const handleConfirmBackWithoutSaving = useCallback(() => {
+    setShowAiBackConfirm(false);
+    const convId = location.state?.conversationId || location.state?.conversation_id || location.state?.fromConversationId;
+    navigate('/ai-support', {
+      state: {
+        conversationId: convId || undefined,
+        activeConversationId: convId || undefined,
+      },
+    });
+  }, [location.state, navigate]);
+
   const handleCancelOrBack = useCallback(() => {
     if (isFromAi || incomingPrefill || location.state?.fromAiChat) {
-      navigate('/ai-support');
+      setShowAiBackConfirm(true);
       return;
     }
     if (draftId || location.state?.draftId) {
       navigate('/my-tickets', { state: { tab: 'drafts' } });
       return;
     }
-    if (window.history.length > 2) {
+    if (window.history.length > 1) {
       navigate(-1);
     } else {
       navigate('/customer-dashboard');
@@ -95,9 +109,22 @@ export default function TicketCreation() {
       const exists = machineList.some((m) => Number(m.machine_ID) === numericVal);
       if (exists) return numericVal;
     }
-    // Spec 0038 AC-1: a machine string from the AI flow only links one of the customer's
-    // registered machines by exact serial, then model, then name. A brand never counts.
-    const matched = resolveRegisteredMachine(machineList, [String(val)]);
+    const search = String(val).trim().toLowerCase();
+    if (!search) return '';
+    const matched = machineList.find((m) => {
+      const name = (m.machine_name || '').toLowerCase();
+      const model = (m.model || '').toLowerCase();
+      const brand = (m.brand || '').toLowerCase();
+      const serial = (m.serial_number || '').toLowerCase();
+      return (
+        name === search ||
+        model === search ||
+        (name && search.includes(name)) ||
+        (model && search.includes(model)) ||
+        (brand && search.includes(brand)) ||
+        (serial && search.includes(serial))
+      );
+    });
     return matched ? matched.machine_ID : '';
   }, []);
 
@@ -155,6 +182,8 @@ export default function TicketCreation() {
     };
   }, []);
   const [successModal, setSuccessModal] = useState(false);
+  const [createdTicketSummary, setCreatedTicketSummary] = useState(null);
+  const [showCreatedSummaryModal, setShowCreatedSummaryModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [createdTicketId, setCreatedTicketId] = useState(null);
   const [titleCasingData, setTitleCasingData] = useState(null);
@@ -162,26 +191,16 @@ export default function TicketCreation() {
   const [customerOpenCount, setCustomerOpenCount] = useState(0);
   const [systemStatus, setSystemStatus] = useState('Operational');
 
-  // The customer picks the category. The AI suggestion fills the dropdown until the customer
-  // chooses one themselves; after that their choice is kept. The chosen category decides whether
-  // a machine is required (Service) or hidden (Software).
-  const [categoryTouched, setCategoryTouched] = useState(false);
-  const categoryPreview = useCategoryPreview({
-    title: formData.title,
-    description: formData.description,
-    categories: options.problem_categories,
-    enabled: !loadingOptions && !categoryTouched,
-  });
-  useEffect(() => {
-    if (categoryTouched || !categoryPreview.category) return;
-    const suggested = String(categoryPreview.category.problem_category_ID);
-    setFormData((prev) => (String(prev.problem_category_ID || '') === suggested ? prev : { ...prev, problem_category_ID: suggested }));
-  }, [categoryPreview.category, categoryTouched]);
-  const selectedCategory = (options.problem_categories || []).find(
-    (c) => String(c.problem_category_ID) === String(formData.problem_category_ID || '')
-  ) || null;
-  const showEquipment = !isSoftwareCategory(selectedCategory);
-  const equipmentRequired = isServiceCategory(selectedCategory);
+  // AI problem category suggestion (pre-selects the dropdown; the customer can always change it)
+  const [aiCategoryHint, setAiCategoryHint] = useState(null);
+
+  // AI Department Triage State
+  const [selectedDepartment, setSelectedDepartment] = useState('IT');
+  const [departmentConfirmed, setDepartmentConfirmed] = useState(false);
+  const [aiClassification, setAiClassification] = useState(null);
+  const [showAIDepartmentModal, setShowAIDepartmentModal] = useState(false);
+  const [isClassifying, setIsClassifying] = useState(false);
+  const [lastClassifiedText, setLastClassifiedText] = useState('');
 
   const fetchCustomerOpenCount = useCallback(async () => {
     try {
@@ -257,8 +276,6 @@ export default function TicketCreation() {
               description: draft.description || '',
               priority_ID: draft.priority_ID || 1,
             }));
-            // A category saved in the draft is the customer's choice; the AI must not replace it.
-            if (draft.problem_category_ID) setCategoryTouched(true);
             if (draft.attachments && Array.isArray(draft.attachments)) {
               setExistingDraftAttachments(draft.attachments);
             }
@@ -268,10 +285,8 @@ export default function TicketCreation() {
     }
   }, [location.state]);
 
-  // Load escalated AI handoff prefill if redirected from AI Support triage or route state.
-  // Spec 0043 (AC-2): wait for the form options so the machine resolves against the real list.
+  // Load escalated AI handoff prefill if redirected from AI Support triage or route state
   useEffect(() => {
-    if (loadingOptions) return;
     const prefill = location.state?.prefillData;
     if (prefill) {
       setFormData((prev) => {
@@ -324,11 +339,25 @@ export default function TicketCreation() {
           console.warn('Could not prefill escalation handoff payload:', err);
         });
     }
-  }, [location.state, options.machines, options.problem_categories, draftId, resolveMachineId, resolveCategoryId, loadingOptions]);
+  }, [location.state, options.machines, options.problem_categories, draftId, resolveMachineId, resolveCategoryId]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
+
+    if (name === 'problem_category_ID') {
+      setAiCategoryHint(null); // a manual choice replaces the AI suggestion
+      const selectedCat = (options.problem_categories || []).find(
+        (c) => String(c.problem_category_ID) === String(value)
+      );
+      const catName = (selectedCat?.category_name || '').toLowerCase();
+      if (catName.includes('it') || catName.includes('software') || catName.includes('system') || catName.includes('network')) {
+        setSelectedDepartment('IT');
+      } else if (catName.includes('service') || catName.includes('biomedical') || catName.includes('maintenance') || catName.includes('hardware')) {
+        setSelectedDepartment('Service');
+      }
+      setDepartmentConfirmed(false);
+    }
   };
 
   const handleCasingBlur = (field) => () => {
@@ -338,11 +367,67 @@ export default function TicketCreation() {
     }));
   };
 
-  const handleDescriptionBlur = () => {
+  const handleDescriptionBlur = async () => {
     const raw = formData.description || '';
     const normalized = normalizeCasing(raw);
     if (normalized !== raw) {
       setFormData((prev) => ({ ...prev, description: normalized }));
+    }
+
+    const trimmed = normalized.trim();
+    if (trimmed.length >= 20 && trimmed !== lastClassifiedText) {
+      setLastClassifiedText(trimmed);
+
+      // Suggest a category in parallel, but only fill the dropdown if the customer has not chosen one.
+      if (!formData.problem_category_ID) {
+        suggestProblemCategory(formData.title || '', trimmed, options.problem_categories || [])
+          .then((suggestion) => {
+            if (!suggestion?.category_id) return;
+            setFormData((prev) => (
+              prev.problem_category_ID
+                ? prev
+                : { ...prev, problem_category_ID: suggestion.category_id }
+            ));
+            setAiCategoryHint(suggestion);
+          })
+          .catch(() => {});
+      }
+
+      try {
+        setIsClassifying(true);
+        const classification = await classifyDepartment(formData.title || '', trimmed);
+        setAiClassification(classification);
+        if (classification?.department) {
+          setSelectedDepartment(classification.department);
+        }
+      } catch (err) {
+        console.warn('AI triage blur error:', err);
+      } finally {
+        setIsClassifying(false);
+      }
+    }
+  };
+
+  const handleConfirmAIDepartment = async () => {
+    setDepartmentConfirmed(true);
+    setShowAIDepartmentModal(false);
+
+    if (selectedDepartment === 'Service' && !formData.machine_ID) {
+      const msg = 'Equipment selection is required for Service hardware tickets. Please select an equipment item.';
+      setError(msg);
+      if (toast?.show) {
+        toast.show(msg, 'warning');
+      }
+      return;
+    }
+
+    const titleTrim = (formData.title || '').trim();
+    const descTrim = (formData.description || '').trim();
+
+    if (titleTrim && descTrim && formData.problem_category_ID) {
+      const finalTitle = needsProperCasing(titleTrim) ? formatProperTitleCase(titleTrim) : titleTrim;
+      setFormData((prev) => ({ ...prev, title: finalTitle }));
+      await submitTicketWithTitle(finalTitle);
     }
   };
 
@@ -565,7 +650,7 @@ export default function TicketCreation() {
 
     const titleTrim = (formData.title || '').trim();
     const descTrim = (formData.description || '').trim();
-    if (!titleTrim || !descTrim) {
+    if (!titleTrim || !formData.problem_category_ID || !descTrim) {
       setError('Please complete all required fields.');
       return;
     }
@@ -578,9 +663,45 @@ export default function TicketCreation() {
       return;
     }
 
-    // Spec 0043 (AC-5): a Service preview needs one of the customer's registered machines.
-    if (equipmentRequired && !formData.machine_ID) {
-      setError('Select the machine this problem is about. Service tickets need one of your registered machines.');
+    // AI Department confirmation check before letting user create ticket
+    if (!departmentConfirmed) {
+      const selectedCat = (options.problem_categories || []).find(
+        (c) => String(c.problem_category_ID) === String(formData.problem_category_ID)
+      );
+      const catName = (selectedCat?.category_name || '').toLowerCase();
+      const text = `${titleTrim} ${descTrim} ${catName}`.toLowerCase();
+      const isSoftware = /(software|app|login|password|account|portal|bug|glitch|crash|freeze|network|wifi|database|timeout|license)/i.test(text)
+        || catName.includes('it')
+        || catName.includes('software');
+
+      const initialDept = isSoftware ? 'IT' : 'Service';
+      setSelectedDepartment(initialDept);
+      setAiClassification({
+        department: initialDept,
+        department_id: isSoftware ? 2 : 1,
+        is_software: isSoftware,
+        requires_equipment: !isSoftware,
+        confidence: 0.9,
+        reasoning: isSoftware
+          ? 'Identified as a software, application, or account issue. Physical equipment selection is optional.'
+          : 'Identified as a physical machine or hardware maintenance issue. Equipment selection is required.'
+      });
+
+      setShowAIDepartmentModal(true);
+
+      // In background, call AI to refine classification if needed
+      classifyDepartment(titleTrim, descTrim).then((fresh) => {
+        if (fresh?.department) {
+          setAiClassification(fresh);
+        }
+      }).catch(() => {});
+
+      return; // STOP! Block submission until confirmed in modal
+    }
+
+    // If Service (Hardware), equipment is mandatory
+    if (selectedDepartment === 'Service' && !formData.machine_ID) {
+      setError('Equipment selection is required for Service hardware tickets. Please select an equipment item.');
       return;
     }
 
@@ -611,15 +732,13 @@ export default function TicketCreation() {
       setFormData((prev) => ({ ...prev, title: finalTitle, description: normalizedDesc }));
       const payload = new FormData();
       payload.append('title', finalTitle);
-      // The customer's chosen category is sent; with none, the server asks the AI. Software sends no machine.
-      if (formData.problem_category_ID) {
-        payload.append('problem_category_ID', formData.problem_category_ID);
-      }
-      if (formData.machine_ID && showEquipment) {
+      if (formData.machine_ID) {
         payload.append('machine_ID', formData.machine_ID);
       }
+      payload.append('problem_category_ID', formData.problem_category_ID);
       payload.append('description', normalizedDesc);
       payload.append('priority_ID', formData.priority_ID || options.ticket_priorities?.[0]?.priority_ID || 1);
+      payload.append('department_id', selectedDepartment === 'Service' ? 1 : 2);
       if (draftId) {
         payload.append('draft_id', draftId);
       }
@@ -651,9 +770,24 @@ export default function TicketCreation() {
       }
       
       const response = await createTicket(payload);
-      const newTicketId = response.ticket?.ticket_ID || response.ticket_ID;
+      const newTicket = response.ticket || response.dashboard_ticket || response;
+      const newTicketId = newTicket?.ticket_ID || response.ticket_ID || response.id;
       setCreatedTicketId(newTicketId);
-      setSuccessModal(true);
+
+      const createdTicketObj = {
+        ...newTicket,
+        id: newTicket.ticket_number || (newTicketId ? `TKT-${String(newTicketId).padStart(4, '0')}` : 'TKT-0001'),
+        ticket_ID: newTicketId,
+        title: title.trim(),
+        description: description.trim(),
+        priority: options.priorities?.find(p => String(p.priority_ID || p.id) === String(priorityId))?.priority_name || 'Low',
+        category: options.categories?.find(c => String(c.problem_category_ID || c.id) === String(categoryId))?.category_name || 'General',
+        equipment: options.machines?.find(m => String(m.machine_ID || m.id) === String(machineId))?.machine_name || 'Equipment',
+        status: 'Open',
+        date_created: new Date().toISOString(),
+      };
+      setCreatedTicketSummary(createdTicketObj);
+      setShowCreatedSummaryModal(true);
       fetchCustomerOpenCount();
     } catch (err) {
       setError(err?.response?.data?.message || 'Failed to submit ticket. Please try again.');
@@ -679,7 +813,25 @@ export default function TicketCreation() {
       label: `${machine.machine_name} - ${machine.serial_number}`,
     }));
 
-  const selectedMachine = (options.machines || []).find((m) => String(m.machine_ID) === String(formData.machine_ID)) || null;
+  const categoryOptions = options.category_options?.length
+    ? options.category_options
+    : (options.problem_categories || []).map((category) => {
+      const nameLower = (category.category_name || '').toLowerCase();
+      let label = category.category_name;
+      if (nameLower === 'it') {
+        label = 'IT (Software / Applications / Network — Equipment Optional)';
+      } else if (nameLower === 'service') {
+        label = 'Service (Hardware Diagnostic & Repair — Equipment Required)';
+      } else if (nameLower.includes('biomedical')) {
+        label = `${category.category_name} (Equipment Required)`;
+      } else if (nameLower.includes('others')) {
+        label = `${category.category_name} (General Inquiry)`;
+      }
+      return {
+        value: category.problem_category_ID,
+        label,
+      };
+    });
 
   const priorityOptions = options.priority_options?.length
     ? options.priority_options
@@ -746,7 +898,7 @@ export default function TicketCreation() {
               type="button"
               onClick={() => {
                 setDraftId(null);
-                setFormData({ title: '', machine_ID: '', description: '', priority_ID: 1 });
+                setFormData({ title: '', machine_ID: '', problem_category_ID: '', description: '', priority_ID: 1 });
                 setExistingDraftAttachments([]);
                 setFiles([]);
               }}
@@ -793,69 +945,57 @@ export default function TicketCreation() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="ticket-category">Problem Category</Label>
-                <div className="relative">
-                  <select
-                    id="ticket-category"
-                    name="problem_category_ID"
-                    value={formData.problem_category_ID || ''}
-                    onChange={(e) => {
-                      setCategoryTouched(true);
-                      handleChange(e);
-                    }}
-                    disabled={loadingOptions}
-                    className="flex h-10 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-dark-slate shadow-xs focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/20 outline-none disabled:opacity-50"
-                  >
-                    <option value="">Let AI decide</option>
-                    {(options.problem_categories || []).map((c) => (
-                      <option key={c.problem_category_ID} value={c.problem_category_ID}>{c.category_name}</option>
-                    ))}
-                  </select>
-                  {categoryPreview.loading && !categoryTouched && (
-                    <Loader2 className="pointer-events-none absolute right-8 top-3 h-4 w-4 animate-spin text-muted-slate" aria-hidden="true" />
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="ticket-machine">
+                    Equipment Name / ID {selectedDepartment === 'Service' ? <span className="text-destructive">*</span> : <span className="text-muted-slate text-xs font-normal ml-1">(Optional for IT)</span>}
+                  </Label>
+                  {selectedDepartment === 'IT' && (
+                    <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                      Optional (Software)
+                    </span>
                   )}
                 </div>
-                <p className="text-xs text-muted-slate">
-                  {categoryTouched ? 'You chose this category.' : 'Suggested by AI from your description. You can change it.'}
-                </p>
+                <select
+                  id="ticket-machine"
+                  name="machine_ID"
+                  required={selectedDepartment === 'Service'}
+                  value={formData.machine_ID}
+                  onChange={handleChange}
+                  disabled={loadingOptions}
+                  className="flex h-10 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-dark-slate shadow-xs focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/20 outline-none disabled:opacity-50"
+                >
+                  <option value="">{selectedDepartment === 'IT' ? 'None / Not Applicable (Software Issue)' : 'Select Equipment'}</option>
+                  {equipmentOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
               </div>
             </div>
 
-            {showEquipment && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-1.5">
-                  <Label htmlFor="ticket-machine">
-                    Machine / Equipment {equipmentRequired ? <span className="text-destructive">*</span> : <span className="text-muted-slate text-xs font-normal ml-1">(optional)</span>}
-                  </Label>
-                  <select
-                    id="ticket-machine"
-                    name="machine_ID"
-                    required={equipmentRequired}
-                    value={formData.machine_ID}
-                    onChange={handleChange}
-                    disabled={loadingOptions}
-                    className="flex h-10 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-dark-slate shadow-xs focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/20 outline-none disabled:opacity-50"
-                  >
-                    <option value="">Select a machine</option>
-                    {equipmentOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>{opt.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="ticket-serial">Serial Number</Label>
-                  <Input
-                    id="ticket-serial"
-                    type="text"
-                    readOnly
-                    tabIndex={-1}
-                    value={selectedMachine?.serial_number || ''}
-                    placeholder="Select a machine"
-                    className="bg-page"
-                  />
-                </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-1.5">
+                <Label htmlFor="ticket-category">Problem Category <span className="text-destructive">*</span></Label>
+                <select
+                  id="ticket-category"
+                  name="problem_category_ID"
+                  required
+                  value={formData.problem_category_ID}
+                  onChange={handleChange}
+                  disabled={loadingOptions}
+                  className="flex h-10 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-dark-slate shadow-xs focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/20 outline-none disabled:opacity-50"
+                >
+                  <option value="">Select Category</option>
+                  {categoryOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                {aiCategoryHint && String(aiCategoryHint.category_id) === String(formData.problem_category_ID) && (
+                  <p className="text-xs text-muted-slate" data-testid="ai-category-hint">
+                    Suggested by AI based on your description. You can change it.
+                  </p>
+                )}
               </div>
-            )}
+            </div>
 
             <div className="space-y-1.5">
               <Label htmlFor="ticket-description">Detailed Description <span className="text-destructive">*</span></Label>
@@ -1049,6 +1189,15 @@ export default function TicketCreation() {
         </div>
       </div>
 
+      <AIDepartmentModal
+        isOpen={showAIDepartmentModal}
+        classification={aiClassification}
+        selectedDepartment={selectedDepartment}
+        onSelectDepartment={(dept) => setSelectedDepartment(dept)}
+        onConfirm={handleConfirmAIDepartment}
+        onCancel={() => setShowAIDepartmentModal(false)}
+      />
+
       <NotificationModal
         isOpen={successModal}
         type="success"
@@ -1056,6 +1205,68 @@ export default function TicketCreation() {
         message="Your support ticket has been created and will be reviewed shortly."
         onClose={handleSuccessClose}
       />
+
+      {showCreatedSummaryModal && createdTicketSummary && (
+        <CustomerTicketDetailModal
+          ticket={createdTicketSummary}
+          onClose={() => {
+            setShowCreatedSummaryModal(false);
+            navigate('/customer-dashboard');
+          }}
+          onDiscard={null}
+          onReopen={null}
+          onResolve={null}
+          allowReopen={false}
+          customerName={user?.name || `${user?.first_name || ''} ${user?.last_name || ''}`.trim() || 'Customer'}
+        />
+      )}
+
+      {showAiBackConfirm && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl border border-gray-200 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center shrink-0">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-gray-900">Return to AI Chatbot?</h3>
+                <p className="text-xs text-gray-600 leading-relaxed">
+                  Are you sure you want to go back to the AI chatbot? You can save your ticket as a draft before leaving, or return without saving.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowAiBackConfirm(false)}
+                className="w-full sm:w-auto px-3.5 py-2 text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmBackWithoutSaving}
+                className="w-full sm:w-auto px-3.5 py-2 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded-lg transition-colors cursor-pointer"
+              >
+                Go Back without Saving
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setShowAiBackConfirm(false);
+                  await handleSaveDraft();
+                }}
+                disabled={savingDraft}
+                className="w-full sm:w-auto px-4 py-2 text-xs font-semibold text-white bg-[#252578] hover:bg-[#1d1d60] rounded-lg transition-colors cursor-pointer inline-flex items-center justify-center gap-1.5 shadow-xs"
+              >
+                {savingDraft ? <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : null}
+                <span>Save to Draft</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

@@ -33,10 +33,10 @@ export default function TicketTitleBlock({
 
   return (
     <div className="space-y-2">
-      {/* 21-22px semibold title */}
+      {/* Title scaled proportionally to AssignModal standard */}
       <h2
         id="ticket-modal-title"
-        className="text-[21px] sm:text-[22px] font-semibold text-[#1B2033] leading-snug break-words tracking-tight"
+        className="text-lg sm:text-xl font-bold text-[#1B2033] leading-snug break-words tracking-tight"
       >
         {title || 'Untitled Ticket'}
       </h2>

@@ -254,15 +254,15 @@ export default function EmployeeDashboard() {
     });
   }, [assignedTickets, search, statusFilter, priorityFilter]);
 
-  // Attention-needed items for Assigned section (spec 0038 AC-20): SLA problems only.
-  // Not yet accepted or Escalated tickets without an SLA risk are not listed.
+  // Attention-needed items for Assigned section
   const assignedAttentionItems = useMemo(() => {
     return assignedTickets.filter((t) => {
       const risk = evaluateSlaRisk(t);
-      const hasSlaProblem = risk === 'breached' || risk === 'at_risk';
-      return hasSlaProblem && !['Resolved', 'Closed', 'Discarded', 'Discarded by Customer'].includes(t.status);
+      const needsAccept = !isTicketAccepted(t);
+      const isUrgent = risk === 'breached' || risk === 'at_risk' || needsAccept || t.status === 'Escalated';
+      return isUrgent && !['Resolved', 'Closed', 'Discarded', 'Discarded by Customer'].includes(t.status);
     }).slice(0, 4);
-  }, [assignedTickets, evaluateSlaRisk]);
+  }, [assignedTickets, evaluateSlaRisk, isTicketAccepted]);
 
   // Attention-needed items for Requestor section
   const requestorAttentionItems = useMemo(() => {
@@ -316,7 +316,7 @@ export default function EmployeeDashboard() {
     try {
       await acceptTicket({ ticketId: numericId });
       setIsAccepting(false);
-      setPendingTicket(null);
+      setPendingTicket((prev) => (prev ? { ...prev, accepted: true, status: 'In Progress' } : null));
       setAssignedTickets((prev) =>
         prev.map((t) => (t.id === id || t.ticket_ID === numericId ? { ...t, accepted: true, status: 'In Progress' } : t))
       );
@@ -329,6 +329,7 @@ export default function EmployeeDashboard() {
         err?.response?.data?.message || 'Could not accept this assignment. It may have been reassigned or updated. Please refresh and try again.',
         'Accept failed'
       );
+      throw err;
     }
   }, [loadAssigned, toast, pendingTicket, assignedTickets]);
 
@@ -870,9 +871,32 @@ export default function EmployeeDashboard() {
           ticket={pendingTicket}
           onClose={() => setPendingTicket(null)}
           onAccept={handleAcceptAssignment}
-          onRequestReassign={(t) => {
-            setPendingTicket(null);
-            setReassignTicket(t);
+          onRequestReassign={(t, reason) => {
+            setPendingTicket((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    reassignmentRequested: true,
+                    reassignmentStatus: 'Pending',
+                    reassignmentReason: reason,
+                    status: 'Pending Reassignment',
+                  }
+                : null
+            );
+            setAssignedTickets((prev) =>
+              prev.map((item) =>
+                item.id === t.id || item.ticket_ID === t.ticket_ID
+                  ? {
+                      ...item,
+                      reassignmentRequested: true,
+                      reassignmentStatus: 'Pending',
+                      reassignmentReason: reason,
+                      status: 'Pending Reassignment',
+                    }
+                  : item
+              )
+            );
+            loadAssigned({ forceRefresh: true });
           }}
           isAccepting={isAccepting}
         />
