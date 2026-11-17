@@ -249,7 +249,10 @@ class AuthController extends Controller
                         'is_active' => (int) ($u['is_active'] ?? 1),
                         'last_synced_at' => now(),
                     ]);
+                    // Spec 0045 (AC-14): a move to a department that does not handle tickets clears the designation.
+                    \Ticketing\Auth\Access\TicketingAccess::handleDepartmentChange($existing, $dept, 'customer-service sync');
                 } else {
+                    // Spec 0045 (AC-9): new staff arrive with is_ticketing_employee false (column default).
                     $newId = (isset($u['id']) && (int)$u['id'] > 0) ? (int)$u['id'] : ((int)DB::table('employees')->max('emp_id') + 1);
                     DB::table('employees')->insert([
                         'emp_id' => $newId,
@@ -292,6 +295,9 @@ class AuthController extends Controller
             ->whereRaw('LOWER(COALESCE(department, "")) NOT IN (?, ?)', ['admin', 'super admin'])
             ->whereRaw('LOWER(COALESCE(email, "")) NOT LIKE ?', ['%admin%'])
             ->whereRaw('LOWER(CONCAT(COALESCE(first_name, ""), " ", COALESCE(last_name, ""))) NOT LIKE ?', ['%administrator%']);
+
+        // Spec 0045 (AC-11): only designated ticketing employees appear in the staff status list.
+        \Ticketing\Auth\Access\TicketingAccess::onlyTicketingEmployees($query);
 
         if ($request->has('department') && !empty($request->query('department'))) {
             $query->where('department', $request->query('department'));
@@ -493,11 +499,36 @@ class AuthController extends Controller
             $token = $request->cookie('access_token');
         }
 
+        // Spec 0045 (AC-12): staff payloads carry a real boolean is_ticketing_employee read from the database.
+        $payload = $user;
+        $ticketingFlag = $this->ticketingEmployeeFlag($user);
+        if ($ticketingFlag !== null) {
+            $payload = method_exists($user, 'toArray') ? $user->toArray() : (array) $user;
+            $payload['is_ticketing_employee'] = $ticketingFlag;
+        }
+
         return response()->json([
-            'user' => $user,
+            'user' => $payload,
             'is_first_login' => $isFirstLogin,
             'token' => $token,
         ]);
+    }
+
+    /**
+     * Spec 0045: the designation flag for a staff user (true for superadmin and admin), null for customers.
+     */
+    private function ticketingEmployeeFlag($user): ?bool
+    {
+        if (!$user instanceof Employee && !$user instanceof \Ticketing\Auth\Dto\AuthenticatedUserDto) {
+            return null;
+        }
+
+        if (\Ticketing\Auth\Access\TicketingAccess::isAdmin($user)) {
+            return true;
+        }
+
+        $empId = (int) ($user->emp_id ?? $user->id ?? 0);
+        return $empId > 0 ? \Ticketing\Auth\Access\TicketingAccess::isTicketingEmployee($empId) : false;
     }
 
     public function forgotPassword(Request $request)
@@ -768,6 +799,7 @@ class AuthController extends Controller
                     'name' => trim($user->first_name . ' ' . $user->last_name),
                     'role' => $user->role,
                     'department' => $user->department,
+                    'is_ticketing_employee' => $this->ticketingEmployeeFlag($user),
                     'is_readonly_cms' => true,
                     'created_at' => $user->created_at,
                     'updated_at' => $user->updated_at,
@@ -791,6 +823,7 @@ class AuthController extends Controller
                     'branch' => $user->branch,
                     'branch_id' => $user->branch_id,
                     'phone' => $user->phone_number,
+                    'is_ticketing_employee' => $this->ticketingEmployeeFlag($user),
                     'is_readonly_cms' => true,
                 ],
                 'is_first_login' => false,

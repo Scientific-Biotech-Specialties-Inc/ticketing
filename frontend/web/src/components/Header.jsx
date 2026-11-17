@@ -12,6 +12,7 @@ import { TicketSummary, AssignModal } from '@/components/CSModals';
 import { getSystemStatus } from '@/services/configurationService';
 import tokenStore from '@/auth/tokenStore';
 import { isReassignmentDenied } from '@/utils/reassignmentUtils';
+import { checkIsRequestor } from '@/utils/ticketingAccess';
 
 const checkUserIsCS = (u) => {
   if (!u) return false;
@@ -27,6 +28,18 @@ const checkUserIsCS = (u) => {
     dept.includes('customer support') ||
     dept === 'cs'
   );
+};
+
+/**
+ * Label under the name in the top right. Requestors and staff with the generic auth role
+ * "service" see their department (Finance, IT, Service...). Other roles keep their role.
+ */
+export const headerRoleLabel = (u) => {
+  if (!u) return '';
+  const role = String(u.role || '').trim();
+  const department = String(u.department || '').trim();
+  const generic = role.toLowerCase() === 'service' || checkIsRequestor(u);
+  return (generic && department) ? department : role;
 };
 
 const checkUserIsEmployee = (u) => {
@@ -419,7 +432,8 @@ export default function Header({ sidebarHovered }) {
               </div>
               <div className="hidden sm:flex flex-col items-start leading-tight text-left">
                 <span className="text-sm font-semibold text-dark-slate">{user?.name || 'User'}</span>
-                <span className="text-xs text-muted-slate capitalize">{user?.role || ''}</span>
+                {/* Spec 0045: the auth module gives most staff the generic role "service", so show their real department instead. */}
+                <span className="text-xs text-muted-slate capitalize">{headerRoleLabel(user)}</span>
               </div>
               <ChevronDown className="w-4 h-4 text-muted-slate ml-1" />
             </button>

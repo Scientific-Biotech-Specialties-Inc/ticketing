@@ -116,7 +116,10 @@ class EmployeeDirectoryController extends Controller
                         'is_active' => (int) ($u['is_active'] ?? 1),
                         'last_synced_at' => now(),
                     ]);
+                    // Spec 0045 (AC-14): a move to a department that does not handle tickets clears the designation.
+                    \Ticketing\Auth\Access\TicketingAccess::handleDepartmentChange($existing, $dept, 'employee-service sync');
                 } else {
+                    // Spec 0045 (AC-9): new staff arrive with is_ticketing_employee false (column default).
                     $newId = (isset($u['id']) && (int)$u['id'] > 0) ? (int)$u['id'] : ((int)DB::table('employees')->max('emp_id') + 1);
                     DB::table('employees')->insert([
                         'emp_id' => $newId,
@@ -458,6 +461,9 @@ class EmployeeDirectoryController extends Controller
 
         $query->addSelect('branch');
 
+        // Spec 0045 (AC-11): only designated ticketing employees can be picked.
+        \Ticketing\Auth\Access\TicketingAccess::onlyTicketingEmployees($query);
+
         if ($department) {
             $query->where('department', $department);
         }
@@ -540,6 +546,9 @@ class EmployeeDirectoryController extends Controller
             ]);
 
         $query->addSelect('branch');
+
+        // Spec 0045 (AC-11): only designated ticketing employees can be picked.
+        \Ticketing\Auth\Access\TicketingAccess::onlyTicketingEmployees($query);
 
         $requestedBy = $ticket->requested_by ?? null;
         if ($requestedBy) {

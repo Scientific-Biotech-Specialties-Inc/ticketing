@@ -61,6 +61,7 @@ import {
 } from '@/components/ui/dialog';
 import Pagination from '@/components/Pagination';
 import { useToast } from '@/context/ToastContext';
+import CmsSyncBanner from '@/components/CmsSyncBanner';
 import {
   getStoredCmsCustomers,
   saveStoredCmsCustomers,
@@ -332,9 +333,10 @@ export default function SuperAdminCMSIntegration() {
 
   return (
     <div className="w-full space-y-6 pb-12 font-sans">
+      <CmsSyncBanner canSync />
       {/* 1. Page Header with Actions */}
       <PageHeader
-        title="CMS Customer Integration"
+        title="Customer Contracts"
         subtitle="Sync and manage customer profiles and service contracts from CMS."
         showClock={false}
         actions={

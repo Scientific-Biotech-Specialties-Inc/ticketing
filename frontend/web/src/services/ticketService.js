@@ -763,6 +763,43 @@ export const clearDepartmentsCache = () => {
   departmentsInFlight = null;
 };
 
+// ─── Spec 0045: ticketing access (handler departments and designated employees) ───
+
+export const getTicketingDepartments = async () => {
+  const response = await employeeClient.get('/ticketing-access/departments');
+  return response.data?.departments ?? [];
+};
+
+/** A 409 rejects with err.response.data.blocking_tickets listing the open tickets to reassign. */
+export const saveTicketingDepartments = async (departments) => {
+  const response = await employeeClient.put('/ticketing-access/departments', { departments });
+  return response.data?.departments ?? [];
+};
+
+export const getTicketingEmployees = async ({ department, branchId, status, search, page = 1, perPage = 25 } = {}) => {
+  const params = { page, per_page: perPage };
+  if (department) params.department = department;
+  if (branchId) params.branch_id = branchId;
+  if (status) params.status = status;
+  if (search) params.search = search;
+  const response = await employeeClient.get('/ticketing-access/employees', { params });
+  return response.data;
+};
+
+export const setTicketingEmployee = async (empId, isTicketingEmployee) => {
+  const response = await employeeClient.put(`/ticketing-access/employees/${empId}`, {
+    is_ticketing_employee: Boolean(isTicketingEmployee),
+  });
+  return response.data?.employee;
+};
+
+export const bulkDesignateTicketingEmployees = async (departmentName) => {
+  const response = await employeeClient.post('/ticketing-access/employees/bulk-designate', {
+    department_name: departmentName,
+  });
+  return response.data;
+};
+
 export const assignTicketToEmployees = async ({ ticketId, employeeIds, assignedByEmail, priorityId } = {}) => {
   const normalizedId = ticketId || Number(String(ticketId || '').replace(/\D/g, ''));
   const payload = {
