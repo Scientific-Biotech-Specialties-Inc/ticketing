@@ -38,6 +38,27 @@ class TicketingAccessService
         return $user && !$this->isSuperAdmin($user) && TicketingAccess::isAdmin($user);
     }
 
+    /**
+     * The local branch id a branch admin is scoped to.
+     *
+     * The branch name is matched first: employee-service has no Branch model, so the login middleware
+     * refreshes employees.branch from the Auth profile but cannot map its id, and a stale branch_id
+     * (e.g. branch "SBSI Makati Branch" with id 1 = Main Branch) would hide the admin's whole branch.
+     * Falls back to the stored branch_id, then null when neither resolves.
+     */
+    public function adminBranchId($user): ?int
+    {
+        $name = trim((string) ($user->branch ?? ''));
+        if ($name !== '') {
+            $id = DB::table('branches')->whereRaw('LOWER(name) = ?', [strtolower($name)])->value('id');
+            if ($id) {
+                return (int) $id;
+            }
+        }
+
+        return !empty($user->branch_id) ? (int) $user->branch_id : null;
+    }
+
     private function actorId($user): int
     {
         return (int) ($user->emp_id ?? $user->id ?? 0);
@@ -213,7 +234,7 @@ class TicketingAccessService
 
         // AC-10: a branch admin only ever sees their own branch, whatever they send.
         if ($this->isBranchAdmin($user)) {
-            $base->where('branch_id', (int) ($user->branch_id ?? 0));
+            $base->where('branch_id', (int) ($this->adminBranchId($user) ?? 0));
         } elseif (!empty($filters['branch_id'])) {
             $base->where('branch_id', (int) $filters['branch_id']);
         }
@@ -277,7 +298,7 @@ class TicketingAccessService
                 return ['status' => 404, 'data' => ['message' => 'Employee not found.']];
             }
 
-            if ($this->isBranchAdmin($user) && (int) $employee->branch_id !== (int) ($user->branch_id ?? 0)) {
+            if ($this->isBranchAdmin($user) && (int) $employee->branch_id !== (int) ($this->adminBranchId($user) ?? 0)) {
                 return ['status' => 403, 'data' => ['message' => 'You can only manage ticketing employees in your own branch.']];
             }
 
@@ -356,7 +377,7 @@ class TicketingAccessService
             TicketingAccess::excludeAdmins($query);
 
             if ($this->isBranchAdmin($user)) {
-                $query->where('branch_id', (int) ($user->branch_id ?? 0));
+                $query->where('branch_id', (int) ($this->adminBranchId($user) ?? 0));
             }
 
             $ids = $query->lockForUpdate()->pluck('emp_id')->map(fn ($id) => (int) $id)->all();

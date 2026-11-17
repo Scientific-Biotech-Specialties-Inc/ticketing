@@ -106,7 +106,7 @@ class TicketingAccessController extends Controller
         }
 
         if ($this->access->isBranchAdmin($user)) {
-            if (empty($user->branch_id)) {
+            if (empty($this->access->adminBranchId($user))) {
                 return response()->json(['message' => 'Your account has no branch, so there are no employees to manage.'], 403);
             }
             return null;
