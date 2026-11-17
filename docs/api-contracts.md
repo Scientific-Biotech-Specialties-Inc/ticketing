@@ -73,7 +73,7 @@ Base Gateway URL: `/api/ticketing/customer`
 | `PUT` | `/profile` | Update contact details and avatar | All authenticated |
 | `POST` | `/change-password` | Rotate credentials with RSA payload | All authenticated |
 | `GET` | `/employee-statuses` | Real-time presence of engineers | CS, Admin |
-| `POST` | `/customers/provision` | Automated customer registration | Admin, Internal |
+| `POST` | `/customers/provision` | Find or create a customer by email (`client_name`, `email`, optional `address`, `contact_number`). Requires `X-Internal-Secret` | Internal |
 
 ---
 
@@ -145,6 +145,110 @@ Base Gateway URL: `/api/ticketing/ticket`
 | `GET/POST/PUT` | `/superadmin/workflow-statuses`| Configure custom ticket lifecycle states |
 | `GET/POST/PUT` | `/superadmin/escalation-rules` | Configure automated escalation triggers |
 | `GET` | `/superadmin/audit-logs` | Immutable audit trail query with filters |
+
+### CRMS Machine Sync (Internal, `X-Internal-Secret`)
+
+The CRMS pushes customer machines into the ticketing system so customers can pick them when filing a ticket. These routes go through the staff gateway only. The customer portal returns 404 for any `/internal/` path.
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/internal/crms/machines` | Register or update one machine, or a batch of up to 100 |
+| `GET` | `/internal/crms/branches` | Active SBSI branches (the accepted `branch` values) |
+
+* **Auth**: `X-Internal-Secret: <INTERNAL_SERVICE_SECRET>`. A missing or wrong header returns 401. If the server has no secret configured, it returns 503.
+* **Rate limit**: 120 requests per minute.
+* **Record**:
+
+  | Field | Required | Notes |
+  | :--- | :--- | :--- |
+  | `machine_name` | yes | Equipment or machine name, max 255 |
+  | `brand` | no | Max 255 |
+  | `serial_number` | yes | Unique key. Sending a known serial again updates that machine |
+  | `customer_name` | yes | Used only when the customer is new |
+  | `customer_email` | yes | Identifies the customer account |
+  | `branch` | yes | SBSI branch name, code or slug, for example `SBSI Makati Branch`, `Makati`, `MKT` or `sbsi-makati-branch` |
+
+  ```json
+  {
+    "machine_name": "Hematology Analyzer",
+    "brand": "Sysmex",
+    "serial_number": "XN-1000-12345",
+    "customer_name": "St. Luke's Laboratory",
+    "customer_email": "lab@example.com",
+    "branch": "SBSI Makati Branch"
+  }
+  ```
+
+  For a batch, send `{ "machines": [ record, ... ] }`.
+* **Behavior**:
+  * The customer is found by email, or created through customer-service `customers/provision`. A new customer gets the welcome email with a temporary password.
+  * The machine is upserted by `serial_number`. The CRMS is the source of truth, so name, brand, owner and branch follow the latest push.
+  * New machines get the `Uncategorized` machine category.
+  * A customer ticket filed on the machine takes the machine's branch unless the ticket names a branch.
+* **Single record responses**:
+
+  | Status | Body `status` | Meaning |
+  | :--- | :--- | :--- |
+  | 201 | `created` | New machine registered |
+  | 200 | `updated` / `unchanged` | Known serial number |
+  | 422 | `failed` | Validation error or unknown branch (`errors` lists the fields) |
+  | 502 | `failed` | customer-service could not provision the customer. Retry later |
+
+  ```json
+  { "status": "created", "machine_ID": 42, "client_ID": 7, "customer_status": "created", "branch_id": "sbsi-makati-branch", "serial_number": "XN-1000-12345" }
+  ```
+* **Batch response**: always 200, with one result per record (same shape, plus `index` and `http_status` on failures):
+  ```json
+  { "summary": { "received": 3, "created": 2, "updated": 0, "unchanged": 0, "failed": 1 }, "results": [ { "index": 0, "status": "created", "...": "..." } ] }
+  ```
+
+### CMS Equipment Sync (Spec 3.1, outbound read only)
+
+The CMS (Contract Management System) is the source of truth for customers' equipment. ticket-service pulls it with `GET` only. Nothing is ever written back to the CMS.
+
+```text
+ticket-scheduler (cms:sync)          CMS (via trycloudflare tunnel)
+  every 15 min (incremental)  --GET-->  {CMS_TS_BASE_URL}/sync?updated_since=...
+  03:00 daily  (full)         --GET-->  {CMS_TS_BASE_URL}/sync
+          |
+          +--> customer-service POST /api/customers/provision   (find or create the customer)
+          +--> machines upsert (equipment_uid, then serial_number)
+          +--> cache: cms_ts:status (read by the UI banner), cms_ts:cursor
+```
+
+* **Configuration** (root `.env` only, passed to `ticket-service` and `ticket-scheduler`):
+
+  | Variable | Example | Notes |
+  | :--- | :--- | :--- |
+  | `CMS_TS_BASE_URL` | `https://<tunnel>.trycloudflare.com/api/contract/integrations/v1/ts` | Through the CMS gateway. Blank disables the sync |
+  | `CMS_TS_INTEGRATION_KEY` | (shared secret) | Sent as `X-Internal-Secret`. Blank disables the sync |
+  | `CMS_TS_CONNECT_TIMEOUT` / `CMS_TS_TIMEOUT` | `3` / `5` | Seconds |
+  | `CMS_TS_SEND_WELCOME_EMAIL` | `false` | `false` creates CMS customers silently (`send_welcome_email: false` to `customers/provision`). They sign in through Forgot Password. `true` sends the usual welcome email with a temporary password |
+
+  A trycloudflare URL changes whenever the CMS tunnel restarts. Update `CMS_TS_BASE_URL`, then recreate `ticket-service` and `ticket-scheduler`.
+* **Command**: `php artisan cms:sync [--full] [--include-pending]`. The first run, and every `--full` run, reads everything. Other runs send `updated_since` (the newest CMS `updated_at` already seen). It always exits 0, so a dead tunnel never breaks the scheduler.
+* **Field mapping** (`machines`):
+
+  | CMS field | TS column | Notes |
+  | :--- | :--- | :--- |
+  | `equipment_uid` | `equipment_uid` | Upsert key (`EQP-{contract_id}`). Falls back to `serial_number`, which links machines from the CRMS push |
+  | `equipment.serial_number` | `serial_number` | Follows the CMS when a known `equipment_uid` changes serial |
+  | `equipment.equipment_name` | `machine_name` | When null: brand + model, then `item_code`, then the serial |
+  | `equipment.brand` / `model` | `brand` / `model` | Nullable |
+  | `customer_uid` | `cms_customer_uid` | `BP-*`, `SUP-*` or `CUST-*` |
+  | `customer.customer_name` / `customer_email` | `client_ID` | Found or created through customer-service. The welcome email depends on `CMS_TS_SEND_WELCOME_EMAIL` |
+  | `sbsi_branch` | `branch_id` | Matched by name, code or slug. Legacy names map to current ones (`Main Office` is `SBSI Makati Branch`). Unknown names leave the branch empty |
+  | `contract_code` / `end_date` | `contract_code` / `contract_end_date` | |
+  | `approval_status`, `lifecycle_status`, `end_date` | `cms_contract_active` | `1` when Approved, not expired or inactive, and not past `end_date` |
+
+* **Skipped rows**: a row without `equipment_uid` or serial, or whose customer has no valid email or name, is skipped and counted (`skipped_reasons`). A customer needs an email to get a portal account, so nothing is half written.
+* **Retired contracts**: a complete full read sets `cms_contract_active = 0` on CMS machines it no longer lists. An empty full read retires nothing. Machines are never deleted, because tickets reference them. The customer machine picker (`GET /ticket-form-options`) hides inactive machines and machines past `contract_end_date`.
+* **CMS unreachable**: a 401/403, any 5xx (including 530 from a dead tunnel), a timeout or blank configuration changes nothing locally. The failure is recorded in `cms_ts:status` and the UI shows a persistent warning banner.
+
+| Method | Endpoint | Auth | Description |
+| :--- | :--- | :--- | :--- |
+| `GET` | `/integrations/cms/status` | `auth.subsystem` (any signed in user) | `{configured, reachable, message, last_attempt_at, last_success_at, reason, summary}`. Customers do not get `reason` or `summary` |
+| `POST` | `/integrations/cms/sync` | Admin or SuperAdmin | Runs a sync now (`{"full": true}` optional). 200 synced, 409 already running, 502 CMS unreachable, 503 not configured. Throttled to 6 per minute |
 
 ---
 

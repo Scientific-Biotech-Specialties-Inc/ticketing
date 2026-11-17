@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import Header from './Header';
+import CmsSyncBanner from './CmsSyncBanner';
 import SidebarAdmin from './SidebarAdmin';
 
 export default function AdminLayout() {
@@ -15,6 +16,7 @@ export default function AdminLayout() {
         sidebarHovered ? 'sm:ml-64 sm:w-[calc(100%-16rem)]' : 'sm:ml-20 sm:w-[calc(100%-5rem)]'
       } w-full`}>
         <div className="w-full min-w-0 max-w-full">
+          <CmsSyncBanner canSync className="mb-4" />
           <Outlet />
         </div>
       </main>
