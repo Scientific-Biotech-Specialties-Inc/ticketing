@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import EmployeeTicketUpdate from './EmployeeTicketUpdate';
 import * as ticketService from '@/services/ticketService';
@@ -120,5 +120,40 @@ describe('EmployeeTicketUpdate Component Tests', () => {
     await waitFor(() => {
       expect(screen.getByText('State Loaded Secure Ticket')).toBeInTheDocument();
     });
+  });
+
+  it.each(['Pending', 'On Hold'])('opens the confirm dialog and saves when changing status to %s', async (target) => {
+    const details = {
+      id: 'TKTS-00017',
+      ticket_ID: 8,
+      title: 'Status Change Ticket',
+      status: 'In Progress',
+      priority: 'Medium',
+      timeline: [],
+    };
+    ticketService.getTicketDetails.mockResolvedValue(details);
+    ticketService.updateEmployeeTicket.mockResolvedValueOnce({});
+
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/employee/ticket-update', state: { ticket: { ticket_ID: 8, status: 'In Progress' } } }]}>
+        <Routes>
+          <Route path="/employee/ticket-update" element={<EmployeeTicketUpdate />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Status Change Ticket');
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: target } });
+    fireEvent.change(screen.getByPlaceholderText(/Provide detailed notes/i), { target: { value: 'Waiting on parts' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Status Change' }));
+
+    expect(await screen.findByText('Confirm Status Change')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Yes, Save Changes/i }));
+
+    await waitFor(() => {
+      expect(ticketService.updateEmployeeTicket).toHaveBeenCalledTimes(1);
+    });
+    const formData = ticketService.updateEmployeeTicket.mock.calls[0][1];
+    expect(formData.get('status')).toBe(target);
   });
 });

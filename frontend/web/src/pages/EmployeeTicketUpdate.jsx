@@ -1328,8 +1328,9 @@ export default function EmployeeTicketUpdate() {
 
       {/* Confirmation Modal for status change */}
       <ConfirmationModal
-        open={showStatusConfirm}
-        onOpenChange={setShowStatusConfirm}
+        isOpen={showStatusConfirm}
+        onClose={() => setShowStatusConfirm(false)}
+        loading={isSaving}
         title="Confirm Status Change"
         description={`Are you sure you want to change the status from "${ticket.status}" to "${statusDraft}"?`}
         confirmLabel={isSaving ? 'Saving...' : 'Yes, Save Changes'}
