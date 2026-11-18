@@ -288,6 +288,12 @@ class TicketService
                 ->value('ticket_status_ID') ?: 1;
         }
 
+        // Every ticket gets a branch (request, then equipment, then the default), so branch staff see it.
+        $validated['branch_id'] = app(TicketBranchResolver::class)->resolve(
+            $validated['branch_id'] ?? null,
+            $validated['machine_ID'] ?? null
+        );
+
         $ticketData = [
             'ticket_number' => $ticketNumber,
             'machine_ID' => !empty($validated['machine_ID']) ? (int) $validated['machine_ID'] : null,
@@ -495,6 +501,13 @@ class TicketService
                 ->whereRaw('LOWER(status_name) = ?', [strtolower(trim($defaultStatusName))])
                 ->value('ticket_status_ID') ?: 1;
         }
+
+        // Internal tickets: request, then equipment, then the requesting employee's branch, then the default.
+        $validated['branch_id'] = app(TicketBranchResolver::class)->resolve(
+            $validated['branch_id'] ?? null,
+            $validated['machine_ID'] ?? null,
+            $user->branch_id ?? $user->branch ?? null
+        );
 
         $ticketId = $this->ticketLimitService->createWithinLimit(
             $empId,

@@ -26,7 +26,7 @@ class AuthenticateTokenOrInternal
     public static function hasValidInternalToken(Request $request): bool
     {
         $provided = (string) $request->header('X-Internal-Token', '');
-        $expected = (string) env('INTERNAL_TOKEN', '');
+        $expected = (string) config('services.internal.token', '');
 
         return $provided !== '' && $expected !== '' && hash_equals($expected, $provided);
     }

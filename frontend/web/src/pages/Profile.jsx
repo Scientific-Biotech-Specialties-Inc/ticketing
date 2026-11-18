@@ -74,24 +74,31 @@ export default function Profile() {
 
   const dashboardUrl = basePath ? `${basePath}/dashboard` : '/customer-dashboard';
 
+  // Branch may arrive as a name, or as an object from some auth payloads.
+  const rawBranch = effectiveUser?.branch;
+  const branchName = (rawBranch && typeof rawBranch === 'object' ? rawBranch.name : rawBranch)
+    || effectiveUser?.branch_name
+    || '';
+
+  // Only real values: an empty field shows "—" (or is hidden) instead of invented placeholder data.
   const profile = {
-    id: effectiveUser?.id || effectiveUser?.emp_id || 'EMP-001',
-    emp_id: effectiveUser?.emp_id || effectiveUser?.id || 'EMP-001',
+    id: effectiveUser?.id || effectiveUser?.emp_id || null,
     firstName: effectiveUser?.first_name || '',
     middleName: effectiveUser?.middle_name || '',
     lastName: effectiveUser?.last_name || '',
-    name: effectiveUser?.client_name || effectiveUser?.name || `${effectiveUser?.first_name || ''} ${effectiveUser?.last_name || ''}`.trim() || 'Jane Doe',
+    name: effectiveUser?.client_name || effectiveUser?.name || `${effectiveUser?.first_name || ''} ${effectiveUser?.last_name || ''}`.trim(),
     email: effectiveUser?.email || '',
     phone: effectiveUser?.phone || effectiveUser?.contact_number || '',
     address: effectiveUser?.address || '',
-    role: effectiveUser?.role || 'Employee',
-    department: effectiveUser?.department || 'Engineering',
-    facility: effectiveUser?.facility || effectiveUser?.branch || 'Headquarters',
+    role: effectiveUser?.role || '',
+    department: effectiveUser?.department || '',
+    branch: branchName,
+    facility: effectiveUser?.facility || '',
     is_readonly_cms: effectiveUser?.is_readonly_cms ?? true,
     lastSynced: lastSyncedAt ? formatDisplayDate(lastSyncedAt) : 'Just now',
-    dateJoined: effectiveUser?.created_at
+    dateJoined: effectiveUser?.created_at && !Number.isNaN(new Date(effectiveUser.created_at).getTime())
       ? new Date(effectiveUser.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-      : 'January 5, 2025',
+      : null,
   };
 
   const handleProfileUpdated = (updatedUser) => {

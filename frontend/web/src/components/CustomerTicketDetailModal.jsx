@@ -17,6 +17,7 @@ import FilePreviewModal from './FilePreviewModal';
 import FeedbackModal from './feedback/FeedbackModal';
 import TicketFeedbackSection from './feedback/TicketFeedbackSection';
 import TicketActivityTimeline from './TicketActivityTimeline';
+import SkeletonLoader from './SkeletonLoader';
 import {
   TicketDetailModalShell,
   ModalHeader,
@@ -72,6 +73,7 @@ export default function CustomerTicketDetailModal({
   onViewTicket,
   onFeedbackSubmitted,
   readOnly = false,
+  onDone,
 }) {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -136,7 +138,7 @@ export default function CustomerTicketDetailModal({
   // Updates / Timeline Data for Tab and Mini-Timeline
   const [timelineEvents, setTimelineEvents] = useState([]);
   const [timelineTotal, setTimelineTotal] = useState(0);
-  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineLoading, setTimelineLoading] = useState(true);
 
   // Reopen Modal State
   const [showReopenModal, setShowReopenModal] = useState(false);
@@ -304,10 +306,12 @@ export default function CustomerTicketDetailModal({
 
   // Message chat attachments
   const [messageFiles, setMessageFiles] = useState([]);
+  const [messageFilesLoading, setMessageFilesLoading] = useState(Boolean(ticketNumericId));
 
   useEffect(() => {
     let isMounted = true;
     if (ticketNumericId) {
+      setMessageFilesLoading(true);
       getTicketMessages(ticketNumericId)
         .then((res) => {
           if (!isMounted) return;
@@ -330,7 +334,12 @@ export default function CustomerTicketDetailModal({
           });
           setMessageFiles(files);
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => {
+          if (isMounted) setMessageFilesLoading(false);
+        });
+    } else {
+      setMessageFilesLoading(false);
     }
     return () => { isMounted = false; };
   }, [ticketNumericId]);
@@ -340,7 +349,10 @@ export default function CustomerTicketDetailModal({
   }, [normalizedAttachments, messageFiles, proofFiles]);
 
   const loadTimeline = useCallback(async () => {
-    if (!ticketNumericId) return;
+    if (!ticketNumericId) {
+      setTimelineLoading(false);
+      return;
+    }
     setTimelineLoading(true);
     try {
       const res = await getTicketTimeline(ticketNumericId, { page: 1, per_page: 20, order: 'desc' });
@@ -481,8 +493,9 @@ export default function CustomerTicketDetailModal({
   const tabsConfig = [
     { id: 'details', label: 'Details' },
     ...((isCSSide || allAssignees.length >= 1) ? [{ id: 'assignees', label: 'Assignees', count: allAssignees.length }] : []),
-    { id: 'updates', label: 'Updates', count: updatesCount },
-    { id: 'files', label: 'Files', count: filesCount },
+    // A null count hides the number while that tab is still loading, so it never flashes a wrong total.
+    { id: 'updates', label: 'Updates', count: timelineLoading ? null : updatesCount },
+    { id: 'files', label: 'Files', count: messageFilesLoading ? null : filesCount },
   ];
 
   return (
@@ -522,7 +535,17 @@ export default function CustomerTicketDetailModal({
               )
             }
             primaryAction={
-              typeof onAssign === 'function' && effectiveTicket.status !== 'Closed' && effectiveTicket.status !== 'Discarded' ? (
+              typeof onDone === 'function' ? (
+                <button
+                  type="button"
+                  onClick={onDone}
+                  className="h-9 px-4 rounded-lg bg-[#252578] hover:bg-[#1a1a5c] text-white text-xs font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
+                  data-testid="ticket-modal-done"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Done</span>
+                </button>
+              ) : typeof onAssign === 'function' && effectiveTicket.status !== 'Closed' && effectiveTicket.status !== 'Discarded' ? (
                 <button
                   type="button"
                   onClick={() => onAssign(effectiveTicket)}
@@ -820,7 +843,22 @@ export default function CustomerTicketDetailModal({
 
         {activeTab === 'files' && (
           <div id="panel-files" role="tabpanel" aria-labelledby="tab-files" className="space-y-3 pt-1 animate-in fade-in duration-150">
-            {allFiles.length === 0 ? (
+            {messageFilesLoading ? (
+              <div aria-busy="true" aria-label="Loading attachments" data-testid="files-skeleton">
+                <SkeletonLoader className="h-3 w-32 mb-2" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[0, 1].map((i) => (
+                    <div key={i} className="flex items-center gap-3 rounded-xl border border-[#D5D9E4] bg-white p-3">
+                      <SkeletonLoader className="h-10 w-10 shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <SkeletonLoader className="h-3 w-3/4" />
+                        <SkeletonLoader className="h-3 w-1/2" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : allFiles.length === 0 ? (
               <div className="p-8 text-center text-xs text-[#5A6178] rounded-xl border border-dashed border-[#D5D9E4] bg-[#F5F6FA]">
                 No files or attachments currently attached to this ticket.
               </div>

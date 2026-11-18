@@ -364,7 +364,7 @@ export default function TicketCreation() {
     description: formData.description,
     categories: options.problem_categories,
     enabled: !loadingOptions && !categoryTouched && Boolean(categoryIsAiOwned),
-    debounceMs: 800,
+    debounceMs: 500,
   });
   const suggestedCategoryId = categoryPreview.category?.problem_category_ID ?? null;
 
@@ -407,6 +407,10 @@ export default function TicketCreation() {
     const normalized = normalizeCasing(raw);
     if (normalized !== raw) {
       setFormData((prev) => ({ ...prev, description: normalized }));
+    } else {
+      // Leaving the box means the customer is done typing: ask for the category now, not after the delay.
+      // (When the casing changes above, the text changes and the hook asks again with the final text.)
+      categoryPreview.flush();
     }
 
     const trimmed = normalized.trim();
@@ -1248,6 +1252,10 @@ export default function TicketCreation() {
           onReopen={null}
           onResolve={null}
           allowReopen={false}
+          onDone={() => {
+            setShowCreatedSummaryModal(false);
+            navigate('/my-tickets');
+          }}
           customerName={user?.name || `${user?.first_name || ''} ${user?.last_name || ''}`.trim() || 'Customer'}
         />
       )}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { suggestProblemCategory } from '@/services/ticketService';
 
 export const PENDING_CLASSIFICATION = 'Pending classification';
@@ -31,6 +31,8 @@ export default function useCategoryPreview({
   const [category, setCategory] = useState(null);
   const [loading, setLoading] = useState(false);
   const requestRef = useRef(0);
+  // The debounced request waiting to fire, so flush() can send it now instead of after the delay.
+  const pendingRef = useRef(null);
 
   const categoryKey = (categories || []).map((c) => c.problem_category_ID).join(',');
 
@@ -52,7 +54,8 @@ export default function useCategoryPreview({
 
     const requestId = ++requestRef.current;
     setLoading(true);
-    const timer = setTimeout(() => {
+    const run = () => {
+      pendingRef.current = null;
       suggestProblemCategory(title || '', desc, list)
         .then((suggestion) => {
           if (requestId !== requestRef.current) return;
@@ -64,16 +67,30 @@ export default function useCategoryPreview({
         .finally(() => {
           if (requestId === requestRef.current) setLoading(false);
         });
-    }, debounceMs);
+    };
+    const timer = setTimeout(run, debounceMs);
+    pendingRef.current = { timer, run };
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      pendingRef.current = null;
+    };
     // categoryKey stands in for the categories array so a new array with the same ids does not refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [title, description, categoryKey, fixedCategoryId, enabled, debounceMs]);
 
+  // Send the waiting request immediately (for example when the customer leaves the description box).
+  const flush = useCallback(() => {
+    const pending = pendingRef.current;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pending.run();
+  }, []);
+
   return {
     category,
     loading,
+    flush,
     label: category?.category_name || PENDING_CLASSIFICATION,
     isSoftware: isSoftwareCategory(category),
     isService: isServiceCategory(category),

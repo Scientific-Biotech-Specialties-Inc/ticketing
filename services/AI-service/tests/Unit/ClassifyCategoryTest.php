@@ -82,6 +82,55 @@ class ClassifyCategoryTest extends TestCase
         Http::assertSent(fn ($request) => ($request['generationConfig']['thinkingConfig']['thinkingBudget'] ?? null) === 0);
     }
 
+    /** A hung connection used to burn the whole 6s and return nothing; one quick retry recovers it. */
+    public function test_a_hung_connection_is_retried_once_and_still_suggests(): void
+    {
+        $calls = 0;
+        Http::fake(function () use (&$calls) {
+            if (++$calls === 1) {
+                throw new \GuzzleHttp\Exception\ConnectException('Operation timed out', new \GuzzleHttp\Psr7\Request('POST', 'gemini'));
+            }
+
+            return Http::response(['candidates' => [['content' => ['parts' => [['text' => '{"category_id": 7, "confidence": 0.92, "reasoning": "Drift."}']]]]]]);
+        });
+
+        $result = $this->service()->classifyCategory('Analyzer drift', 'Results are off', $this->categories);
+
+        $this->assertSame(7, $result['category_id']);
+        $this->assertSame(2, $calls);
+    }
+
+    public function test_an_http_error_is_not_retried(): void
+    {
+        Http::fake(['*' => Http::response('boom', 500)]);
+
+        $this->service()->classifyCategory('x', 'y', $this->categories);
+
+        Http::assertSentCount(1);
+    }
+
+    public function test_the_same_question_is_answered_from_cache_without_a_second_gemini_call(): void
+    {
+        $this->fakeGemini('{"category_id": 7, "confidence": 0.92, "reasoning": "Calibration drift."}');
+
+        $first = $this->service()->classifyCategory('Analyzer drift', 'Results are off', $this->categories);
+        $second = $this->service()->classifyCategory('Analyzer drift', 'Results are off', $this->categories);
+
+        $this->assertSame(7, $first['category_id']);
+        $this->assertSame($first, $second);
+        Http::assertSentCount(1);
+    }
+
+    public function test_an_unconfident_answer_is_not_cached(): void
+    {
+        $this->fakeGemini('{"category_id": 3, "confidence": 0.3, "reasoning": "Unsure."}');
+
+        $this->service()->classifyCategory('x', 'y', $this->categories);
+        $this->service()->classifyCategory('x', 'y', $this->categories);
+
+        Http::assertSentCount(2);
+    }
+
     public function test_no_api_key_means_no_suggestion_and_no_http_call(): void
     {
         Http::fake();

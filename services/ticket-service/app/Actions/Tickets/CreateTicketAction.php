@@ -10,6 +10,7 @@ use App\Services\SLAService;
 use App\Services\TicketCacheService;
 use App\Services\TicketLimitService;
 use App\Services\TicketNumberGeneratorService;
+use App\Services\TicketBranchResolver;
 use App\Services\TicketConfigurationService;
 use App\Services\TicketNotificationService;
 
@@ -52,6 +53,12 @@ class CreateTicketAction
         $ticketNumber = $this->numberGeneratorService->generateNextTicketNumber($deptCodeParam);
 
         $defaults = TicketConfigurationService::getDefaultsConfig();
+
+        // Every ticket gets a branch (request, then equipment, then the default), so branch staff see it.
+        $validated['branch_id'] = app(TicketBranchResolver::class)->resolve(
+            $validated['branch_id'] ?? null,
+            $validated['machine_ID'] ?? null
+        );
 
         $priorityId = $validated['priority_ID'] ?? null;
         if (empty($priorityId)) {

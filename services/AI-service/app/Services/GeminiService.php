@@ -2,6 +2,8 @@
 
 namespace App\Services;
 
+use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -582,6 +584,14 @@ class GeminiService
             $lines[] = "{$c['id']}: {$c['name']}";
         }
 
+        // The ticket form asks again whenever the customer pauses typing, often with the same text.
+        // Remember confident answers briefly so a repeat question is instant and costs no Gemini call.
+        $cacheKey = 'ai:classify-category:' . sha1(json_encode([$this->model, $title, $description, $lines]));
+        $cached = Cache::get($cacheKey);
+        if (is_array($cached) && isset($byId[(string) ($cached['category_id'] ?? '')])) {
+            return $cached;
+        }
+
         try {
             $url = "{$this->baseUrl}/{$this->model}:generateContent";
             $systemInstruction = "You are an enterprise hospital and clinic IT/Service desk triage assistant.\n"
@@ -591,8 +601,14 @@ class GeminiService
                 . "Output strictly a raw JSON object with no markdown:\n"
                 . "{\"category_id\": <id from the list or null>, \"confidence\": 0.90, \"reasoning\": \"1 concise sentence.\"}";
 
+            // A normal answer takes about 1s. Now and then the connection hangs with 0 bytes received;
+            // waiting 6s for that left the customer with no suggestion at all. Cut a hang off at 3s and
+            // retry once straight away, which almost always answers. Only connection failures retry;
+            // an HTTP error answer is final.
             $response = Http::withHeaders(['Content-Type' => 'application/json', 'x-goog-api-key' => $this->apiKey])
-                ->timeout(6)
+                ->connectTimeout(2)
+                ->timeout(3)
+                ->retry(2, 0, fn ($e) => $e instanceof ConnectionException, false)
                 ->post($url, [
                     'systemInstruction' => ['parts' => [['text' => $systemInstruction]]],
                     'contents' => [[
@@ -616,12 +632,15 @@ class GeminiService
 
                     // Only accept an id that really is in the supplied list, with enough confidence.
                     if ($picked !== null && isset($byId[(string) $picked]) && $confidence >= $minConfidence) {
-                        return [
+                        $result = [
                             'category_id' => $byId[(string) $picked],
                             'confidence' => $confidence,
                             'reasoning' => (string) ($data['reasoning'] ?? ''),
                             'source' => 'gemini',
                         ];
+                        Cache::put($cacheKey, $result, now()->addMinutes(10));
+
+                        return $result;
                     }
                 }
             }
