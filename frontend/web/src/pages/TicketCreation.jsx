@@ -13,8 +13,8 @@ import {
   uploadAttachments,
   getEscalateHandoff,
   classifyDepartment,
-  suggestProblemCategory,
 } from '@/services/ticketService';
+import useCategoryPreview from '@/hooks/useCategoryPreview';
 import { getSystemStatus, getFileLimitsConfig } from '@/services/configurationService';
 import { normalizeCasing } from '@/utils/normalizeCasing';
 import { formatProperTitleCase, needsProperCasing } from '@/utils/titleCaseUtils';
@@ -191,6 +191,8 @@ export default function TicketCreation() {
 
   // AI problem category suggestion (pre-selects the dropdown; the customer can always change it)
   const [aiCategoryHint, setAiCategoryHint] = useState(null);
+  // True once the customer picks a category themselves; the AI never overrides a manual choice.
+  const [categoryTouched, setCategoryTouched] = useState(false);
 
   // AI Department Triage State
   const [selectedDepartment, setSelectedDepartment] = useState('IT');
@@ -339,22 +341,57 @@ export default function TicketCreation() {
     }
   }, [location.state, options.machines, options.problem_categories, draftId, resolveMachineId, resolveCategoryId]);
 
+  // Keep the routing department in line with the chosen category (manual or AI).
+  const applyCategoryDepartment = useCallback((categoryId) => {
+    const selectedCat = (options.problem_categories || []).find(
+      (c) => String(c.problem_category_ID) === String(categoryId)
+    );
+    const catName = (selectedCat?.category_name || '').toLowerCase();
+    if (catName.includes('it') || catName.includes('software') || catName.includes('system') || catName.includes('network')) {
+      setSelectedDepartment('IT');
+    } else if (catName.includes('service') || catName.includes('biomedical') || catName.includes('maintenance') || catName.includes('hardware')) {
+      setSelectedDepartment('Service');
+    }
+    setDepartmentConfirmed(false);
+  }, [options.problem_categories]);
+
+  // Live AI category suggestion while the customer types. It only runs while the category is empty or
+  // still the AI's own pick, so a manual choice or a draft / AI chat prefill is never overwritten.
+  const categoryIsAiOwned = !formData.problem_category_ID
+    || (aiCategoryHint && String(aiCategoryHint.category_id) === String(formData.problem_category_ID));
+  const categoryPreview = useCategoryPreview({
+    title: formData.title,
+    description: formData.description,
+    categories: options.problem_categories,
+    enabled: !loadingOptions && !categoryTouched && Boolean(categoryIsAiOwned),
+    debounceMs: 800,
+  });
+  const suggestedCategoryId = categoryPreview.category?.problem_category_ID ?? null;
+
+  useEffect(() => {
+    if (suggestedCategoryId === null || categoryTouched) return;
+    const current = formData.problem_category_ID;
+    const ownedByAi = !current || (aiCategoryHint && String(aiCategoryHint.category_id) === String(current));
+    if (!ownedByAi) return;
+    if (String(current) !== String(suggestedCategoryId)) {
+      setFormData((prev) => ({ ...prev, problem_category_ID: suggestedCategoryId }));
+      applyCategoryDepartment(suggestedCategoryId);
+    }
+    setAiCategoryHint({ category_id: suggestedCategoryId });
+    // Only a new suggestion should apply; formData / aiCategoryHint are read, not watched, so the
+    // effect's own updates do not re-trigger it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestedCategoryId, categoryTouched]);
+
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
 
     if (name === 'problem_category_ID') {
       setAiCategoryHint(null); // a manual choice replaces the AI suggestion
-      const selectedCat = (options.problem_categories || []).find(
-        (c) => String(c.problem_category_ID) === String(value)
-      );
-      const catName = (selectedCat?.category_name || '').toLowerCase();
-      if (catName.includes('it') || catName.includes('software') || catName.includes('system') || catName.includes('network')) {
-        setSelectedDepartment('IT');
-      } else if (catName.includes('service') || catName.includes('biomedical') || catName.includes('maintenance') || catName.includes('hardware')) {
-        setSelectedDepartment('Service');
-      }
-      setDepartmentConfirmed(false);
+      // Clearing back to "Select Category" hands the choice back to the AI.
+      setCategoryTouched(value !== '');
+      applyCategoryDepartment(value);
     }
   };
 
@@ -376,21 +413,7 @@ export default function TicketCreation() {
     if (trimmed.length >= 20 && trimmed !== lastClassifiedText) {
       setLastClassifiedText(trimmed);
 
-      // Suggest a category in parallel, but only fill the dropdown if the customer has not chosen one.
-      if (!formData.problem_category_ID) {
-        suggestProblemCategory(formData.title || '', trimmed, options.problem_categories || [])
-          .then((suggestion) => {
-            if (!suggestion?.category_id) return;
-            setFormData((prev) => (
-              prev.problem_category_ID
-                ? prev
-                : { ...prev, problem_category_ID: suggestion.category_id }
-            ));
-            setAiCategoryHint(suggestion);
-          })
-          .catch(() => {});
-      }
-
+      // The problem category is suggested live while typing (useCategoryPreview above).
       try {
         setIsClassifying(true);
         const classification = await classifyDepartment(formData.title || '', trimmed);
@@ -776,11 +799,11 @@ export default function TicketCreation() {
         ...newTicket,
         id: newTicket.ticket_number || (newTicketId ? `TKT-${String(newTicketId).padStart(4, '0')}` : 'TKT-0001'),
         ticket_ID: newTicketId,
-        title: title.trim(),
-        description: description.trim(),
-        priority: options.priorities?.find(p => String(p.priority_ID || p.id) === String(priorityId))?.priority_name || 'Low',
-        category: options.categories?.find(c => String(c.problem_category_ID || c.id) === String(categoryId))?.category_name || 'General',
-        equipment: options.machines?.find(m => String(m.machine_ID || m.id) === String(machineId))?.machine_name || 'Equipment',
+        title: finalTitle.trim(),
+        description: normalizedDesc.trim(),
+        priority: options.ticket_priorities?.find(p => String(p.priority_ID || p.id) === String(formData.priority_ID))?.priority_name || 'Low',
+        category: options.problem_categories?.find(c => String(c.problem_category_ID || c.id) === String(formData.problem_category_ID))?.category_name || 'General',
+        equipment: options.machines?.find(m => String(m.machine_ID || m.id) === String(formData.machine_ID))?.machine_name || 'Equipment',
         status: 'Open',
         date_created: new Date().toISOString(),
       };
@@ -894,6 +917,8 @@ export default function TicketCreation() {
               onClick={() => {
                 setDraftId(null);
                 setFormData({ title: '', machine_ID: '', problem_category_ID: '', description: '', priority_ID: 1 });
+                setCategoryTouched(false);
+                setAiCategoryHint(null);
                 setExistingDraftAttachments([]);
                 setFiles([]);
               }}
@@ -967,6 +992,21 @@ export default function TicketCreation() {
               </div>
             </div>
 
+            <div className="space-y-1.5">
+              <Label htmlFor="ticket-description">Detailed Description <span className="text-destructive">*</span></Label>
+              <Textarea
+                id="ticket-description"
+                name="description"
+                required
+                rows={5}
+                value={formData.description}
+                onChange={handleChange}
+                onBlur={handleDescriptionBlur}
+                placeholder="Please describe symptoms, error messages, and current machine status in detail..."
+              />
+            </div>
+
+            {/* Category sits after the description: the AI fills it from what the customer wrote, they double-check it. */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-1.5">
                 <Label htmlFor="ticket-category">Problem Category <span className="text-destructive">*</span></Label>
@@ -984,26 +1024,22 @@ export default function TicketCreation() {
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
-                {aiCategoryHint && String(aiCategoryHint.category_id) === String(formData.problem_category_ID) && (
-                  <p className="text-xs text-muted-slate" data-testid="ai-category-hint">
-                    Suggested by AI based on your description. You can change it.
+                {categoryPreview.loading ? (
+                  <p className="flex items-center gap-1 text-xs text-muted-slate" data-testid="ai-category-detecting">
+                    <Sparkles className="h-3 w-3 text-accent animate-pulse" />
+                    AI is detecting the category from your description…
                   </p>
-                )}
+                ) : aiCategoryHint && String(aiCategoryHint.category_id) === String(formData.problem_category_ID) ? (
+                  <p className="flex items-center gap-1 text-xs text-muted-slate" data-testid="ai-category-hint">
+                    <Sparkles className="h-3 w-3 text-accent" />
+                    Suggested by AI based on your description. Please double-check it.
+                  </p>
+                ) : !formData.problem_category_ID ? (
+                  <p className="text-xs text-muted-slate">
+                    Describe the problem above and AI will suggest a category.
+                  </p>
+                ) : null}
               </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="ticket-description">Detailed Description <span className="text-destructive">*</span></Label>
-              <Textarea
-                id="ticket-description"
-                name="description"
-                required
-                rows={5}
-                value={formData.description}
-                onChange={handleChange}
-                onBlur={handleDescriptionBlur}
-                placeholder="Please describe symptoms, error messages, and current machine status in detail..."
-              />
             </div>
 
 
