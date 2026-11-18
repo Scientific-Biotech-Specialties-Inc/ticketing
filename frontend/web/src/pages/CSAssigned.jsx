@@ -149,7 +149,9 @@ export default function CSAssigned() {
     scope: 'assigned',
     page,
     limit: ITEMS_PER_PAGE,
-    tab: assignedTab,
+    // "All Assigned" asks for the active tab, so resolved/closed tickets (shown on Ticket History)
+    // are neither listed nor counted.
+    tab: assignedTab === 'all' ? 'active' : assignedTab,
     search: debouncedSearch,
     category: category !== 'All Categories' ? category : undefined,
     machine: machineFilter !== 'All Machines' ? machineFilter : undefined,
@@ -371,7 +373,7 @@ export default function CSAssigned() {
   );
 
   const counts = {
-    all: tabCounts?.all ?? 0,
+    all: tabCounts?.active ?? Math.max(0, (tabCounts?.all ?? 0) - (tabCounts?.resolvedClosed ?? 0)),
     inProgress: tabCounts?.inProgress ?? 0,
     pendingEval: tabCounts?.pendingEval ?? 0,
     reassigned: tabCounts?.reassigned ?? 0,
@@ -672,11 +674,12 @@ export default function CSAssigned() {
 
       {/* Table Card */}
       <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-xs w-full min-w-0 max-w-full">
-        <Table className="min-w-[960px] w-full">
+        <Table className="min-w-[1060px] w-full">
           <TableHeader>
             <TableRow>
               <TableHead className="w-[140px]">Ticket ID</TableHead>
               <TableHead>Title</TableHead>
+              <TableHead className="w-[100px]">Priority</TableHead>
               <TableHead>Category</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-[160px]">
@@ -703,10 +706,10 @@ export default function CSAssigned() {
           </TableHeader>
           <TableBody>
             {loading ? (
-              <DataTableSkeleton columns={7} rows={6} />
+              <DataTableSkeleton columns={8} rows={6} />
             ) : filtered.length === 0 ? (
               <DataTableEmptyState
-                colSpan={7}
+                colSpan={8}
                 message="No tickets found in this assigned queue."
               />
             ) : (
@@ -752,6 +755,11 @@ export default function CSAssigned() {
                           </span>
                         )}
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={getStatusBadgeVariant(t.priority || 'Medium')}>
+                        {t.priority || 'Medium'}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       {t.category}
@@ -862,7 +870,7 @@ export default function CSAssigned() {
 
             // If the status is 'On Hold', resumed, or classification updated,
             // the dedicated endpoint (POST /hold, POST /resume, or PATCH /classification) was already executed directly in TicketSummary.
-            if (updatedFields.status === 'On Hold' || updatedFields.hold_reason !== undefined || updatedFields.category || updatedFields.priority) {
+            if (updatedFields.status === 'On Hold' || updatedFields.status === 'Escalated' || updatedFields.hold_reason !== undefined || updatedFields.category || updatedFields.priority) {
               loadLiveData({ forceRefresh: true, source: 'poll' });
               return;
             }

@@ -7,6 +7,7 @@ import { Badge, getStatusBadgeVariant } from '@/components/ui/badge';
 import { PageHeader } from '@/components/ui/page-header';
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@/components/ui/table';
 import { DataTableSkeleton, DataTableEmptyState } from '@/components/ui/data-table';
+import { Skeleton } from '@/components/ui/skeleton';
 import Pagination from '@/components/Pagination';
 import {
   DropdownMenu,
@@ -78,7 +79,7 @@ export default function MyTickets({ mode = 'all' }) {
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const urlTicketId = params?.ticketId || searchParams.get('ticketId');
 
   const isLoggedOut =
@@ -117,6 +118,9 @@ export default function MyTickets({ mode = 'all' }) {
   const [feedbackVersion, setFeedbackVersion] = useState(0);
   const [drafts, setDrafts] = useState([]);
   const [loadingDrafts, setLoadingDrafts] = useState(false);
+  // Form options resolve a draft's stored machine_ID / problem_category_ID into readable names.
+  const [draftLookupOptions, setDraftLookupOptions] = useState(() => getCachedTicketFormOptions());
+  const [loadingDraftLookups, setLoadingDraftLookups] = useState(() => !getCachedTicketFormOptions());
   const [filterOptions, setFilterOptions] = useState({
     categories: [],
     statuses: [],
@@ -147,6 +151,42 @@ export default function MyTickets({ mode = 'all' }) {
       setLoadingDrafts(false);
     }
   }, [customerId, isAuthenticated]);
+
+  // Load the customer's equipment/software and problem categories so drafts show real names.
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    let cancelled = false;
+    if (!getCachedTicketFormOptions()) setLoadingDraftLookups(true);
+    getTicketFormOptions()
+      .then((opts) => { if (!cancelled) setDraftLookupOptions(opts || null); })
+      .catch((err) => {
+        if (err?.response?.status !== 401) console.warn('Failed to load ticket form options:', err);
+      })
+      .finally(() => { if (!cancelled) setLoadingDraftLookups(false); });
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
+
+  const draftEquipmentNames = useMemo(() => {
+    const map = new Map();
+    (draftLookupOptions?.assets || []).forEach((a) => {
+      map.set(String(a.machine_ID), a.label || a.name);
+    });
+    (draftLookupOptions?.machines || []).forEach((m) => {
+      const key = String(m.machine_ID);
+      if (!map.has(key) && m.machine_name) {
+        map.set(key, m.serial_number ? `${m.machine_name} - ${m.serial_number}` : m.machine_name);
+      }
+    });
+    return map;
+  }, [draftLookupOptions]);
+
+  const draftCategoryNames = useMemo(() => {
+    const map = new Map();
+    (draftLookupOptions?.problem_categories || []).forEach((c) => {
+      map.set(String(c.problem_category_ID), c.category_name || c.name);
+    });
+    return map;
+  }, [draftLookupOptions]);
 
   useEffect(() => {
     const targetTab = location.state?.tab || searchParams.get('tab');
@@ -1449,11 +1489,21 @@ export default function MyTickets({ mode = 'all' }) {
                       </div>
                     )}
                   </TableCell>
-                  <TableCell className="text-muted-slate">
-                    {draft.machine_ID ? `Equipment #${draft.machine_ID}` : '—'}
+                  <TableCell className="text-muted-slate max-w-[200px]">
+                    {!draft.machine_ID ? '—' : loadingDraftLookups ? (
+                      <Skeleton className="h-4 w-32" data-testid="draft-equipment-skeleton" />
+                    ) : (
+                      <span className="block truncate" title={draftEquipmentNames.get(String(draft.machine_ID)) || ''}>
+                        {draftEquipmentNames.get(String(draft.machine_ID)) || 'Unavailable equipment'}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-muted-slate">
-                    {draft.problem_category_ID ? `Category #${draft.problem_category_ID}` : '—'}
+                    {!draft.problem_category_ID ? '—' : loadingDraftLookups ? (
+                      <Skeleton className="h-4 w-24" data-testid="draft-category-skeleton" />
+                    ) : (
+                      draftCategoryNames.get(String(draft.problem_category_ID)) || '—'
+                    )}
                   </TableCell>
                   <TableCell className="text-muted-slate text-xs whitespace-nowrap">
                     {formatDisplayDate(draft.last_saved_at || draft.updated_at)}

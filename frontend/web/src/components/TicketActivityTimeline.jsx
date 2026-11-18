@@ -87,12 +87,14 @@ export default function TicketActivityTimeline({
   pageSize = 8,
   collapsible = false,
   defaultCollapsed = false,
+  // Customers see the full trail without the activity type filter.
+  showFilter = true,
 }) {
   // Always the real database id. A display id such as "TKTS-00015" is not the same number.
   const ticketId = ticketIdProp ?? ticket?.ticket_ID ?? null;
 
   const [isCollapsed, setIsCollapsed] = useState(() => Boolean(collapsible && defaultCollapsed));
-  const [sortOrder, setSortOrder] = useState('asc'); // asc = oldest first
+  const [sortOrder, setSortOrder] = useState('desc'); // newest first by default
   const [selectedFilter, setSelectedFilter] = useState('all');
   const [entries, setEntries] = useState([]);
   const [pagination, setPagination] = useState({ current_page: 0, last_page: 1, total: 0 });
@@ -238,16 +240,18 @@ export default function TicketActivityTimeline({
         </div>
 
         <div className={`${collapsible && isCollapsed ? 'hidden' : 'flex'} items-center gap-2 flex-wrap`}>
-          <select
-            aria-label="Filter activity"
-            value={selectedFilter}
-            onChange={(e) => setSelectedFilter(e.target.value)}
-            className="h-8 rounded-lg border border-border bg-page px-2.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
-          >
-            {FILTER_TYPES.map((f) => (
-              <option key={f.id} value={f.id}>{f.label}</option>
-            ))}
-          </select>
+          {showFilter && (
+            <select
+              aria-label="Filter activity"
+              value={selectedFilter}
+              onChange={(e) => setSelectedFilter(e.target.value)}
+              className="h-8 rounded-lg border border-border bg-page px-2.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
+            >
+              {FILTER_TYPES.map((f) => (
+                <option key={f.id} value={f.id}>{f.label}</option>
+              ))}
+            </select>
+          )}
 
           <Button
             type="button"

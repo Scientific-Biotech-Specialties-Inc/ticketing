@@ -18,9 +18,9 @@ class GetCustomerDashboardMetricsAction
      * @param array $filters
      * @return array
      */
-    public function execute(int $customerId, int $limit = 5, array $filters = []): array
+    public function execute(int $customerId, int $limit = 5, array $filters = [], bool $forceRefresh = false): array
     {
-        return $this->dashboardService->getCustomerDashboard($customerId, $limit, $filters);
+        return $this->dashboardService->getCustomerDashboard($customerId, $limit, $filters, $forceRefresh);
     }
 }
 

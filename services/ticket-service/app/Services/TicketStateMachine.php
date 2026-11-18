@@ -560,6 +560,10 @@ class TicketStateMachine
                 }
                 $updateFields['closed_at'] = now();
                 $auditAction = 'close';
+                // CS resolve remarks (required when CS resolves from the Incoming modal).
+                if (!empty($context['reason'])) {
+                    $auditDetails['reason'] = $context['reason'];
+                }
                 break;
 
             case self::STATE_CANCELLED:

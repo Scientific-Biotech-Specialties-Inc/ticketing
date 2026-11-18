@@ -15,7 +15,10 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
+import { getEligibleEmployees } from '@/services/ticketService';
+import { getEscalationManagers } from '@/utils/escalationManagers';
 
 /**
  * Categorize ticket into Service, IT, or Others
@@ -56,11 +59,10 @@ export const resolveCategoryType = (categoryName = '', departmentName = '') => {
 };
 
 /**
- * TS032: Category-Specific Escalation Modal
- * Computes and displays the determined escalation target based on ticket category:
- * - Service: Position level escalation (e.g. L1 to L2 / Senior Engineer)
- * - IT: Technical role / team routing (e.g. Senior System Admin / Software Engineer)
- * - Others: Configured routing target (e.g. Operations Escalation Lead)
+ * TS032: Escalation Modal
+ * Escalation goes to the manager of each assigned employee's department, not to a
+ * category based target. Two assignees from IT and Service escalate to both managers.
+ * The ticket-service resolves and notifies the real recipients; this modal previews them.
  */
 export default function EscalateTicketModal({
   isOpen,
@@ -73,139 +75,57 @@ export default function EscalateTicketModal({
   useLockBodyScroll(isOpen);
 
   const [escalationReason, setEscalationReason] = useState('');
-  const [selectedTargetId, setSelectedTargetId] = useState(null);
   const [validationError, setValidationError] = useState('');
+  const [departmentManagers, setDepartmentManagers] = useState(null);
+  const [loadingManagers, setLoadingManagers] = useState(false);
 
   const categoryName = ticket?.category || ticket?.category_name || '';
-  const departmentName = ticket?.department || ticket?.department_name || '';
+  const categoryType = useMemo(
+    () => resolveCategoryType(categoryName, ticket?.department || ticket?.department_name || ''),
+    [categoryName, ticket?.department, ticket?.department_name]
+  );
 
-  const categoryType = useMemo(() => {
-    return resolveCategoryType(categoryName, departmentName);
-  }, [categoryName, departmentName]);
-
-  // Compute eligible candidates based strictly on the category rule
-  const eligibleCandidates = useMemo(() => {
-    if (!employees || employees.length === 0) return [];
-
-    if (categoryType === 'service') {
-      // Position Level escalation: Senior Engineers, L2, L3, Supervisors, Managers in Service/Engineering/Biomedical
-      return employees.filter((emp) => {
-        const role = String(emp.role || emp.position || '').toLowerCase();
-        const dept = String(emp.department || '').toLowerCase();
-        const level = String(emp.position_level || '').toLowerCase();
-        const techRole = String(emp.technical_role || '').toLowerCase();
-
-        const isServiceDept =
-          dept.includes('service') ||
-          dept.includes('engineering') ||
-          dept.includes('operations') ||
-          dept.includes('biomedical') ||
-          dept.includes('radiology') ||
-          dept.includes('facilities') ||
-          dept.includes('equipment');
-
-        const isHigherTier =
-          level.includes('senior') ||
-          level.includes('lead') ||
-          level.includes('manager') ||
-          level.includes('l2') ||
-          level.includes('l3') ||
-          role.includes('senior') ||
-          role.includes('lead') ||
-          role.includes('supervisor') ||
-          role.includes('manager') ||
-          role.includes('specialist') ||
-          role.includes('l2') ||
-          role.includes('l3') ||
-          techRole.includes('senior') ||
-          techRole.includes('lead') ||
-          techRole.includes('specialist') ||
-          techRole.includes('manager');
-
-        return isServiceDept && isHigherTier;
-      });
+  const assignees = useMemo(() => {
+    if (Array.isArray(ticket?.assigned_employees) && ticket.assigned_employees.length > 0) {
+      return ticket.assigned_employees;
     }
+    return Array.isArray(ticket?.assigned) ? ticket.assigned : [];
+  }, [ticket?.assigned_employees, ticket?.assigned]);
 
-    if (categoryType === 'it') {
-      // Technical Role / Team escalation: IT Admin, System Admin, Software Engineer, Security, Network
-      return employees.filter((emp) => {
-        const role = String(emp.role || emp.position || '').toLowerCase();
-        const dept = String(emp.department || '').toLowerCase();
-        const level = String(emp.position_level || '').toLowerCase();
-        const techRole = String(emp.technical_role || '').toLowerCase();
+  const ticketKey = ticket?.ticket_ID || ticket?.id;
 
-        const isIT = dept.includes('it') || dept.includes('information tech') || dept.includes('network');
-        const isTechRole =
-          level.includes('senior') ||
-          level.includes('lead') ||
-          level.includes('manager') ||
-          role.includes('admin') ||
-          role.includes('engineer') ||
-          role.includes('security') ||
-          role.includes('system') ||
-          role.includes('lead') ||
-          role.includes('senior') ||
-          role.includes('manager') ||
-          techRole.includes('admin') ||
-          techRole.includes('system') ||
-          techRole.includes('network') ||
-          techRole.includes('specialist');
-
-        return isIT || isTechRole;
-      });
-    }
-
-    // 'others': Configured routing target (Operations Leads, Supervisors, Managers, CS Seniors)
-    return employees.filter((emp) => {
-      const role = String(emp.role || emp.position || '').toLowerCase();
-      const dept = String(emp.department || '').toLowerCase();
-      const level = String(emp.position_level || '').toLowerCase();
-      const techRole = String(emp.technical_role || '').toLowerCase();
-
-      const isLeadOrSenior =
-        level.includes('senior') ||
-        level.includes('lead') ||
-        level.includes('manager') ||
-        role.includes('supervisor') ||
-        role.includes('manager') ||
-        role.includes('lead') ||
-        role.includes('admin') ||
-        role.includes('head') ||
-        role.includes('senior') ||
-        techRole.includes('senior') ||
-        techRole.includes('lead');
-
-      return isLeadOrSenior || dept.includes('operations') || dept.includes('customer service') || dept.includes('facilities') || dept.includes('finance');
-    });
-  }, [employees, categoryType]);
-
-  // Auto-select first eligible candidate when candidates load
+  // The configured department managers come with the eligibility payload.
   useEffect(() => {
-    if (eligibleCandidates.length > 0) {
-      setSelectedTargetId(eligibleCandidates[0].id || eligibleCandidates[0].emp_id);
-    } else {
-      setSelectedTargetId(null);
-    }
+    if (!isOpen || !ticketKey) return undefined;
+    let cancelled = false;
+    setLoadingManagers(true);
+    getEligibleEmployees(ticket)
+      .then((data) => { if (!cancelled) setDepartmentManagers(data?.department_managers || null); })
+      .catch(() => { if (!cancelled) setDepartmentManagers(null); })
+      .finally(() => { if (!cancelled) setLoadingManagers(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, ticketKey]);
+
+  const escalationTargets = useMemo(
+    () => getEscalationManagers(assignees, departmentManagers, employees),
+    [assignees, departmentManagers, employees]
+  );
+
+  useEffect(() => {
     setEscalationReason('');
     setValidationError('');
-  }, [eligibleCandidates, isOpen]);
-
-  const selectedCandidate = useMemo(() => {
-    return eligibleCandidates.find(
-      (c) => (c.id || c.emp_id) === Number(selectedTargetId)
-    );
-  }, [eligibleCandidates, selectedTargetId]);
+  }, [isOpen]);
 
   if (!isOpen || !ticket) return null;
 
+  const hasAssignees = escalationTargets.length > 0;
+  const recipients = escalationTargets.filter((t) => t.manager).map((t) => t.manager);
+
   const handleConfirm = async (e) => {
     e.preventDefault();
-    if (eligibleCandidates.length === 0) {
-      setValidationError('Cannot escalate: No eligible recipients available.');
-      return;
-    }
-    if (!selectedCandidate) {
-      setValidationError('Please select an escalation recipient target.');
+    if (!hasAssignees) {
+      setValidationError("Assign the ticket before escalating, so it can go to the assignees' department managers.");
       return;
     }
     if (!escalationReason.trim()) {
@@ -215,7 +135,8 @@ export default function EscalateTicketModal({
 
     setValidationError('');
     await onConfirmEscalate({
-      targetEmployee: selectedCandidate,
+      managers: recipients,
+      departments: escalationTargets.map((t) => t.department),
       reason: escalationReason.trim(),
       categoryType,
       categoryName,
@@ -263,109 +184,67 @@ export default function EscalateTicketModal({
 
         {/* Modal Body */}
         <form onSubmit={handleConfirm} className="p-6 overflow-y-auto overscroll-contain space-y-5 flex-1">
-          {/* Category Rule Badge Banner */}
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">
-                Category Escalation Rule
-              </span>
-              <Badge variant="outline" className="text-xs font-semibold bg-white border-slate-300 text-[#252578]">
-                {categoryType === 'service'
-                  ? 'Service: Position Level (L1 → L2/Senior)'
-                  : categoryType === 'it'
-                  ? 'IT: Technical Role / Team Specialization'
-                  : 'Others: Configured Operations Routing'}
-              </Badge>
-            </div>
+          {/* Routing rule */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">
+              Escalation Routing
+            </span>
             <p className="text-xs text-slate-600 leading-relaxed">
-              {categoryType === 'service'
-                ? `Ticket category "${categoryName || 'Service'}" requires escalation along tiered position levels. The system will route to a qualified Senior Field Service Engineer or Technical Specialist.`
-                : categoryType === 'it'
-                ? `Ticket category "${categoryName || 'IT'}" requires technical role-based qualification. Routing targets designated Systems Administrators and Technical Engineers.`
-                : `Ticket category "${categoryName || 'General'}" routes per the configured operational escalation path to Operations Leads and Supervisors.`}
+              This ticket escalates to the manager of each assigned employee&apos;s department.
+              Assignees from different departments notify every one of those managers.
             </p>
           </div>
 
-          {/* Blocked Escalation Warning if 0 Eligible Recipients */}
-          {eligibleCandidates.length === 0 ? (
+          {!hasAssignees ? (
             <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 flex items-start gap-3 text-rose-900 shadow-xs">
               <ShieldAlert className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
               <div className="text-xs space-y-1">
-                <p className="font-bold text-rose-900">
-                  Blocked Escalation: No Eligible Recipients Found
-                </p>
+                <p className="font-bold text-rose-900">No Assigned Employees</p>
                 <p className="text-rose-700 leading-relaxed">
-                  No personnel matching the category-specific qualifications (
-                  {categoryType === 'service'
-                    ? 'Higher Position Level / Senior Field Specialist'
-                    : categoryType === 'it'
-                    ? 'Specialized Technical Role / System Administrator'
-                    : 'Designated Operations Lead'}
-                  ) are currently available in the active employee directory. Escalation is temporarily blocked until an eligible target is online.
+                  Escalation goes to the managers of the assigned employees&apos; departments. Assign the ticket first, then escalate.
                 </p>
               </div>
             </div>
           ) : (
             <>
-              {/* Target Selection & Summary Card */}
               <div className="space-y-2">
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Determined Escalation Target <span className="text-rose-500">*</span>
+                  Escalation Recipients
                 </label>
-                <div className="space-y-2">
-                  {eligibleCandidates.map((cand) => {
-                    const candId = cand.id || cand.emp_id;
-                    const isSelected = Number(selectedTargetId) === candId;
-                    return (
-                      <div
-                        key={candId}
-                        onClick={() => setSelectedTargetId(candId)}
-                        className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-3 ${
-                          isSelected
-                            ? 'border-[#252578] bg-[#252578]/5 ring-1 ring-[#252578]'
-                            : 'border-slate-200 hover:border-slate-300 bg-white'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div
-                            className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
-                              isSelected
-                                ? 'bg-[#252578] text-white'
-                                : 'bg-slate-100 text-slate-700'
-                            }`}
-                          >
-                            {(cand.name || cand.first_name || 'U').charAt(0).toUpperCase()}
-                          </div>
-                          <div className="min-w-0">
-                            <p className="text-xs font-bold text-slate-900 truncate">
-                              {cand.name || `${cand.first_name || ''} ${cand.last_name || ''}`.trim() || cand.email}
-                            </p>
-                            <p className="text-[11px] text-slate-500 truncate">
-                              {cand.position_level ? `${cand.position_level} • ` : ''}{cand.technical_role || cand.role || 'Specialist'} • {cand.department || 'Operations'}
-                            </p>
-                          </div>
+                <div className="space-y-2" data-testid="escalation-recipients">
+                  {escalationTargets.map(({ department, manager }) => (
+                    <div
+                      key={department}
+                      className="p-3 rounded-xl border border-slate-200 bg-white flex items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shrink-0 bg-[#252578] text-white">
+                          {manager ? String(manager.name || 'M').charAt(0).toUpperCase() : <Building2 className="w-4 h-4" />}
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
-                          <span
-                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                              cand.status === 'active' || cand.is_active
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : 'bg-slate-100 text-slate-600'
-                            }`}
-                          >
-                            {cand.status === 'active' || cand.is_active ? 'Active' : 'Offline'}
-                          </span>
-                          {isSelected && (
-                            <CheckCircle2 className="w-4 h-4 text-[#252578]" />
+                        <div className="min-w-0">
+                          {loadingManagers && !manager ? (
+                            <>
+                              <Skeleton className="h-3 w-32 mb-2" />
+                              <Skeleton className="h-3 w-24" />
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-xs font-bold text-slate-900 truncate">
+                                {manager?.name || `${department} Department Manager`}
+                              </p>
+                              <p className="text-[11px] text-slate-500 truncate">
+                                Manager • {department}{manager?.email ? ` • ${manager.email}` : ''}
+                              </p>
+                            </>
                           )}
                         </div>
                       </div>
-                    );
-                  })}
+                      <Badge variant="outline" className="text-[10px] shrink-0">{department}</Badge>
+                    </div>
+                  ))}
                 </div>
               </div>
 
-              {/* Escalation Reason / Context Field */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label htmlFor="escalation-reason" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
@@ -381,7 +260,7 @@ export default function EscalateTicketModal({
                   maxLength={500}
                   value={escalationReason}
                   onChange={(e) => setEscalationReason(e.target.value)}
-                  placeholder="Explain why this ticket is being escalated (e.g. Unresolved technical fault after L1 diagnosis; requires senior specialist inspection)..."
+                  placeholder="Explain why this ticket is being escalated (e.g. Unresolved fault after diagnosis; needs management attention)..."
                   className="w-full rounded-xl border border-slate-200 bg-page p-3 text-xs text-slate-900 outline-none focus:border-[#2E85D8] focus:ring-1 focus:ring-[#2E85D8] placeholder:text-slate-400"
                   required
                 />
@@ -401,7 +280,7 @@ export default function EscalateTicketModal({
           <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3 flex items-start gap-2.5 text-xs text-blue-900">
             <Clock className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
             <p className="leading-relaxed">
-              Upon confirmation, the ticket will transition to <strong>Escalated</strong> status per the workflow state machine. The complete conversation history and internal notes will automatically transfer to the new recipient.
+              Upon confirmation, the ticket moves to <strong>Escalated</strong> and each manager listed above is notified. The assigned employees keep the ticket.
             </p>
           </div>
 
@@ -418,7 +297,7 @@ export default function EscalateTicketModal({
             </Button>
             <Button
               type="submit"
-              disabled={isEscalating || eligibleCandidates.length === 0}
+              disabled={isEscalating || !hasAssignees}
               className="bg-[#252578] hover:bg-[#1e1e60] text-white px-5 flex items-center gap-1.5"
             >
               {isEscalating ? (

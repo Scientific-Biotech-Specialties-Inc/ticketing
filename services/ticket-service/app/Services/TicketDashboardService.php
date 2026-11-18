@@ -57,9 +57,13 @@ class TicketDashboardService
         };
     }
 
-    public function getCustomerDashboard(int $createdBy, int $limit, array $filters = []): array
+    public function getCustomerDashboard(int $createdBy, int $limit, array $filters = [], bool $forceRefresh = false): array
     {
         $hasFilters = !empty(array_filter($filters, fn($v) => $v !== null && $v !== ''));
+        if ($forceRefresh) {
+            Cache::forget("customer_dashboard_counts_{$createdBy}");
+            Cache::forget("customer_dashboard_recent_{$createdBy}_{$limit}");
+        }
         $filterKey = $hasFilters ? md5(json_encode($filters)) : 'none';
 
         $summary = Cache::remember("customer_dashboard_counts_{$createdBy}", 60, function () use ($createdBy) {
@@ -450,6 +454,8 @@ class TicketDashboardService
                     't.created_at',
                     't.updated_at',
                     'c.client_name',
+                    'c.email as client_email',
+                    'req.email as requester_employee_email',
                     DB::raw("TRIM(CONCAT(COALESCE(req.first_name, ''), ' ', COALESCE(req.last_name, ''))) as requester_employee_name"),
                     'm.machine_name',
                     'm.serial_number',
@@ -695,6 +701,10 @@ class TicketDashboardService
                     'customer' => (bool) $row->is_internal
                         ? (($row->requester_employee_name !== '' && $row->requester_employee_name !== null) ? $row->requester_employee_name : ($row->requested_by ? 'Employee #' . $row->requested_by : 'Internal Requester'))
                         : ($row->client_name ?: 'Unknown Customer'),
+                    // The requester's email (customer, or the employee for internal tickets), when on file.
+                    'customer_email' => (bool) $row->is_internal
+                        ? ($row->requester_employee_email ?: null)
+                        : ($row->client_email ?: null),
                     'title' => $row->title,
                     'description' => $row->description ?? '',
                     'category' => $row->category_name,
@@ -833,6 +843,9 @@ class TicketDashboardService
         };
     }
 
+    /** Statuses the CS Assigned page's "All Assigned" tab leaves out. */
+    private const CS_ASSIGNED_HIDDEN_STATUSES = ['Resolved', 'Closed', 'Pending Assignment'];
+
     /** Sub tabs of each scope. */
     private function applyCsTab($query, string $scope, string $tab): void
     {
@@ -846,6 +859,9 @@ class TicketDashboardService
         }
 
         match ($tab) {
+            // "All Assigned" on the CS Assigned page: resolved and closed tickets live on Ticket History,
+            // and Pending Assignment tickets are still CS's to assign (they stay on Incoming).
+            'active' => $query->whereNotIn('ts.status_name', self::CS_ASSIGNED_HIDDEN_STATUSES),
             'in_progress' => $query->where('ts.status_name', 'In Progress'),
             'pending_evaluation' => $query->where('ts.status_name', 'Pending Evaluation'),
             'on_hold' => $query->where('ts.status_name', 'On Hold'),
@@ -870,7 +886,9 @@ class TicketDashboardService
             return ['all' => $all, 'pending' => $pending, 'open' => $all - $pending];
         }
 
+        $hiddenList = "'" . implode("', '", self::CS_ASSIGNED_HIDDEN_STATUSES) . "'";
         $row = $base->selectRaw('COUNT(*) as all_count')
+            ->selectRaw($count("ts.status_name NOT IN ({$hiddenList})") . ' as active_count')
             ->selectRaw($count("ts.status_name = 'In Progress'") . ' as in_progress')
             ->selectRaw($count("ts.status_name = 'Pending Evaluation'") . ' as pending_eval')
             ->selectRaw($count($this->pendingReassignSql()) . ' as reassigned')
@@ -880,6 +898,8 @@ class TicketDashboardService
 
         return [
             'all' => (int) ($row->all_count ?? 0),
+            // Matches the 'active' tab (CS Assigned "All Assigned").
+            'active' => (int) ($row->active_count ?? 0),
             'inProgress' => (int) ($row->in_progress ?? 0),
             'pendingEval' => (int) ($row->pending_eval ?? 0),
             'reassigned' => (int) ($row->reassigned ?? 0),

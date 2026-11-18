@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
 import { PersistentBanner } from '@/components/ui/alert-banner';
 import {
   ArrowLeft,
@@ -793,6 +794,9 @@ export default function TicketCreation() {
                 <Label htmlFor="ticket-machine">
                   Equipment / Software <span className="text-destructive">*</span>
                 </Label>
+                {loadingOptions ? (
+                  <Skeleton className="h-10 w-full rounded-lg" data-testid="equipment-skeleton" aria-label="Loading equipment and software" />
+                ) : (
                 <select
                   id="ticket-machine"
                   name="machine_ID"
@@ -818,6 +822,7 @@ export default function TicketCreation() {
                     </optgroup>
                   )}
                 </select>
+                )}
               </div>
             </div>
 
@@ -839,6 +844,9 @@ export default function TicketCreation() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="space-y-1.5">
                 <Label htmlFor="ticket-category">Problem Category</Label>
+                {loadingOptions ? (
+                  <Skeleton className="h-10 w-full rounded-lg" data-testid="category-skeleton" aria-label="Loading problem category" />
+                ) : (
                 <div
                   id="ticket-category"
                   aria-readonly="true"
@@ -847,6 +855,7 @@ export default function TicketCreation() {
                 >
                   {derivedCategoryName || <span className="text-muted-slate">Set automatically from your equipment or software</span>}
                 </div>
+                )}
                 <p className="text-xs text-muted-slate">
                   Equipment problems go to Service, software problems go to Software.
                 </p>

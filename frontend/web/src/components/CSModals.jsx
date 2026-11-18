@@ -86,6 +86,7 @@ import { priorityColors } from '@/constants/employeeTickets';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import EscalateTicketModal from './cs/EscalateTicketModal';
+import { getEscalationManagers } from '@/utils/escalationManagers';
 
 /* Helper functions for robust file attachment handling */
 const isQuarantinedFile = (file) => {
@@ -113,6 +114,88 @@ const getFileName = (file) => {
 /* ─────────────────────────────────────────────
    CONFIRMATION DIALOG
 ───────────────────────────────────────────── */
+/**
+ * Confirmation before CS resolves a ticket from the Incoming modal. Remarks are required.
+ */
+export function ResolveRemarksDialog({ onConfirm, onCancel, isSaving = false, error = '' }) {
+  useLockBodyScroll(true);
+  const [remarks, setRemarks] = useState('');
+  const [touched, setTouched] = useState(false);
+  const trimmed = remarks.trim();
+  const tooShort = trimmed.length < 3;
+
+  return (
+    <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 p-4 backdrop-blur-[1.5px] overscroll-none">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="resolve-remarks-title"
+        className="bg-card border border-border rounded-xl w-full max-w-md max-h-[90vh] overflow-y-auto overscroll-contain shadow-modal p-6 animate-in fade-in zoom-in-95 duration-200"
+      >
+        <div className="flex flex-col items-center text-center">
+          <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-4 text-primary">
+            <CheckCircle2 className="w-6 h-6" />
+          </div>
+          <h4 id="resolve-remarks-title" className="text-lg font-bold text-slate-dark mb-2">
+            Resolve this ticket?
+          </h4>
+          <p className="text-sm text-slate-muted mb-4 leading-relaxed">
+            The ticket will be resolved without being assigned to anyone. The customer can still reopen it within the reopen window.
+          </p>
+        </div>
+
+        <label htmlFor="resolve-remarks" className="block text-xs font-medium text-slate-dark mb-2">
+          Remarks <span className="text-destructive">*</span>
+        </label>
+        <textarea
+          id="resolve-remarks"
+          rows={4}
+          maxLength={1000}
+          value={remarks}
+          onChange={(e) => setRemarks(e.target.value)}
+          onBlur={() => setTouched(true)}
+          placeholder="Explain how this ticket was resolved..."
+          className="w-full rounded-xl border border-border bg-card p-3 text-sm text-slate-dark outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
+        />
+        <div className="flex items-center justify-between mt-1 mb-4">
+          <span className="text-xs text-destructive">
+            {touched && tooShort ? 'Remarks are required (at least 3 characters).' : ''}
+          </span>
+          <span className="text-[11px] text-slate-muted">{remarks.length}/1000</span>
+        </div>
+
+        {error && (
+          <p className="mb-4 text-xs font-medium text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-2">
+            {error}
+          </p>
+        )}
+
+        <div className="flex gap-3 w-full">
+          <Button type="button" variant="outline" onClick={onCancel} disabled={isSaving} className="flex-1">
+            Go Back
+          </Button>
+          <Button
+            type="button"
+            variant="default"
+            onClick={() => {
+              setTouched(true);
+              if (!tooShort) onConfirm(trimmed);
+            }}
+            disabled={isSaving || tooShort}
+            className="flex-1"
+          >
+            {isSaving ? (
+              <span className="flex items-center gap-1.5">
+                <Loader2 className="w-4 h-4 animate-spin" /> Resolving...
+              </span>
+            ) : 'Yes, Resolve'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ConfirmDialog({ onConfirm, onCancel, isSaving = false, title = "Update this ticket?", message = "Are you sure you want to save the changes to this ticket?", confirmText = "Yes, Update" }) {
   useLockBodyScroll(true);
   return (
@@ -1154,29 +1237,26 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
     }
   };
 
-  // Escalation Handler
-  const handleConfirmEscalate = async ({ targetEmployee, reason, categoryType, categoryName }) => {
+  // Escalation Handler: the ticket-service notifies the manager of each assigned employee's
+  // department. The assignees keep the ticket; nothing is reassigned here.
+  const handleConfirmEscalate = async ({ managers = [], departments = [], reason }) => {
     setIsEscalating(true);
     setEscalateError('');
     try {
       const ticketId = cleanTicketId || ticket.ticket_ID || ticket.id;
-      const targetEmpId = targetEmployee?.id || targetEmployee?.emp_id;
 
       await updateTicket({
         ticketId,
         statusId: 5, // Escalated
+        escalation_reason: reason,
         assignedByEmail: user?.email,
       });
 
-      if (targetEmpId) {
-        await acceptTicket({
-          ticketId,
-          employeeIds: [targetEmpId],
-          assignedByEmail: user?.email,
-        }).catch((e) => console.warn('Could not reassign on escalate:', e));
-      }
+      const recipientText = managers.length > 0
+        ? managers.map((m) => `${m.name} (${m.department || 'Manager'})`).join(', ')
+        : `the ${departments.join(' and ')} department manager${departments.length === 1 ? '' : 's'}`;
 
-      const noteText = `[Escalation (${categoryType.toUpperCase()})]: Escalated to ${targetEmployee?.name || 'specialist'} (${targetEmployee?.role || 'Specialist'}, ${targetEmployee?.department || 'Operations'}). Reason: "${reason}"`;
+      const noteText = `[Escalation]: Escalated to ${recipientText}. Reason: "${reason}"`;
       await addInternalNote(ticketId, noteText).catch(() => {});
 
       const refreshedNotes = await getInternalNotes(ticketId).catch(() => null);
@@ -1186,7 +1266,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
 
       setCurrentStatus('Escalated');
       ticket.status = 'Escalated';
-      setActionSuccessNotice(`Ticket successfully escalated to ${targetEmployee?.name || 'specialist'}.`);
+      setActionSuccessNotice(`Ticket escalated to ${recipientText}.`);
       setShowEscalateModal(false);
 
       if (typeof onStatusUpdate === 'function') {
@@ -1194,14 +1274,13 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
         onStatusUpdate({
           id: ticket.id,
           status: 'Escalated',
-          assigned_to: targetEmpId,
-          assigned: targetEmpId ? [targetEmpId] : [],
+          escalation_reason: reason,
           timeline: [
             ...(ticket.timeline || []),
             {
               id: `escalate-${Date.now()}`,
               type: 'escalation',
-              text: `Ticket escalated to ${targetEmployee?.name} per ${categoryType.toUpperCase()} escalation rules. Reason: "${reason}"`,
+              text: `Ticket escalated to ${recipientText}. Reason: "${reason}"`,
               timestamp,
             }
           ]
@@ -1209,7 +1288,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
       }
     } catch (err) {
       console.error('Failed to escalate ticket:', err);
-      setEscalateError('Failed to escalate ticket. Please check your network connection and try again.');
+      setEscalateError(err?.response?.data?.message || 'Failed to escalate ticket. Please check your network connection and try again.');
     } finally {
       setIsEscalating(false);
     }
@@ -1936,43 +2015,18 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                   <h4 className="text-xs font-bold uppercase tracking-wider text-[#1B2033]">
                     Assigned Staff ({allAssignees.length})
                   </h4>
-                  {allAssignees.length >= 2 && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                      <MessageCircle className="w-3 h-3 text-indigo-600" />
-                      <span>Group Chat Active</span>
-                    </span>
-                  )}
                 </div>
                 <p className="text-xs text-[#5A6178] mt-0.5">
-                  {allAssignees.length >= 2
-                    ? '2 or more staff assigned. Team communication is organized in a unified group chat.'
-                    : 'Employees currently assigned to support and resolve this ticket.'}
+                  Employees currently assigned to support and resolve this ticket.
                 </p>
               </div>
 
               <div className="flex items-center gap-2 flex-wrap">
-                {/* Single Group Chat button when >= 2 employees */}
-                {allAssignees.length >= 2 && (
-                  <button
-                    type="button"
-                    onClick={handleOpenMessages}
-                    className="h-8 px-3 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-xs"
-                    title="Open group discussion with all assigned staff"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5" />
-                    <span>Message Group Chat</span>
-                  </button>
-                )}
-
                 {!readOnly && typeof onEdit === 'function' && currentStatus !== 'Closed' && currentStatus !== 'Resolved' && (
                   <button
                     type="button"
                     onClick={() => onEdit(ticket)}
-                    className={`h-8 px-3 text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 ${
-                      allAssignees.length > 2
-                        ? 'border border-[#D5D9E4] bg-white hover:bg-[#F5F6FA] text-[#1B2033]'
-                        : 'bg-[#1E2A78] hover:bg-[#252578] text-white'
-                    }`}
+                    className="h-8 px-3 text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 bg-[#1E2A78] hover:bg-[#252578] text-white"
                   >
                     <UserPlus className="w-3.5 h-3.5" />
                     <span>{allAssignees.length > 0 ? 'Manage Assignees' : 'Assign Employee'}</span>
@@ -2064,20 +2118,10 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                         </div>
                       </div>
 
-                      {/* Action buttons per assignee (only rendered when <= 2 assignees; >2 uses the unified group chat button above) */}
-                      {allAssignees.length <= 2 && (
+                      {/* Per assignee action: Remind (messaging is the modal's footer "Message customer" button) */}
+                      {!readOnly && isEligibleForReminder && (
                         <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-                          <button
-                            type="button"
-                            onClick={handleOpenMessages}
-                            className="h-8 px-3 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer"
-                            title={`Message ${emp.firstName}`}
-                          >
-                            <MessageCircle className="w-3.5 h-3.5" />
-                            <span>Message</span>
-                          </button>
-
-                          {!readOnly && isEligibleForReminder && (
+                          {(
                             <button
                               type="button"
                               onClick={() => setShowReminderModal(true)}
@@ -2232,6 +2276,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
    ASSIGN MODAL
 ───────────────────────────────────────────── */
 export function AssignModal({ ticket, employees, departments, priorityOptions, onClose, onSave, onCloseTicket }) {
+  const navigate = useNavigate();
   // Close without assigning is offered only when the superadmin Transition Matrix
   // allows the ticket's current state to move to Closed (backend sends allowed_transitions).
   const canCloseWithoutAssigning = typeof onCloseTicket === 'function'
@@ -2243,7 +2288,10 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
   const [title, setTitle] = useState(ticket?.title || '');
   const [category, setCategory] = useState(ticket?.category || 'Biomedical Equipment');
   const [priority, setPriority] = useState(ticket?.priority || 'Low');
-  const [department, setDepartment] = useState(ticket?.department || '');
+  // Only IT and Service are assignable; any other stored department starts as "all eligible".
+  const [department, setDepartment] = useState(
+    ['it', 'service'].includes(String(ticket?.department || '').trim().toLowerCase()) ? ticket.department : ''
+  );
   const [deptAutoNotice, setDeptAutoNotice] = useState('');
   const [selectedEmployees, setSelectedEmployees] = useState(ticket?.assigned || []);
   const [showConfirm, setShowConfirm] = useState(false);
@@ -2319,8 +2367,19 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
     return eligibilityData?.department_managers || null;
   }, [eligibilityData]);
 
+  // Escalation managers for the employees currently selected in this modal (one per department).
+  const selectedEscalationManagers = useMemo(() => {
+    const directory = [
+      ...(eligibilityData?.eligible_employees || []),
+      ...(eligibilityData?.ineligible_employees || []),
+      ...(Array.isArray(employees) ? employees : []),
+    ];
+    return getEscalationManagers(selectedEmployees, departmentManagers, directory);
+  }, [selectedEmployees, departmentManagers, eligibilityData, employees]);
+
+  // CS assigns tickets to the IT and Service departments only (eligible staff come from those two).
   const filteredDepartments = useMemo(() => {
-    return ['IT', 'Customer Service', 'Service'];
+    return ['IT', 'Service'];
   }, []);
 
   const searchedEligibleEmployees = useMemo(() => {
@@ -2480,15 +2539,55 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
               </div>
             </div>
 
-            {/* Category Selector with Dynamic Recalculation Notice */}
+            {/* Requester: who raised the ticket, and a shortcut to their conversation */}
+            {(() => {
+              const requesterName =
+                ticket.customer_name ||
+                (typeof ticket.customer === 'object' ? ticket.customer?.name : ticket.customer) ||
+                ticket.requestor ||
+                'Unknown Customer';
+              const requesterEmail =
+                ticket.customer_email ||
+                (typeof ticket.customer === 'object' ? ticket.customer?.email : '') ||
+                ticket.client_email ||
+                '';
+              const openConversation = () => {
+                const tId = ticket.ticket_ID || ticket.id;
+                onClose();
+                navigate('/cs/messages', { state: { selectedTicketId: tId } });
+              };
+              return (
+                <div className="mb-4 flex items-center justify-between gap-4 rounded-xl border border-border bg-page p-4" data-testid="assign-requester">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-full bg-avatar-circle text-white flex items-center justify-center text-sm font-bold shrink-0">
+                      {String(requesterName).charAt(0).toUpperCase()}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-[11px] font-medium text-slate-muted">Requested by</p>
+                      <p className="text-sm font-semibold text-slate-dark truncate">{requesterName}</p>
+                      {requesterEmail ? (
+                        <p className="text-xs text-slate-muted truncate flex items-center gap-1">
+                          <Mail className="w-3 h-3 shrink-0" />
+                          <span className="truncate">{requesterEmail}</span>
+                        </p>
+                      ) : (
+                        <p className="text-xs text-slate-muted">No email on file</p>
+                      )}
+                    </div>
+                  </div>
+                  <Button type="button" variant="outline" size="sm" onClick={openConversation} className="shrink-0">
+                    <MessageCircle className="w-4 h-4 mr-2" /> Message
+                  </Button>
+                </div>
+              );
+            })()}
+
+            {/* Category Selector */}
             <div className="mb-4">
               <div className="flex items-center justify-between mb-1.5">
                 <label className="block text-xs font-medium text-slate-dark">
-                  Ticket Category &amp; Escalation Track
+                  Ticket Category
                 </label>
-                <span className="text-[11px] text-slate-muted">
-                  Changing category recalculates eligible staff
-                </span>
               </div>
               <div className="flex gap-2">
                 <select
@@ -2516,42 +2615,6 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
                 </Button>
               </div>
             </div>
-
-            {/* Category Escalation Policy Details */}
-            {currentRule && (
-              <div className="mb-4 p-3 bg-page border border-border rounded-xl">
-                <div className="flex items-center justify-between gap-2 mb-1.5">
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-slate-dark">
-                    <Shield className="w-3.5 h-3.5 text-primary" />
-                    Category Escalation Rule: {eligibilityData?.track ? formatProperSentenceCase(eligibilityData.track) : 'Standard'}
-                  </div>
-                  <Badge variant="secondary" className="text-[10px]">
-                    Min Level: {currentRule.min_position_level || 'Junior'}
-                  </Badge>
-                </div>
-                <div className="text-[11px] text-slate-muted flex flex-wrap gap-x-3 gap-y-1">
-                  <span>
-                    <strong className="text-slate-600 font-medium">Departments:</strong>{' '}
-                    {Array.isArray(currentRule.department) ? currentRule.department.join(', ') : currentRule.department}
-                  </span>
-                  <span>•</span>
-                  <span>
-                    <strong className="text-slate-600 font-medium">Scope:</strong>{' '}
-                    {currentRule.allow_cross_branch ? 'Cross Branch Allowed' : `Strict (${ticketBranch})`}
-                  </span>
-                </div>
-                {Array.isArray(currentRule.allowed_roles) && currentRule.allowed_roles.length > 0 && (
-                  <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
-                    <span className="text-[10px] text-slate-muted font-medium">Authorized Roles:</span>
-                    {currentRule.allowed_roles.map((r) => (
-                      <span key={r} className="text-[10px] bg-primary/10 text-primary font-medium px-1.5 py-0.5 rounded">
-                        {r}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
 
             {/* Department */}
             <div className="mb-4">
@@ -2625,7 +2688,7 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
                     }`}
                   >
                     <Users className="w-3.5 h-3.5" />
-                    Department Managers
+                    Escalation Managers{selectedEscalationManagers.length > 0 ? ` (${selectedEscalationManagers.length})` : ''}
                   </button>
                 </div>
 
@@ -2837,80 +2900,50 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
                 </>
               )}
 
-              {/* Tab 3: Department Managers Escalation Contacts */}
+              {/* Tab 3: Escalation managers follow the selected employees' departments */}
               {!loadingEligibility && !eligibilityError && activeTab === 'managers' && (
                 <div className="space-y-3">
                   <div className="text-xs text-slate-muted bg-primary/5 border border-primary/20 p-2.5 rounded-lg">
-                    Designated Department Managers for SLA breach notification and technical escalation routing:
+                    Escalations and SLA breach alerts go to the manager of each selected employee&apos;s department.
+                    Employees from different departments notify each of their managers.
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {/* Service Manager */}
-                    <div className="bg-card border border-border rounded-xl p-3 shadow-xs">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-primary mb-1">
-                        <Shield className="w-3.5 h-3.5 text-primary shrink-0" />
-                        Service Department
-                      </div>
-                      <p className="text-xs font-bold text-slate-dark">
-                        {departmentManagers?.service?.name || 'Carlos Mendoza'}
-                      </p>
-                      <p className="text-[11px] text-slate-muted">Manager</p>
-                      <div className="mt-2 pt-2 border-t border-border/60 text-[10px] space-y-1 text-slate-600">
-                        <div className="flex items-center gap-1.5 truncate">
-                          <Mail className="w-3 h-3 text-slate-muted shrink-0" />
-                          <span>{departmentManagers?.service?.email || 'carlos.mendoza@hospital.com'}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <Phone className="w-3 h-3 text-slate-muted shrink-0" />
-                          <span>{departmentManagers?.service?.phone || '+63 917 123 4567'}</span>
-                        </div>
-                      </div>
+                  {selectedEscalationManagers.length === 0 ? (
+                    <div className="text-xs text-slate-muted border border-dashed border-border rounded-xl p-4 text-center">
+                      Select one or more employees to see who an escalation will reach.
                     </div>
-
-                    {/* IT Manager */}
-                    <div className="bg-card border border-border rounded-xl p-3 shadow-xs">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-primary mb-1">
-                        <Shield className="w-3.5 h-3.5 text-primary shrink-0" />
-                        IT Department
-                      </div>
-                      <p className="text-xs font-bold text-slate-dark">
-                        {departmentManagers?.it?.name || 'Michael Scott'}
-                      </p>
-                      <p className="text-[11px] text-slate-muted">Manager</p>
-                      <div className="mt-2 pt-2 border-t border-border/60 text-[10px] space-y-1 text-slate-600">
-                        <div className="flex items-center gap-1.5 truncate">
-                          <Mail className="w-3 h-3 text-slate-muted shrink-0" />
-                          <span>{departmentManagers?.it?.email || 'michael.scott@hospital.com'}</span>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="assign-escalation-managers">
+                      {selectedEscalationManagers.map(({ department, manager }) => (
+                        <div key={department} className="bg-card border border-border rounded-xl p-3 shadow-xs">
+                          <div className="flex items-center gap-1.5 text-xs font-bold text-primary mb-1">
+                            <Shield className="w-3.5 h-3.5 text-primary shrink-0" />
+                            {department} Department
+                          </div>
+                          <p className="text-xs font-bold text-slate-dark">
+                            {manager?.name || 'No manager on file'}
+                          </p>
+                          <p className="text-[11px] text-slate-muted">Manager</p>
+                          {manager && (manager.email || manager.phone) && (
+                            <div className="mt-2 pt-2 border-t border-border/60 text-[10px] space-y-1 text-slate-600">
+                              {manager.email && (
+                                <div className="flex items-center gap-1.5 truncate">
+                                  <Mail className="w-3 h-3 text-slate-muted shrink-0" />
+                                  <span>{manager.email}</span>
+                                </div>
+                              )}
+                              {manager.phone && (
+                                <div className="flex items-center gap-1.5">
+                                  <Phone className="w-3 h-3 text-slate-muted shrink-0" />
+                                  <span>{manager.phone}</span>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <div className="flex items-center gap-1.5">
-                          <Phone className="w-3 h-3 text-slate-muted shrink-0" />
-                          <span>{departmentManagers?.it?.phone || '+63 917 234 5678'}</span>
-                        </div>
-                      </div>
+                      ))}
                     </div>
-
-                    {/* CS Manager */}
-                    <div className="bg-card border border-border rounded-xl p-3 shadow-xs">
-                      <div className="flex items-center gap-1.5 text-xs font-bold text-primary mb-1">
-                        <Shield className="w-3.5 h-3.5 text-primary shrink-0" />
-                        Customer Service
-                      </div>
-                      <p className="text-xs font-bold text-slate-dark">
-                        {departmentManagers?.cs?.name || 'Ava Santos'}
-                      </p>
-                      <p className="text-[11px] text-slate-muted">Manager</p>
-                      <div className="mt-2 pt-2 border-t border-border/60 text-[10px] space-y-1 text-slate-600">
-                        <div className="flex items-center gap-1.5 truncate">
-                          <Mail className="w-3 h-3 text-slate-muted shrink-0" />
-                          <span>{departmentManagers?.cs?.email || 'cs@gmail.com'}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <Phone className="w-3 h-3 text-slate-muted shrink-0" />
-                          <span>{departmentManagers?.cs?.phone || '+63 917 345 6789'}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                  )}
                 </div>
               )}
             </div>
@@ -3075,9 +3108,9 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
                 variant="outline"
                 onClick={() => { setCloseError(''); setShowCloseConfirm(true); }}
                 disabled={isSaving || isClosing}
-                className="mr-auto text-destructive border-destructive/40 hover:bg-destructive/10"
+                className="mr-auto"
               >
-                Close Ticket
+                Resolve
               </Button>
             )}
             <Button
@@ -3114,21 +3147,18 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
         />
       )}
       {showCloseConfirm && (
-        <ConfirmDialog
-          title="Close this ticket without assigning?"
-          message="The ticket will be marked Closed without being assigned to anyone. The customer can still reopen it within the reopen window."
-          confirmText="Yes, Close Ticket"
+        <ResolveRemarksDialog
           isSaving={isClosing}
-          onCancel={() => setShowCloseConfirm(false)}
-          onConfirm={async () => {
+          error={closeError}
+          onCancel={() => { setShowCloseConfirm(false); setCloseError(''); }}
+          onConfirm={async (remarks) => {
             setIsClosing(true);
             setCloseError('');
             try {
-              await onCloseTicket(ticket);
+              await onCloseTicket(ticket, remarks);
               setShowCloseConfirm(false);
             } catch (err) {
-              setShowCloseConfirm(false);
-              setCloseError(err?.response?.data?.message || 'Failed to close the ticket.');
+              setCloseError(err?.response?.data?.message || 'Failed to resolve the ticket.');
             } finally {
               setIsClosing(false);
             }

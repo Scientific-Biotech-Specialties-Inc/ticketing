@@ -71,7 +71,7 @@ export default function EmployeeHistoryDetail() {
     '/messages'
   );
   const [previewFile, setPreviewFile] = useState(null);
-  const [timelineSortOrder, setTimelineSortOrder] = useState('asc'); // 'asc' or 'desc'
+  const [timelineSortOrder, setTimelineSortOrder] = useState('desc'); // newest first by default
   const [now, setNow] = useState(Date.now());
   const [showConversationModal, setShowConversationModal] = useState(false);
   const [showSermsModal, setShowSermsModal] = useState(false);
@@ -1063,6 +1063,7 @@ export default function EmployeeHistoryDetail() {
         pageSize={8}
         collapsible={true}
         defaultCollapsed={false}
+        showFilter={!isCustomer}
       />
 
       {/* Reopen Modal for Customer */}

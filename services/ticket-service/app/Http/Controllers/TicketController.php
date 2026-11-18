@@ -393,7 +393,10 @@ class TicketController extends Controller
         if (!$user) {
             return response()->json(['message' => 'Unauthorized'], 401);
         }
-        $result = $this->ticketService->closeTicket($ticketId, $user);
+        $validated = $request->validate([
+            'remarks' => ['nullable', 'string', 'max:1000', new \App\Rules\NoMarkup()],
+        ]);
+        $result = $this->ticketService->closeTicket($ticketId, $user, $validated['remarks'] ?? null);
         return response()->json($result['data'], $result['status']);
     }
 

@@ -38,7 +38,7 @@ import {
 } from './ticket-modal';
 import { isFeedbackFormEnabled } from '@/data/mockFeedbackData';
 import { getWindowConfiguration, getCachedWindowConfiguration } from '@/services/configurationService';
-import { getTicketTimeline } from '@/services/ticketService';
+import { getTicketTimeline, getNotifications } from '@/services/ticketService';
 import { getTicketMessages } from '@/services/messagingService';
 import { useAuth } from '@/context/AuthContext';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
@@ -189,6 +189,9 @@ export default function CustomerTicketDetailModal({
 
   const isAssignedToMe = useMemo(() => {
     if (!user || !effectiveTicket) return false;
+    // Customers are never assignees. Their client id can equal an employee id, which would
+    // otherwise show them the employee-only "Update ticket" action.
+    if (!isCSSide) return false;
     const myId = Number(user.id || user.emp_id || user.employee_id);
     const myEmail = String(user.email || '').toLowerCase().trim();
     const myName = String(user.name || `${user.first_name || ''} ${user.last_name || ''}`).toLowerCase().trim();
@@ -232,7 +235,7 @@ export default function CustomerTicketDetailModal({
       return true;
     }
     return false;
-  }, [user, effectiveTicket]);
+  }, [user, effectiveTicket, isCSSide]);
 
   const handleUpdateTicket = useCallback(() => {
     onClose?.();
@@ -278,6 +281,35 @@ export default function CustomerTicketDetailModal({
     const n = Number(String(raw).replace(/\D/g, ''));
     return isNaN(n) ? null : n;
   }, [effectiveTicket?.ticket_ID, effectiveTicket?.id]);
+
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  useEffect(() => {
+    if (!ticketNumericId) return undefined;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const data = await getNotifications();
+        const list = Array.isArray(data?.notifications) ? data.notifications : [];
+        const count = list.filter((n) => {
+          if (n.is_read || n.read_at) return false;
+          let parsed = {};
+          try { parsed = typeof n.data === 'string' ? JSON.parse(n.data) : (n.data || {}); } catch { parsed = {}; }
+          const isMessage = parsed.type === 'new_message' || /new\s+message/i.test(n.title || '');
+          const tId = Number(String(n.ticket_id || parsed.ticket_id || parsed.ticketId || '').replace(/\D/g, ''));
+          return isMessage && tId === ticketNumericId;
+        }).length;
+        if (!cancelled) setUnreadMessageCount(count);
+      } catch {
+        if (!cancelled) setUnreadMessageCount(0);
+      }
+    };
+    load();
+    window.addEventListener('notifications:updated', load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('notifications:updated', load);
+    };
+  }, [ticketNumericId]);
 
   // Fetch normalized attachments & proof files
   const normalizedAttachments = useMemo(() => {
@@ -521,6 +553,14 @@ export default function CustomerTicketDetailModal({
                 >
                   <MessageSquare className="w-3.5 h-3.5 text-[#1E2A78]" />
                   <span>Message customer</span>
+                  {unreadMessageCount > 0 && (
+                    <span
+                      className="ml-1 inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full bg-accent text-white text-[11px] font-bold leading-none"
+                      aria-label={`${unreadMessageCount} unread message${unreadMessageCount === 1 ? '' : 's'}`}
+                    >
+                      {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
+                    </span>
+                  )}
                 </button>
               ) : (
                 <button
@@ -531,6 +571,14 @@ export default function CustomerTicketDetailModal({
                 >
                   <MessageSquare className="w-3.5 h-3.5 text-[#1E2A78]" />
                   <span>Message Customer Support</span>
+                  {unreadMessageCount > 0 && (
+                    <span
+                      className="ml-1 inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full bg-accent text-white text-[11px] font-bold leading-none"
+                      aria-label={`${unreadMessageCount} unread message${unreadMessageCount === 1 ? '' : 's'}`}
+                    >
+                      {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
+                    </span>
+                  )}
                 </button>
               )
             }
@@ -720,17 +768,9 @@ export default function CustomerTicketDetailModal({
                       <h4 className="text-xs font-bold uppercase tracking-wider text-[#1B2033]">
                         Assigned Personnel ({allAssignees.length})
                       </h4>
-                      {allAssignees.length >= 2 && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          <MessageSquare className="w-3 h-3 text-indigo-600" />
-                          <span>Group Chat Active</span>
-                        </span>
-                      )}
                     </div>
                     <p className="text-xs text-[#5A6178] mt-0.5">
-                      {allAssignees.length >= 2
-                        ? '2 or more staff assigned. Team communication is organized in a unified group chat.'
-                        : 'Technicians and staff currently assigned to work on and resolve this ticket.'}
+                      Technicians and staff currently assigned to work on and resolve this ticket.
                     </p>
                   </div>
 
@@ -746,27 +786,6 @@ export default function CustomerTicketDetailModal({
                         <span>Manage Assignees</span>
                       </button>
                     )}
-                    {allAssignees.length >= 2 ? (
-                      <button
-                        type="button"
-                        onClick={handleRedirectToMessages}
-                        className="h-8 px-3 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-xs"
-                        title="Open group discussion with all assigned staff"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" />
-                        <span>Message Group Chat</span>
-                      </button>
-                    ) : allAssignees.length === 1 ? (
-                      <button
-                        type="button"
-                        onClick={handleRedirectToMessages}
-                        className="h-8 px-3 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-xs"
-                        title="Message assigned employee"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" />
-                        <span>Message Employee</span>
-                      </button>
-                    ) : null}
                   </div>
                 </div>
 
@@ -809,19 +828,6 @@ export default function CustomerTicketDetailModal({
                         </div>
                       </div>
 
-                      {allAssignees.length <= 2 && (
-                        <div className="shrink-0 self-end sm:self-center">
-                          <button
-                            type="button"
-                            onClick={handleRedirectToMessages}
-                            className="h-8 px-3 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer"
-                            title={`Message ${emp.firstName}`}
-                          >
-                            <MessageSquare className="w-3.5 h-3.5" />
-                            <span>Message</span>
-                          </button>
-                        </div>
-                      )}
                     </div>
                   ))}
                 </div>
@@ -837,6 +843,7 @@ export default function CustomerTicketDetailModal({
               ticketId={ticketNumericId}
               pageSize={8}
               collapsible={false}
+              showFilter={isCSSide}
             />
           </div>
         )}

@@ -62,7 +62,7 @@ const buildTicketSearchString = (t) => {
     t.created_by_name ||
     (typeof t.customer === 'object' ? t.customer?.name : '') ||
     ''
-  );
+  ) + (t.customer_email ? ` ${t.customer_email}` : '');
   const isInternal = Boolean(
     t.title?.startsWith('[Internal]') ||
     t.is_internal ||
@@ -664,15 +664,15 @@ export default function CSIncoming() {
     }
   };
 
-  // Close an incoming ticket without assigning it. Errors (e.g. the Transition
-  // Matrix does not allow Open -> Closed) are re-thrown so the modal can show them.
-  const handleCloseWithoutAssigning = async (ticket) => {
+  // Resolve an incoming ticket without assigning it (CS remarks are required). Errors (e.g. the
+  // Transition Matrix does not allow Open -> Closed) are re-thrown so the modal can show them.
+  const handleCloseWithoutAssigning = async (ticket, remarks) => {
     const ticketId = ticket.ticket_ID || Number(String(ticket.id).replace(/\D/g, ''));
-    await closeTicket(ticketId);
+    await closeTicket(ticketId, remarks);
     setTickets((prev) => prev.filter((t) => (t.ticket_ID || t.id) !== (ticket.ticket_ID || ticket.id)));
     loadLiveData({ forceRefresh: true, source: 'poll' });
     setModal(null);
-    setCloseNotice(`Ticket ${ticket.ticket_number || ticket.id} was closed without assignment.`);
+    setCloseNotice(`Ticket ${ticket.ticket_number || ticket.id} was resolved.`);
     setTimeout(() => setCloseNotice(''), 5000);
   };
 
@@ -994,7 +994,7 @@ export default function CSIncoming() {
 
             // If the status is 'On Hold' or if classification was updated,
             // the dedicated endpoint (POST /hold or PATCH /classification) was already executed directly in TicketSummary.
-            if (updatedFields.status === 'On Hold' || updatedFields.category || updatedFields.priority) {
+            if (updatedFields.status === 'On Hold' || updatedFields.status === 'Escalated' || updatedFields.category || updatedFields.priority) {
               return;
             }
 

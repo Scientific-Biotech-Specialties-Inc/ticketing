@@ -37,7 +37,10 @@ class TicketDashboardController extends Controller
             'date_to' => $request->query('date_to'),
         ];
 
-        $data = app(\App\Actions\Dashboards\GetCustomerDashboardMetricsAction::class)->execute($createdBy, $limit, $filters);
+        // Realtime refreshes (websocket / poll) ask for fresh rows instead of the 60s cache.
+        $forceRefresh = filter_var($request->query('forceRefresh', $request->query('force_refresh', false)), FILTER_VALIDATE_BOOLEAN);
+
+        $data = app(\App\Actions\Dashboards\GetCustomerDashboardMetricsAction::class)->execute($createdBy, $limit, $filters, $forceRefresh);
         return response()->json($data);
     }
 

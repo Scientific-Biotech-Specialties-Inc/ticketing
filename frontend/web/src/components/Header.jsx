@@ -41,6 +41,14 @@ const checkUserIsEmployee = (u) => {
   );
 };
 
+/** A CS reminder sent to an employee about one of their assigned tickets. */
+const isEmployeeReminder = (n, parsed) => {
+  let role = '';
+  try { role = String(JSON.parse(localStorage.getItem('user') || 'null')?.role || '').toLowerCase(); } catch { role = ''; }
+  if (role !== 'employee') return false;
+  return parsed?.type === 'ticket_reminder' || /reminder/i.test(n?.title || '');
+};
+
 export default function Header({ sidebarHovered }) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [notificationDropdownOpen, setNotificationDropdownOpen] = useState(false);
@@ -209,6 +217,23 @@ export default function Header({ sidebarHovered }) {
     setNotificationDropdownOpen(false);
     const parsed = (() => { try { return typeof n.data === 'string' ? JSON.parse(n.data) : n.data || {}; } catch { return {}; } })();
     const ticketId = n.ticket_id || parsed?.ticket_id || parsed?.ticketId;
+
+    // CS reminders take the employee straight to the ticket update page for that ticket.
+    if (ticketId && isEmployeeReminder(n, parsed)) {
+      try {
+        if (!n.is_read) {
+          await markNotificationRead(n.id);
+          setNotificationCount((prev) => Math.max(0, prev - 1));
+          setNotifications((prev) => prev.map((item) => (item.id === n.id ? { ...item, is_read: true, unread: false } : item)));
+          window.dispatchEvent(new Event('notifications:updated'));
+        }
+      } catch (err) {
+        console.warn('Failed to mark reminder notification as read:', err);
+      }
+      const numericId = Number(String(ticketId).replace(/\D/g, ''));
+      navigate(`/employee/ticket-update?ticketId=${numericId}`, { state: { ticketId: numericId } });
+      return;
+    }
 
     // Handle new message notification: navigate directly to messaging thread
     const isNewMessage = parsed.type === 'new_message' ||

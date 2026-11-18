@@ -300,7 +300,9 @@ const getLocalTicketDetailsStore = () => readJsonStore(CUSTOMER_TICKET_DETAILS_K
 const normalizeCustomerTicket = (ticket = {}) => {
   const overrides = getTicketOverrides()[ticket.id] || {};
   const details = getLocalTicketDetailsStore()[ticket.id] || {};
-  const status = overrides.status || ticket.status || 'Open';
+  // The server status wins: a stale browser override (legacy local store) must never hide or
+  // relabel a ticket the backend reports, e.g. an In Progress ticket.
+  const status = ticket.status || overrides.status || 'Open';
   const now = new Date().toISOString();
   const assigned_to = ticket.assigned_to || details.assigned_to || null;
 
@@ -397,12 +399,14 @@ export const clearTicketFormOptionsCache = () => {
   optionsInFlight = null;
 };
 
-const fetchCustomerDashboard = async ({ createdBy = 1, limit = 5, ...filters } = {}) => {
+const fetchCustomerDashboard = async ({ createdBy = 1, limit = 5, forceRefresh = false, ...filters } = {}) => {
   const params = {
     created_by: createdBy,
     limit,
     ...filters,
   };
+  // Realtime refreshes skip the server's short cache so a status change shows right away.
+  if (forceRefresh) params.forceRefresh = true;
   const response = await ticketClient.get('/customer-dashboard', { params });
 
   const hasFilters = Object.values(filters).some((v) => v !== undefined && v !== '' && v !== null);
@@ -423,7 +427,7 @@ export const getCustomerDashboard = async ({ createdBy = 1, limit = 5, forceRefr
     return dashboardInFlight;
   }
 
-  const promise = fetchCustomerDashboard({ createdBy, limit, ...filters }).finally(() => {
+  const promise = fetchCustomerDashboard({ createdBy, limit, forceRefresh, ...filters }).finally(() => {
     if (!hasFilters) dashboardInFlight = null;
   });
 
@@ -791,13 +795,14 @@ export const acceptTicket = async ({ ticketId, employeeIds, assignedByEmail, pri
   return response.data;
 };
 
-export const updateTicket = async ({ ticketId, statusId, priorityId, assignedByEmail, proof_rejected, rejection_reason, title, description, machine_ID, problem_category_ID } = {}) => {
+export const updateTicket = async ({ ticketId, statusId, priorityId, assignedByEmail, proof_rejected, rejection_reason, escalation_reason, title, description, machine_ID, problem_category_ID } = {}) => {
   const payload = {};
   if (statusId !== undefined) payload.ticket_status_ID = statusId;
   if (priorityId !== undefined) payload.priority_ID = priorityId;
   if (assignedByEmail !== undefined) payload.assigned_by_email = assignedByEmail;
   if (proof_rejected !== undefined) payload.proof_rejected = proof_rejected;
   if (rejection_reason !== undefined) payload.rejection_reason = rejection_reason;
+  if (escalation_reason !== undefined) payload.escalation_reason = escalation_reason;
   if (title !== undefined) payload.title = title;
   if (description !== undefined) payload.description = description;
   if (machine_ID !== undefined) payload.machine_ID = machine_ID;
@@ -831,9 +836,10 @@ export const reopenTicket = async (ticketId, reason) => {
  * Close a ticket through the state machine (allowed only if the superadmin
  * Transition Matrix permits the current state -> Closed).
  */
-export const closeTicket = async (ticketId) => {
+export const closeTicket = async (ticketId, remarks) => {
   const numericId = Number(String(ticketId).replace(/\D/g, ''));
-  const response = await ticketClient.post(`/tickets/${numericId}/close`);
+  const body = remarks && String(remarks).trim() ? { remarks: String(remarks).trim() } : {};
+  const response = await ticketClient.post(`/tickets/${numericId}/close`, body);
   clearCustomerDashboardCache();
   clearIncomingTicketsCache();
   clearCSDashboardCache();

@@ -1859,18 +1859,39 @@ class TicketService
         });
 
         if ($statusToSet === 5) {
-            $assignedManagerId = $validated['assigned_to'] ?? $ticket->assigned_to ?? null;
             $escReason = $validated['escalation_reason'] ?? $validated['reason'] ?? 'Escalated by Customer Service for supervisory review.';
             $ticketRef = TicketNumberGeneratorService::refFor($ticketId);
             $ticketTitle = $ticket->title ?? "Ticket #{$ticketId}";
 
-            if ($assignedManagerId) {
-                $mgrTitle = "Urgent: Ticket Escalated - {$ticketRef}";
-                $mgrMessage = "Manager Alert: Ticket {$ticketRef}: \"{$ticketTitle}\" has been escalated to you. Reason: \"{$escReason}\". Immediate departmental intervention required.";
+            // Escalation goes to the manager of each assigned employee's department (for example
+            // the IT manager and the Service manager when one IT and one Service employee are
+            // assigned), not to a category based target. An explicit assigned_to still counts.
+            $escalationManagerIds = [];
+            try {
+                $freshTicket = DB::table('tickets')->where('ticket_ID', $ticketId)->first() ?? $ticket;
+                foreach ($this->slaService->resolveDepartmentManagersForTicket($freshTicket) as $mgr) {
+                    if ($mgr && !empty($mgr->emp_id)) {
+                        $escalationManagerIds[] = (int) $mgr->emp_id;
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning("Failed to resolve escalation managers for ticket #{$ticketId}: " . $e->getMessage());
+            }
+            if (!empty($validated['assigned_to'])) {
+                $escalationManagerIds[] = (int) $validated['assigned_to'];
+            }
+            $escalationManagerIds = array_values(array_unique(array_filter($escalationManagerIds)));
+            $assignedManagerId = $escalationManagerIds[0] ?? null;
 
+            $mgrTitle = "Urgent: Ticket Escalated - {$ticketRef}";
+            $mgrMessage = "Manager Alert: Ticket {$ticketRef}: \"{$ticketTitle}\" has been escalated to you. Reason: \"{$escReason}\". Immediate departmental intervention required.";
+            $catNameEsc = DB::table('problem_categories')->where('problem_category_ID', $ticket->problem_category_ID)->value('category_name') ?? '';
+            $prioNameEsc = DB::table('ticket_priorities')->where('priority_ID', $ticket->priority_ID ?? 1)->value('priority_name') ?? '';
+
+            foreach ($escalationManagerIds as $managerId) {
                 try {
                     $this->notificationService->notifyRecipient(
-                        (int) $assignedManagerId,
+                        $managerId,
                         'employee',
                         $mgrTitle,
                         $mgrMessage,
@@ -1885,11 +1906,8 @@ class TicketService
                         'ticket_escalated'
                     );
 
-                    $catNameEsc = DB::table('problem_categories')->where('problem_category_ID', $ticket->problem_category_ID)->value('category_name') ?? '';
-                    $prioNameEsc = DB::table('ticket_priorities')->where('priority_ID', $ticket->priority_ID ?? 1)->value('priority_name') ?? '';
-
                     $this->notificationService->sendTicketEmail(
-                        (int) $assignedManagerId,
+                        $managerId,
                         $mgrTitle,
                         $mgrMessage,
                         $ticketId,
@@ -1902,7 +1920,7 @@ class TicketService
                         ]
                     );
                 } catch (\Throwable $e) {
-                    Log::warning("Failed to dispatch manager escalation notification for ticket #{$ticketId}: " . $e->getMessage());
+                    Log::warning("Failed to dispatch manager escalation notification for ticket #{$ticketId} (manager {$managerId}): " . $e->getMessage());
                 }
             }
 
@@ -1912,6 +1930,7 @@ class TicketService
                     'status' => 'Escalated',
                     'status_id' => 5,
                     'assigned_to' => $assignedManagerId,
+                    'manager_ids' => $escalationManagerIds,
                     'escalation_reason' => $escReason,
                 ]);
             } catch (\Throwable $e) {
@@ -2388,7 +2407,7 @@ class TicketService
     /**
      * Close a resolved ticket.
      */
-    public function closeTicket(int $ticketId, $user): array
+    public function closeTicket(int $ticketId, $user, ?string $remarks = null): array
     {
         $ticket = DB::table('tickets')->where('ticket_ID', $ticketId)->first();
         if (!$ticket) {
@@ -2428,7 +2447,30 @@ class TicketService
         }
 
         try {
-            return $this->stateMachine->applyTransition($ticketId, 'close', [], $user);
+            $context = [];
+            $remarks = trim((string) $remarks);
+            if ($remarks !== '') {
+                $context['reason'] = $remarks;
+            }
+            $result = $this->stateMachine->applyTransition($ticketId, 'close', $context, $user);
+
+            // Keep the remarks next to the ticket's other staff notes.
+            if ($remarks !== '' && !($user instanceof \App\Models\Client) && !empty($user->emp_id)
+                && (int) ($result['status'] ?? 500) < 300) {
+                try {
+                    DB::table('internal_notes')->insert([
+                        'ticket_id' => $ticketId,
+                        'employee_id' => (int) $user->emp_id,
+                        'note' => 'Resolve remarks: ' . $remarks,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                } catch (\Throwable $e) {
+                    Log::warning("Could not save resolve remarks note for ticket #{$ticketId}: " . $e->getMessage());
+                }
+            }
+
+            return $result;
         } catch (\App\Exceptions\InvalidTicketTransitionException $e) {
             return [
                 'status' => 422,
