@@ -12,14 +12,14 @@ use App\Models\KbChunk;
 use App\Models\KbEmbedding;
 use App\Services\GeminiService;
 use App\Services\RagService;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class RagTroubleshootingAndAutoIndexingTest extends TestCase
 {
-    use DatabaseTransactions;
+    use RefreshDatabase;
 
     // =========================================================================
     // TS050: AI Chatbot RAG Troubleshooting & Safety Guardrails

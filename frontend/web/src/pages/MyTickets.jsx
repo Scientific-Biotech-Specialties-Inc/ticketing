@@ -961,7 +961,7 @@ export default function MyTickets({ mode = 'all' }) {
         title: finalTitle,
         description: editDescription,
       };
-      if (editCategory) payload.problem_category_ID = editCategory;
+      // The server sets the category from the item (spec 0047 AC-6), so only the item is sent.
       if (editEquipment) payload.machine_ID = editEquipment;
       await updateTicket(payload);
       const timestamp = new Date().toISOString();
@@ -1543,23 +1543,10 @@ export default function MyTickets({ mode = 'all' }) {
               <div className="grid gap-4 md:grid-cols-3">
                 <div className="min-w-0 md:col-span-2">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Category</p>
-                  {editOptions ? (
-                    <select
-                      value={editCategory}
-                      onChange={(e) => setEditCategory(e.target.value)}
-                      title={editingTicket.category || ''}
-                      className="mt-1 w-full rounded-xl border border-gray-200 bg-surface px-3 py-2 text-sm text-dark-slate outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-brand-accent"
-                    >
-                      <option value="">{editingTicket.category ? `Current: ${editingTicket.category}` : 'Select category'}</option>
-                      {(editOptions.problem_categories || editOptions.category_options || []).map((cat) => (
-                        <option key={cat.problem_category_ID || cat.value} value={cat.problem_category_ID || cat.value} title={cat.category_name || cat.label || cat.name}>
-                          {cat.category_name || cat.label || cat.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <p className="mt-1 text-sm text-dark-slate break-words">{editingTicket.category}</p>
-                  )}
+                  {/* Spec 0047 (AC-6): read only; it follows the chosen equipment or software. */}
+                  <p className="mt-1 text-sm text-dark-slate break-words" data-testid="edit-derived-category">
+                    {(editOptions?.problem_categories || []).find(c => String(c.problem_category_ID) === String(editCategory))?.category_name || editingTicket.category || '—'}
+                  </p>
                 </div>
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Status</p>
@@ -1568,11 +1555,21 @@ export default function MyTickets({ mode = 'all' }) {
                   </p>
                 </div>
                 <div className="min-w-0 md:col-span-2">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Equipment</p>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Equipment / Software</p>
                   {editOptions ? (
                     <select
                       value={editEquipment}
-                      onChange={(e) => setEditEquipment(e.target.value)}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setEditEquipment(value);
+                        // The category follows the item: equipment is Service, software is Software.
+                        const asset = (editOptions.assets || []).find(a => String(a.machine_ID) === String(value));
+                        if (asset) {
+                          const name = asset.asset_type === 'software' ? 'software' : 'service';
+                          const cat = (editOptions.problem_categories || []).find(c => String(c.category_name || '').trim().toLowerCase() === name);
+                          if (cat) setEditCategory(String(cat.problem_category_ID));
+                        }
+                      }}
                       title={editingTicket.equipment || ''}
                       className="mt-1 w-full rounded-xl border border-gray-200 bg-surface px-3 py-2 text-sm text-dark-slate outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-brand-accent"
                     >

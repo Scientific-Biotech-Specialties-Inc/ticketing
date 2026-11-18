@@ -225,6 +225,13 @@ class SlaBreachAlertMonitoringTest extends TestCase
             'contact_number' => '0000000003',
         ]);
 
+        // Rows other tests left in the shared test database may hold these emails under another id,
+        // which breaks the unique email index. Removed inside this test's transaction only.
+        DB::table('employees')
+            ->whereIn('email', ['sarah.cs@example.com', 'david.kim@example.com', 'elena.rostova@example.com', 'admin@example.com'])
+            ->whereNotIn('emp_id', [$this->csEmpId, $this->assignedEmpId, $this->newAssigneeEmpId, $this->superAdminEmpId])
+            ->delete();
+
         DB::table('employees')->updateOrInsert(['emp_id' => $this->csEmpId], [
             'first_name' => 'Sarah',
             'last_name' => 'Jenkins',

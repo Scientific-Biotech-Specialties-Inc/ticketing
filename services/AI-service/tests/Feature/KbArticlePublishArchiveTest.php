@@ -9,13 +9,13 @@ use App\Models\KbChunk;
 use App\Models\KbEmbedding;
 use App\Services\RagService;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Tests\TestCase;
 
 class KbArticlePublishArchiveTest extends TestCase
 {
-    use DatabaseTransactions;
+    use RefreshDatabase;
 
     protected RagService $ragService;
 

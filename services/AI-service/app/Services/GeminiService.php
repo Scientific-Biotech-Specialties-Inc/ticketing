@@ -33,7 +33,12 @@ class GeminiService
      * @param string|null $conversationId
      * @return array {content: string, escalate: bool, ticket_data: array|null, rag_matched: bool, rag_sources: array}
      */
-    public function generateResponse(array $messages, ?string $conversationId = null): array
+    /**
+     * @param array $assets the customer's own equipment and software (spec 0047), so Gemini can tell
+     *                      which item the problem is about. Empty for callers with no item list.
+     * @param array|null $knownAsset the item already identified for this chat, so Gemini never asks for it again
+     */
+    public function generateResponse(array $messages, ?string $conversationId = null, array $assets = [], ?array $knownAsset = null): array
     {
         $requestStartTime = hrtime(true);
 
@@ -54,7 +59,7 @@ class GeminiService
                 'query' => $lastUserQuery,
             ]);
             $title = $this->deriveTitleFromMessages($messages) ?: 'Urgent: High-Voltage / Machinery Physical Inspection Needed';
-            $dangerNotice = "⚠️ SAFETY HAZARD ALERT: For your safety, do not attempt to service, disassemble, or touch live high-voltage electrical components, open electrical cabinets, or bypass safety interlocks on heavy machinery.\n\nPhysical intervention on high-voltage and industrial machinery must strictly be handled by certified service engineers with proper lockout/tagout procedures. I have escalated this issue directly to a high-priority technician dispatch ticket.";
+            $dangerNotice = "⚠️ SAFETY HAZARD ALERT: For your safety, do not attempt to service, disassemble, or touch live high-voltage electrical components, open electrical cabinets, or bypass safety interlocks on heavy machinery.\n\nPhysical intervention on high-voltage and industrial machinery must strictly be handled by certified service engineers with proper lockout/tagout procedures. I will raise this as a high-priority technician dispatch ticket.";
 
             return [
                 'content' => $dangerNotice,
@@ -169,6 +174,29 @@ class GeminiService
                 $systemInstruction .= "INSTRUCTION: Directly cite or summarize the approved steps from the sources above to resolve the user's issue.";
             }
 
+            // Spec 0047 (AC-8, AC-9): the customer's own items, so the reply names which one the problem is about.
+            if (!empty($assets)) {
+                $systemInstruction .= "\n\n=== CUSTOMER'S REGISTERED EQUIPMENT AND SOFTWARE (id: name, type) ===\n";
+                foreach ($assets as $asset) {
+                    $systemInstruction .= "{$asset['machine_ID']}: {$asset['name']} ({$asset['asset_type']}"
+                        . (!empty($asset['serial_number']) ? ", serial {$asset['serial_number']}" : '') . ")\n";
+                }
+                $systemInstruction .= "=== END CUSTOMER ITEMS ===\n" .
+                    "Work out which ONE of these items the customer's problem is about. Whenever you append the JSON block, also include:\n" .
+                    '  "asset_id": <the id from this list, or null if you cannot tell>,' . "\n" .
+                    '  "asset_candidates": [<ids from this list that could match, when more than one fits>],' . "\n" .
+                    '  "asset_mentioned": "<the equipment or software name the customer typed, or null>"' . "\n" .
+                    "Never invent an id. If the customer names equipment or software that is NOT in this list, tell them it is not registered to their account, " .
+                    "and append the JSON block with \"escalate\": false and asset_mentioned set to what they named.";
+
+                if (!empty($knownAsset['machine_ID'])) {
+                    $systemInstruction .= "\n\nThe customer has ALREADY identified their item: {$knownAsset['machine_ID']}: {$knownAsset['name']}. " .
+                        "Do NOT ask which equipment, machine or software they are using again. Use asset_id {$knownAsset['machine_ID']} in any JSON block.";
+                } else {
+                    $systemInstruction .= "\nIf the customer already named their equipment or software earlier in the conversation, do not ask for it again.";
+                }
+            }
+
             // Limit conversation window to latest 8 messages to prevent latency degradation in long chats
             $recentMessages = count($messages) > 8 ? array_slice($messages, -8) : $messages;
 
@@ -273,6 +301,7 @@ class GeminiService
         $escalate = false;
         $ticketData = null;
         $cleanText = $rawText;
+        $assetHints = [];
 
         // Find the escalation JSON block wherever it starts. Gemini does not always close it (the
         // reply can hit the token limit mid block), tag it as json, or fence it at all, so match on
@@ -291,6 +320,15 @@ class GeminiService
             }
 
             $escalate = ($parsed['escalate'] ?? false) === true;
+
+            // Spec 0047: which customer item the reply is about (checked against the list by AssetIntakeGate).
+            $assetHints = [
+                'asset_id' => isset($parsed['asset_id']) && is_numeric($parsed['asset_id']) ? (int) $parsed['asset_id'] : null,
+                'asset_candidates' => array_values(array_filter((array) ($parsed['asset_candidates'] ?? []), 'is_numeric')),
+                'asset_mentioned' => !empty($parsed['asset_mentioned']) && strtolower((string) $parsed['asset_mentioned']) !== 'null'
+                    ? trim((string) $parsed['asset_mentioned']) : null,
+            ];
+
             if ($escalate) {
                 $rawTitle = $parsed['ticket_title'] ?? '';
                 $cleanTitle = preg_replace('/^(?:\d+[\.\)\-:](?!\d)|\b[qQ]\d+[:\.]|\b(?:machine|problem|issue|item)[:\-])\s*/i', '', $rawTitle);
@@ -329,6 +367,7 @@ class GeminiService
             'content' => $cleanText,
             'escalate' => $escalate,
             'ticket_data' => $ticketData,
+            'asset_hints' => $assetHints,
         ];
     }
 
@@ -371,6 +410,8 @@ class GeminiService
             'reply' => $replyText,
             'escalate' => true,
             'is_fallback' => true,
+            // Spec 0047 (AC-12): AI unavailable; the manual form still requires an owned item.
+            'ai_unavailable' => true,
             'ticket_data' => [
                 'title' => $title,
                 'description' => !empty($lastUserMsg) ? $lastUserMsg : 'Submitted via manual support ticket.',

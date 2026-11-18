@@ -131,10 +131,17 @@ class TicketBranchAssignmentTest extends TestCase
             'address' => '1 Test Way',
         ]);
 
+        // Seeded software has no branch of its own, so the default branch applies (spec 0047 AC-16).
+        if (!DB::table('machine_categories')->where('category_name', 'Software')->exists()) {
+            DB::table('machine_categories')->insert(['category_name' => 'Software', 'created_at' => now(), 'updated_at' => now()]);
+        }
+        app(\App\Services\CustomerAssetService::class)->seedMissing($client->id);
+        $lis = DB::table('machines')->where('serial_number', \App\Services\CustomerAssetService::seedSerial($client->id, 'LIS'))->value('machine_ID');
+
         $this->actingAs($client, 'api')->postJson('/api/tickets', [
             'title' => 'Portal Login Fails',
             'description' => 'The customer portal rejects my password every time I sign in.',
-            'problem_category_ID' => DB::table('problem_categories')->where('category_name', 'Software')->whereNull('branch_id')->value('problem_category_ID'),
+            'machine_ID' => $lis,
         ])->assertSuccessful();
 
         $ticket = DB::table('tickets')->where('created_by', $client->id)->latest('ticket_ID')->first();

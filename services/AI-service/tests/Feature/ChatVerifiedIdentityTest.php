@@ -5,7 +5,7 @@ namespace Tests\Feature;
 use App\Models\AiConversation;
 use App\Services\GeminiService;
 use Illuminate\Auth\GenericUser;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
@@ -15,7 +15,7 @@ use Tests\TestCase;
  */
 class ChatVerifiedIdentityTest extends TestCase
 {
-    use DatabaseTransactions;
+    use RefreshDatabase;
 
     protected function setUp(): void
     {

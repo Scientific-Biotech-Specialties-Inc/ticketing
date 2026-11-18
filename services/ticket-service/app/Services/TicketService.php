@@ -1394,54 +1394,35 @@ class TicketService
     }
 
     /**
-     * A customer may change the category of their own open ticket (to an active category). The
-     * machine rules follow the category being saved: no machine on a Software ticket, a machine
-     * required on a Service ticket, and only the customer's own registered machines.
+     * Spec 0047 (AC-6): on a customer's own edit the category is never chosen directly; it follows
+     * the equipment or software item. Changing the item must name one of the customer's own
+     * pickable items, and the category is set again from it. Adjusts $validated in place.
      */
-    protected function customerEditError(object $ticket, array $validated, int $clientId): ?array
+    protected function customerEditError(object $ticket, array &$validated, int $clientId): ?array
     {
         $reject = fn (string $field, string $message) => [
             'status' => 422,
             'data' => ['message' => $message, 'errors' => [$field => [$message]]],
         ];
 
-        $currentCategory = $ticket->problem_category_ID !== null ? (int) $ticket->problem_category_ID : null;
-        if (array_key_exists('problem_category_ID', $validated) && $validated['problem_category_ID'] !== null) {
-            $requested = (int) $validated['problem_category_ID'];
-            $active = DB::table('problem_categories')
-                ->where('problem_category_ID', $requested)
-                ->where('is_active', true)
-                ->exists();
-            if (!$active) {
-                return $reject('problem_category_ID', 'Choose one of the available categories.');
-            }
-            $currentCategory = $requested;
-        }
+        // The category is read only for customers; any value sent is ignored.
+        unset($validated['problem_category_ID']);
 
         if (!array_key_exists('machine_ID', $validated)) {
             return null;
         }
 
-        $machineId = $validated['machine_ID'] !== null ? (int) $validated['machine_ID'] : null;
-        $resolver = app(CategoryDepartmentResolver::class);
-
-        if ($resolver->isSoftware($currentCategory) && $machineId !== null) {
-            return $reject('machine_ID', 'A Software ticket does not take a machine.');
+        if ($validated['machine_ID'] === null) {
+            return $reject('machine_ID', 'Choose one of your registered equipment or software.');
         }
 
-        if ($resolver->isService($currentCategory) && $machineId === null) {
-            return $reject('machine_ID', 'A Service ticket needs one of your registered machines.');
+        $assets = app(CustomerAssetService::class);
+        $asset = $assets->findPickable($clientId, (int) $validated['machine_ID']);
+        if (!$asset) {
+            return $reject('machine_ID', 'Choose one of your registered equipment or software.');
         }
 
-        if ($machineId !== null) {
-            $owned = DB::table('machines')
-                ->where('machine_ID', $machineId)
-                ->where('client_ID', $clientId)
-                ->exists();
-            if (!$owned) {
-                return $reject('machine_ID', 'The selected machine is not registered to this customer.');
-            }
-        }
+        $validated['problem_category_ID'] = $assets->categoryIdFor((string) $asset->asset_type);
 
         return null;
     }
@@ -1559,6 +1540,9 @@ class TicketService
             if ($customerEditError !== null) {
                 return $customerEditError;
             }
+            // The category may now follow a new item, so the SLA recalculation below sees it.
+            $attemptsCategoryChange = array_key_exists('problem_category_ID', $validated) && $validated['problem_category_ID'] !== null
+                && (int) $validated['problem_category_ID'] !== (int) $ticket->problem_category_ID;
         } else {
             // Staff / Employee edits:
             // Category edits: Customer service, admin, superadmin may edit on any non-closed ticket.

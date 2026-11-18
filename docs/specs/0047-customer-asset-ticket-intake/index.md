@@ -1,7 +1,7 @@
 # 0047. Customer asset based ticket intake
 
 **Date**: 2026-11-18
-**Status**: Proposed
+**Status**: In Progress
 
 ## Summary
 
@@ -123,17 +123,17 @@ Reasoning and options: see [rationale.md](rationale.md).
 
 Build approach: none recorded in `AGENTS.md` or the scope, so this assumes Tracer Bullet (a thin end to end thread first, then thicken).
 
-1. Migration: add `machines.asset_type` (default `equipment`) with the (`client_ID`, `asset_type`) index, and insert the "Software" machine category if missing; satisfies **AC-1**.
-2. `config/assets.php` with the seed list, and `App\Services\CustomerAssetService` in ticket-service: `pickableFor(clientId)`, `ensureSeeded(clientId)` (idempotent), `categoryIdFor(machine)`; satisfies **AC-1**, **AC-2**, **AC-14**, **AC-16**.
-3. Thin thread: `ticket-form-options` returns `assets` (seeding on read); customer create requires an owned pickable `machine_ID` and derives `problem_category_ID`; satisfies **AC-2**, **AC-5**, **AC-14**, **AC-15**.
-4. Frontend form: one "Equipment / Software" picker (grouped, no software serials), read only category, remove `useCategoryPreview` and the blur category call from `TicketCreation.jsx`, preselect `machine_ID` from the AI handoff; satisfies **AC-3**, **AC-4**, **AC-11**.
-5. Customer edit (PATCH): same ownership rule, category set again from the new item; satisfies **AC-6**.
-6. Internal endpoint `GET /api/internal/customers/{clientId}/assets` behind `internal.token`; satisfies **AC-7**.
-7. AI-service: `TICKET_SERVICE_URL` config, an assets client (60 second cache per conversation), pass the list to Gemini with numbered ids, parse `asset_id`, check it against the list, compute `asset_status`, gate `escalate`, accept `selected_asset_id`, include `machine_ID` in `ticket_data` and the handoff; safety path keeps the warning and asks for the item; satisfies **AC-7**, **AC-8**, **AC-9**, **AC-10**, **AC-11**, **AC-12**.
-8. Frontend AI chat (`AISupportPage.jsx`): render `asset_options` as buttons, send `selected_asset_id`, pass `machine_ID` to the form on handoff; satisfies **AC-8**, **AC-9**, **AC-11**.
-9. Seed command `assets:seed-customer-software` with dry run default, `--apply`, and `--link-ticket`; satisfies **AC-2**, **AC-13**.
-10. Tests: ticket-service feature tests (form options, create, edit, seeding, command) on `ticketing_system_test` with `DatabaseTransactions`; AI-service unit tests with `Http::fake` for matched, ambiguous, not owned, safety and Gemini down; satisfies every AC above.
-11. After the engineer approves: run the command with `--apply --link-ticket=8:LIS` on the dev database; satisfies **AC-13**.
+1. [x] Migration: add `machines.asset_type` (default `equipment`) with the (`client_ID`, `asset_type`) index, and insert the "Software" machine category if missing; satisfies **AC-1**.
+2. [x] `config/assets.php` with the seed list, and `App\Services\CustomerAssetService` in ticket-service: `pickableFor(clientId)`, `ensureSeeded(clientId)` (idempotent), `categoryIdFor(machine)`; satisfies **AC-1**, **AC-2**, **AC-14**, **AC-16**.
+3. [x] Thin thread: `ticket-form-options` returns `assets` (seeding on read); customer create requires an owned pickable `machine_ID` and derives `problem_category_ID`; satisfies **AC-2**, **AC-5**, **AC-14**, **AC-15**.
+4. [x] Frontend form: one "Equipment / Software" picker (grouped, no software serials), read only category, remove `useCategoryPreview` and the blur category call from `TicketCreation.jsx`, preselect `machine_ID` from the AI handoff; satisfies **AC-3**, **AC-4**, **AC-11**.
+5. [x] Customer edit (PATCH): same ownership rule, category set again from the new item; satisfies **AC-6**.
+6. [x] Internal endpoint `GET /api/internal/customers/{clientId}/assets` behind `internal.token`; satisfies **AC-7**.
+7. [x] AI-service: `TICKET_SERVICE_URL` config, an assets client (60 second cache per conversation), pass the list to Gemini with numbered ids, parse `asset_id`, check it against the list, compute `asset_status`, gate `escalate`, accept `selected_asset_id`, include `machine_ID` in `ticket_data` and the handoff; safety path keeps the warning and asks for the item; satisfies **AC-7**, **AC-8**, **AC-9**, **AC-10**, **AC-11**, **AC-12**.
+8. [x] Frontend AI chat (`AISupportPage.jsx`): render `asset_options` as buttons, send `selected_asset_id`, pass `machine_ID` to the form on handoff; satisfies **AC-8**, **AC-9**, **AC-11**.
+9. [x] Seed command `assets:seed-customer-software` with dry run default, `--apply`, and `--link-ticket`; satisfies **AC-2**, **AC-13**.
+10. [x] Tests: ticket-service feature tests (form options, create, edit, seeding, command) on `ticketing_system_test` with `DatabaseTransactions`; AI-service unit tests with `Http::fake` for matched, ambiguous, not owned, safety and Gemini down; satisfies every AC above.
+11. [x] After the engineer approves: run the command with `--apply --link-ticket=8:LIS` on the dev database; satisfies **AC-13**.
 
 ## Migration plan
 

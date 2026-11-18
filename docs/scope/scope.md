@@ -35,14 +35,14 @@ Customers report every problem against one of their own items, equipment or soft
 
 Done when: a customer can only create a ticket (from the form or the AI chat) about one of their own items, the category follows the item, no customer has an empty list, and TKT-0008 is linked to its LIS item.
 
-Spec: [0047](../specs/0047-customer-asset-ticket-intake/index.md)
+Spec: [0047](../specs/0047-customer-asset-ticket-intake/index.md) · code in `services/ticket-service/app/Services/CustomerAssetService.php`, `services/AI-service/app/Services/AssetIntakeGate.php`, `frontend/web/src/pages/TicketCreation.jsx`
 
 - [x] Design it (spec)
-- [ ] Build it: /develop Customer asset ticket intake
-  - [ ] Item model and seeding: `asset_type` migration, Software machine category, `CustomerAssetService`, seed list config (AC-1, AC-2, AC-14, AC-16)
-  - [ ] Ticket rules and form: form options list, owned item required on create and edit, server set category, one Equipment / Software picker with a read only category (AC-3 to AC-6, AC-11, AC-15)
-  - [ ] AI chat gating: internal assets endpoint, AI-service fetches the list, validated `asset_id`, not owned and ambiguous replies, safety path, chat buttons and handoff (AC-7 to AC-12)
-  - [ ] Data fix: seed command (dry run by default) and the TKT-0008 link, run only with approval (AC-2, AC-13)
+- [x] Build it: /develop Customer asset ticket intake
+  - [x] Item model and seeding: `asset_type` migration, Software machine category, `CustomerAssetService`, seed list config (AC-1, AC-2, AC-14, AC-16)
+  - [x] Ticket rules and form: form options list, owned item required on create and edit, server set category, one Equipment / Software picker with a read only category (AC-3 to AC-6, AC-11, AC-15)
+  - [x] AI chat gating: internal assets endpoint, AI-service fetches the list, validated `asset_id`, not owned and ambiguous replies, safety path, chat buttons and handoff (AC-7 to AC-12)
+  - [x] Data fix: seed command (dry run by default) and the TKT-0008 link, run only with approval (AC-2, AC-13)
 - [ ] Verify it: /check verify Customer asset ticket intake
 - [ ] Test it: /test Customer asset ticket intake
 

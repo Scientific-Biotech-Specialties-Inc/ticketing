@@ -1775,27 +1775,3 @@ export const suggestProblemCategory = async (title, description, categories) => 
   }
 };
 
-export const classifyDepartment = async (title, description) => {
-  try {
-    const response = await axiosInstance.post(`${AI_API_URL || '/api/ticketing/ai'}/classify-department`, {
-      title,
-      description,
-    });
-    return response.data?.data || response.data;
-  } catch (err) {
-    console.warn('AI classification request error, falling back to local heuristic:', err);
-    const text = `${title} ${description}`.toLowerCase();
-    const isSoftware = /(software|app|login|password|account|portal|bug|glitch|crash|freeze|network|wifi|database|timeout|license)/i.test(text);
-    return {
-      department: isSoftware ? 'IT' : 'Service',
-      department_id: isSoftware ? 2 : 1,
-      is_software: isSoftware,
-      requires_equipment: !isSoftware,
-      confidence: 0.8,
-      reasoning: isSoftware
-        ? 'Your problem description indicates a software or account issue. Physical equipment is optional.'
-        : 'Your problem description indicates physical machinery or hardware maintenance. Equipment selection is required.',
-      source: 'client-fallback'
-    };
-  }
-};

@@ -316,7 +316,8 @@ class VerifyEmployeeJwt
             ? \App\Models\Employee::where('email', $email)->first()
             : null;
 
-        if (empty($payloadBranch) && empty($payloadBranchId)) {
+        // Operational accounts always get a branch; the global superadmin stays branchless (all branches).
+        if (!$isGlobalAdmin && empty($payloadBranch) && empty($payloadBranchId)) {
             if ($existingEmployee && (!empty($existingEmployee->branch) || !empty($existingEmployee->branch_id))) {
                 $payloadBranch = $existingEmployee->branch ?: 'Main Branch';
                 $payloadBranchId = $existingEmployee->branch_id ?: 1;

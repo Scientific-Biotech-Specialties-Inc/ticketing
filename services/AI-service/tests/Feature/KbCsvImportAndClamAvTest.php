@@ -7,14 +7,14 @@ use App\Models\KbChunk;
 use App\Models\KbEmbedding;
 use App\Services\ClamAVScanner;
 use App\Services\RagService;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class KbCsvImportAndClamAvTest extends TestCase
 {
-    use DatabaseTransactions;
+    use RefreshDatabase;
 
     protected RagService $ragService;
 

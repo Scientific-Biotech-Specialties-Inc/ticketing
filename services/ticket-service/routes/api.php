@@ -49,6 +49,10 @@ Route::post('/internal/tickets/{ticketId}/sla/recalculate', [\App\Http\Controlle
 // Spec 0037: attachment-service asks whether the forwarded caller may open a ticket's files.
 Route::middleware(['internal.token', 'auth.subsystem'])
     ->get('/internal/attachment-access', [\App\Http\Controllers\InternalAttachmentAccessController::class, 'check']);
+// Spec 0047 (AC-7): a customer's pickable equipment and software, for the AI chat.
+Route::middleware('internal.token')
+    ->get('/internal/customers/{clientId}/assets', [\App\Http\Controllers\InternalCustomerAssetController::class, 'index'])
+    ->whereNumber('clientId');
 
 Route::middleware('auth.subsystem')->group(function () {
     // ─── Customer Ticket Drafts (spec 0034: verified customer token only) ────
