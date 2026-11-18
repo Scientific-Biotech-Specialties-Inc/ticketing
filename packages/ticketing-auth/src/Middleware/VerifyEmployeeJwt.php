@@ -13,6 +13,28 @@ use Ticketing\Auth\Security\TokenRevocationChecker;
 class VerifyEmployeeJwt
 {
     /**
+     * Cache key prefix for tokens that recently failed signature verification.
+     */
+    protected const REJECTED_CACHE_PREFIX = 'sso_auth_rejected:';
+
+    /**
+     * How long a rejected token is answered from cache when the rejection was definitive
+     * (auth-service answered "invalid", or there was no remote verifier to ask).
+     */
+    protected const REJECTED_TTL_SECONDS = 60;
+
+    /**
+     * Shorter cache window when remote verification could not complete (network error or
+     * auth-service 5xx), so a transient outage does not lock a valid session out for long.
+     */
+    protected const REJECTED_TRANSIENT_TTL_SECONDS = 10;
+
+    /**
+     * Timeout for the remote auth-service verification call.
+     */
+    protected const REMOTE_VERIFY_TIMEOUT_SECONDS = 3;
+
+    /**
      * Handle an incoming request.
      *
      * @param  \Illuminate\Http\Request  $request
@@ -61,6 +83,12 @@ class VerifyEmployeeJwt
                 });
                 return $next($request);
             }
+        }
+
+        // 1b. Recently rejected token: answer immediately. Without this, every request carrying a
+        // stale token repeats local verification plus a remote auth-service call before failing.
+        if (Cache::get(self::REJECTED_CACHE_PREFIX . $tokenHash)) {
+            return response()->json(['message' => 'Unauthorized: Invalid signature'], 401);
         }
 
         // 2. Local environment development token bypass
@@ -131,12 +159,14 @@ class VerifyEmployeeJwt
 
         // If local public key verification was not successful, attempt remote verification via auth-service
         $remotePayload = null;
+        // True when the rejection is a definite answer rather than a failed attempt to ask.
+        $rejectionIsDefinitive = true;
         if (!$verified) {
             $authUrl = env('AUTH_SERVICE_URL', env('CUSTOMER_SERVICE_URL', 'http://auth-service:8000'));
             $secret = env('INTERNAL_SERVICE_SECRET', env('INTERNAL_TOKEN', ''));
             if (!empty($authUrl) && !empty($secret)) {
                 try {
-                    $client = \Illuminate\Support\Facades\Http::timeout(5)
+                    $client = \Illuminate\Support\Facades\Http::timeout(self::REMOTE_VERIFY_TIMEOUT_SECONDS)
                         ->withHeaders([
                             'X-Internal-Secret' => $secret,
                             'Accept' => 'application/json',
@@ -147,8 +177,11 @@ class VerifyEmployeeJwt
                     if ($resp->successful() && $resp->json('valid') === true) {
                         $remotePayload = $resp->json('user');
                         $verified = true;
+                    } elseif ($resp->serverError()) {
+                        $rejectionIsDefinitive = false;
                     }
                 } catch (\Throwable $e) {
+                    $rejectionIsDefinitive = false;
                     Log::warning('VerifyEmployeeJwt: Remote verification failed', ['error' => $e->getMessage()]);
                 }
             }
@@ -163,6 +196,11 @@ class VerifyEmployeeJwt
                 'openssl_errors' => $errs,
                 'public_key_path' => $publicKeyPath,
             ]);
+            Cache::put(
+                self::REJECTED_CACHE_PREFIX . $tokenHash,
+                true,
+                $rejectionIsDefinitive ? self::REJECTED_TTL_SECONDS : self::REJECTED_TRANSIENT_TTL_SECONDS
+            );
             return response()->json(['message' => 'Unauthorized: Invalid signature'], 401);
         }
 
