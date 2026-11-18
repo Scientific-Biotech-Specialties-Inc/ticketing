@@ -4,6 +4,7 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth, resolveUserRole, resolveUserDepartment } from '@/context/AuthContext';
 import tokenStore from '@/auth/tokenStore';
 import WrongPortal from '@/components/WrongPortal.jsx';
+import { checkIsRequestor, REQUESTOR_HOME } from '@/utils/ticketingAccess';
 
 export { WrongPortal };
 
@@ -238,6 +239,12 @@ export default function PrivateRoute({ children, role }) {
     // Role-specific route authorization
     if (role) {
       const normalizedRole = role.toLowerCase();
+
+      // Spec 0045 (AC-12): a non designated staff member, whatever their role, uses the limited
+      // employee portal (EmployeeLayout narrows it further to My Tickets and personal pages).
+      if (checkIsRequestor(user)) {
+        return normalizedRole === 'employee' ? children : <Navigate to={REQUESTOR_HOME} replace />;
+      }
       if (isSuperAdmin && normalizedRole !== 'superadmin') {
         return <Navigate to="/superadmin/dashboard" replace />;
       }

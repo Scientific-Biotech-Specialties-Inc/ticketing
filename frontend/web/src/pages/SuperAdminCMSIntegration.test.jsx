@@ -23,7 +23,7 @@ describe('SuperAdminCMSIntegration Page Tests', () => {
     renderWithProviders(<SuperAdminCMSIntegration />);
 
     // Header check
-    expect(screen.getByText('CMS Customer Integration')).toBeInTheDocument();
+    expect(screen.getByText('Customer Contracts')).toBeInTheDocument();
     expect(
       screen.getByText(/Sync and manage customer profiles and service contracts from CMS/i)
     ).toBeInTheDocument();

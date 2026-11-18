@@ -153,9 +153,12 @@ class EmployeeDirectorySyncService
             $payload['first_name'] = $firstName !== '' ? $firstName : $existing->first_name;
             $payload['last_name'] = $lastName !== '' ? $lastName : $existing->last_name;
             DB::table('employees')->where('emp_id', $existing->emp_id)->update($payload);
+            // Spec 0045 (AC-14): a move to a department that does not handle tickets clears the designation.
+            \Ticketing\Auth\Access\TicketingAccess::handleDepartmentChange($existing, $dept, 'ticket-service sync');
             return;
         }
 
+        // Spec 0045 (AC-9): new staff arrive with is_ticketing_employee false (column default).
         $newId = (isset($u['id']) && (int) $u['id'] > 0 && !DB::table('employees')->where('emp_id', (int) $u['id'])->exists())
             ? (int) $u['id']
             : ((int) DB::table('employees')->max('emp_id') + 1);

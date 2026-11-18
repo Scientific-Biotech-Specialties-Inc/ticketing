@@ -43,6 +43,7 @@ Homestead.yaml
 Homestead.json
 /.vagrant
 .phpunit.result.cache
+.rnd
 
 /public/build
 /storage/pail

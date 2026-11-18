@@ -461,6 +461,33 @@ class TicketService
     }
 
     /**
+     * The branch slug of the employee's own branch, read from the employees row (not the cached
+     * session). Matches by branch id first, then by branch name. Null when it cannot be resolved.
+     */
+    protected function requesterBranchSlug(int $empId): ?string
+    {
+        $employee = DB::table('employees')->where('emp_id', $empId)->first(['branch_id', 'branch']);
+        if (!$employee) {
+            return null;
+        }
+
+        if (!empty($employee->branch_id)) {
+            $slug = DB::table('branches')->where('id', (int) $employee->branch_id)->value('slug');
+            if ($slug) {
+                return $slug;
+            }
+        }
+
+        if (!empty($employee->branch)) {
+            return DB::table('branches')
+                ->whereRaw('LOWER(name) = ?', [strtolower(trim((string) $employee->branch))])
+                ->value('slug') ?: null;
+        }
+
+        return null;
+    }
+
+    /**
      * Create internal ticket submitted by an employee.
      */
     public function createInternalTicket(array $validated, $user, ?int $requestedDepartmentId = null): array
@@ -470,6 +497,13 @@ class TicketService
         $cleanDescription = trim(strip_tags((string) $validated['description']));
         $internalTypeId = DB::table('ticket_types')->where('type_name', 'Internal')->value('ticket_type_ID');
         $empId = (int) $user->emp_id;
+
+        // An internal ticket belongs to the requester's own branch unless the request names one.
+        // Without this it is saved with no branch, and branch scoped queues (CS dashboard, incoming)
+        // only show branchless tickets to the main branch, so every other branch's CS never sees it.
+        if (empty($validated['branch_id'])) {
+            $validated['branch_id'] = $this->requesterBranchSlug($empId);
+        }
 
         // Spec 0043 (AC-7): use the requester department's own code.
         $deptCodeParam = !empty($user->department)

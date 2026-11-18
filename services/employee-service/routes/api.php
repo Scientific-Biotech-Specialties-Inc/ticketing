@@ -6,6 +6,7 @@ use App\Http\Controllers\EmployeeAssignmentController;
 use App\Http\Controllers\EmployeeReassignmentController;
 use App\Http\Controllers\WorkLogController;
 use App\Http\Controllers\DepartmentController;
+use App\Http\Controllers\TicketingAccessController;
 
 /*
 |--------------------------------------------------------------------------
@@ -29,26 +30,38 @@ Route::middleware(['auth.subsystem'])->group(function () {
     // Employee Profile & Workbenches
     Route::get('/employee/profile', [EmployeeDirectoryController::class, 'employeeProfile']);
     Route::match(['put', 'patch'], '/employee/profile', [EmployeeDirectoryController::class, 'updateProfile']);
-    Route::get('/employee-tickets', [EmployeeAssignmentController::class, 'employeeTickets']);
+    // Requestors (spec 0045) keep My Tickets: internal tickets they raised stay unguarded.
     Route::get('/employee/tickets/internal', [EmployeeAssignmentController::class, 'internalTickets']);
 
-    // Ticket Assignments & Acceptance
-    Route::post('/tickets/{ticketId}/assign', [EmployeeAssignmentController::class, 'assignTicket']);
-    Route::patch('/tickets/{ticketId}/accept', [EmployeeAssignmentController::class, 'acceptTicket']);
-    Route::post('/tickets/{ticketId}/employee-update', [EmployeeAssignmentController::class, 'employeeUpdate']);
+    // Spec 0045 (AC-12): work queue routes are for designated ticketing employees only.
+    Route::middleware(['ticketing.employee'])->group(function () {
+        Route::get('/employee-tickets', [EmployeeAssignmentController::class, 'employeeTickets']);
 
-    // Reassignment Requests & Approvals
-    Route::post('/tickets/{ticketId}/reassign-request', [EmployeeReassignmentController::class, 'reassignRequest']);
-    Route::post('/tickets/{ticketId}/reassign-respond', [EmployeeReassignmentController::class, 'reassignRespond']);
-    Route::get('/reassignment-requests', [EmployeeReassignmentController::class, 'reassignmentRequests']);
+        // Ticket Assignments & Acceptance
+        Route::post('/tickets/{ticketId}/assign', [EmployeeAssignmentController::class, 'assignTicket']);
+        Route::patch('/tickets/{ticketId}/accept', [EmployeeAssignmentController::class, 'acceptTicket']);
+        Route::post('/tickets/{ticketId}/employee-update', [EmployeeAssignmentController::class, 'employeeUpdate']);
+
+        // Reassignment Requests & Approvals
+        Route::post('/tickets/{ticketId}/reassign-request', [EmployeeReassignmentController::class, 'reassignRequest']);
+        Route::post('/tickets/{ticketId}/reassign-respond', [EmployeeReassignmentController::class, 'reassignRespond']);
+        Route::get('/reassignment-requests', [EmployeeReassignmentController::class, 'reassignmentRequests']);
+
+        // Work Logs
+        Route::get('/employee/worklogs', [WorkLogController::class, 'index']);
+        Route::post('/employee/worklogs', [WorkLogController::class, 'store']);
+        Route::get('/employee/worklogs/export', [WorkLogController::class, 'export']);
+    });
+
+    // Spec 0045: ticketing access (superadmin, and branch admins for their own branch's people)
+    Route::get('/ticketing-access/departments', [TicketingAccessController::class, 'departments']);
+    Route::put('/ticketing-access/departments', [TicketingAccessController::class, 'saveDepartments']);
+    Route::get('/ticketing-access/employees', [TicketingAccessController::class, 'employees']);
+    Route::post('/ticketing-access/employees/bulk-designate', [TicketingAccessController::class, 'bulkDesignate']);
+    Route::put('/ticketing-access/employees/{empId}', [TicketingAccessController::class, 'updateEmployee'])->whereNumber('empId');
 
     // Spec 0043: department codes (superadmin only, checked in the controller)
     Route::get('/departments/code-suggestion', [DepartmentController::class, 'suggestCode']);
     Route::post('/departments', [DepartmentController::class, 'store']);
     Route::put('/departments/{id}', [DepartmentController::class, 'update'])->whereNumber('id');
-
-    // Work Logs
-    Route::get('/employee/worklogs', [WorkLogController::class, 'index']);
-    Route::post('/employee/worklogs', [WorkLogController::class, 'store']);
-    Route::get('/employee/worklogs/export', [WorkLogController::class, 'export']);
 });

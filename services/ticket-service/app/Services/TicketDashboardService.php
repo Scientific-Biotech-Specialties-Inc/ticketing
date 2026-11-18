@@ -1401,6 +1401,8 @@ class TicketDashboardService
             ]);
 
         TechnicalDepartments::applyEmployeeFilter($query, 'e');
+        // Spec 0045 (AC-11): the workload view lists designated ticketing employees only.
+        \Ticketing\Auth\Access\TicketingAccess::onlyTicketingEmployees($query, 'e');
 
         if ($branchSlug !== 'all' && $branchId !== 'all') {
             $query->where(function ($q) use ($branchId, $branchSlug, $branchName, $isMainBranch) {

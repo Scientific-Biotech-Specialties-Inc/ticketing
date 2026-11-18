@@ -171,6 +171,9 @@ class EmployeeDirectoryController extends Controller
             $query->addSelect('branch_id as branch');
         }
 
+        // Spec 0045 (AC-11): only designated ticketing employees can be picked.
+        \Ticketing\Auth\Access\TicketingAccess::onlyTicketingEmployees($query);
+
         if ($department) {
             $query->where('department', $department);
         }
@@ -247,6 +250,9 @@ class EmployeeDirectoryController extends Controller
         } elseif (\Illuminate\Support\Facades\Schema::hasColumn('employees', 'branch_id')) {
             $query->addSelect('branch_id as branch');
         }
+
+        // Spec 0045 (AC-11): only designated ticketing employees can be picked.
+        \Ticketing\Auth\Access\TicketingAccess::onlyTicketingEmployees($query);
 
         $requestedBy = $ticket->requested_by ?? null;
         if ($requestedBy) {
