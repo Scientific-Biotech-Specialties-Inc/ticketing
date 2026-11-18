@@ -62,6 +62,7 @@ services:
     container_name: customer-service
     volumes:
       - ./services/customer-service:/var/www
+      - ./docker/php/opcache-dev.ini:/usr/local/etc/php/conf.d/zz-opcache-dev.ini:ro
       - ./packages/ticketing-auth:/var/www/packages/ticketing-auth
       - customer-service-vendor:/var/www/vendor
     ports:
@@ -213,6 +214,7 @@ services:
     container_name: ticket-service
     volumes:
       - ./services/ticket-service:/var/www
+      - ./docker/php/opcache-dev.ini:/usr/local/etc/php/conf.d/zz-opcache-dev.ini:ro
       - ./packages/ticketing-auth:/var/www/packages/ticketing-auth
       - ticket-service-vendor:/var/www/vendor
     ports:
@@ -304,6 +306,7 @@ services:
     container_name: employee-service
     volumes:
       - ./services/employee-service:/var/www
+      - ./docker/php/opcache-dev.ini:/usr/local/etc/php/conf.d/zz-opcache-dev.ini:ro
       - ./packages/ticketing-auth:/var/www/packages/ticketing-auth
       - employee-service-vendor:/var/www/vendor
     ports:
@@ -356,6 +359,7 @@ services:
     container_name: notification-service
     volumes:
       - ./services/notification-service:/var/www
+      - ./docker/php/opcache-dev.ini:/usr/local/etc/php/conf.d/zz-opcache-dev.ini:ro
       # Keep vendor/ off the Windows bind mount (as every other service does). Without it,
       # each request read hundreds of library files over the host share: 15 to 28 seconds per request.
       - notification-service-vendor:/var/www/vendor
@@ -383,6 +387,7 @@ services:
     restart: always
     volumes:
       - ./services/analytics-service:/var/www
+      - ./docker/php/opcache-dev.ini:/usr/local/etc/php/conf.d/zz-opcache-dev.ini:ro
       # Shared token verification package used by AuthenticateSubsystem (spec 0034).
       - ./packages/ticketing-auth:/var/www/packages/ticketing-auth
       # Keep vendor/ off the Windows bind mount. Without this every request booted Laravel over the host
@@ -421,6 +426,7 @@ services:
     restart: always
     volumes:
       - ./services/configuration-service:/var/www
+      - ./docker/php/opcache-dev.ini:/usr/local/etc/php/conf.d/zz-opcache-dev.ini:ro
       - configuration-service-vendor:/var/www/vendor
       # Shared token verification package used by AuthenticateSubsystem (spec 0034).
       - ./packages/ticketing-auth:/var/www/packages/ticketing-auth
@@ -456,6 +462,7 @@ services:
     container_name: ai-service
     volumes:
       - ./services/AI-service:/var/www
+      - ./docker/php/opcache-dev.ini:/usr/local/etc/php/conf.d/zz-opcache-dev.ini:ro
       - ai-service-vendor:/var/www/vendor
       # Shared token verification package used by AuthenticateSubsystem (spec 0034).
       - ./packages/ticketing-auth:/var/www/packages/ticketing-auth
@@ -512,6 +519,7 @@ services:
     container_name: attachment-service
     volumes:
       - ./services/attachment-service:/var/www
+      - ./docker/php/opcache-dev.ini:/usr/local/etc/php/conf.d/zz-opcache-dev.ini:ro
       - attachment-service-vendor:/var/www/vendor
     ports:
       - "8006:8000"
@@ -567,9 +575,13 @@ services:
       - default
       - shared-capstone-network
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
+      test: ["CMD", "mongosh", "--quiet", "--norc", "--eval", "db.adminCommand('ping')"]
+      # mongosh is a Node.js app; each run pegs a CPU core for ~1s. Probe quickly while
+      # starting (start_interval) so messaging-service is not delayed, then rarely once healthy.
+      interval: 60s
+      start_period: 60s
+      start_interval: 5s
+      timeout: 10s
       retries: 5
 
   messaging-reverb:
@@ -604,6 +616,7 @@ services:
     container_name: messaging-service
     volumes:
       - ./services/messaging-service:/var/www
+      - ./docker/php/opcache-dev.ini:/usr/local/etc/php/conf.d/zz-opcache-dev.ini:ro
       - ./packages/ticketing-auth:/var/www/packages/ticketing-auth
       - messaging-service-vendor:/var/www/vendor
     ports:
