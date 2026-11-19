@@ -68,6 +68,8 @@ export default function EmployeeMyTickets({ roleContext }) {
   );
   const [drafts, setDrafts] = useState([]);
   const [loadingDrafts, setLoadingDrafts] = useState(false);
+  const [draftsSupported, setDraftsSupported] = useState(true);
+  const draftsForbiddenRef = React.useRef(false);
   const [formOptions, setFormOptions] = useState(() => getCachedTicketFormOptions() || {});
   const isHistory = false;
 
@@ -99,11 +101,19 @@ export default function EmployeeMyTickets({ roleContext }) {
   }, [user]);
 
   const loadDrafts = useCallback(async () => {
+    if (draftsForbiddenRef.current) return;
     setLoadingDrafts(true);
     try {
       const list = await getTicketDrafts({ client_id: currentUserId });
       setDrafts(list || []);
     } catch (err) {
+      if (err?.response?.status === 403) {
+        draftsForbiddenRef.current = true;
+        setDraftsSupported(false);
+        setDrafts([]);
+        setActiveTab((prev) => (prev === 'drafts' ? 'tickets' : prev));
+        return;
+      }
       console.warn('Failed to load ticket drafts:', err);
     } finally {
       setLoadingDrafts(false);
@@ -626,26 +636,28 @@ export default function EmployeeMyTickets({ roleContext }) {
             {visibleTickets.length}
           </span>
         </button>
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab('drafts');
-            setSearchParams({ tab: 'drafts' });
-            loadDrafts();
-          }}
-          className={`pb-3 px-4 text-sm font-bold transition-all border-b-2 -mb-px flex items-center gap-2 cursor-pointer ${
-            activeTab === 'drafts'
-              ? 'border-brand-primary text-brand-primary'
-              : 'border-transparent text-muted-slate hover:text-dark-slate'
-          }`}
-        >
-          My Drafts
-          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-            activeTab === 'drafts' ? 'bg-amber-100 text-amber-800' : 'bg-page text-muted-slate'
-          }`}>
-            {drafts.length}
-          </span>
-        </button>
+        {draftsSupported && (
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('drafts');
+              setSearchParams({ tab: 'drafts' });
+              loadDrafts();
+            }}
+            className={`pb-3 px-4 text-sm font-bold transition-all border-b-2 -mb-px flex items-center gap-2 cursor-pointer ${
+              activeTab === 'drafts'
+                ? 'border-brand-primary text-brand-primary'
+                : 'border-transparent text-muted-slate hover:text-dark-slate'
+            }`}
+          >
+            My Drafts
+            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+              activeTab === 'drafts' ? 'bg-amber-100 text-amber-800' : 'bg-page text-muted-slate'
+            }`}>
+              {drafts.length}
+            </span>
+          </button>
+        )}
       </div>
 
       {activeTab !== 'drafts' ? (

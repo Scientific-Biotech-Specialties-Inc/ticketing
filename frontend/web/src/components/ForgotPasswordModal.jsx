@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Mail, Lock, Eye, EyeOff, CheckCircle2, AlertCircle, Loader2, X, ArrowLeft, KeyRound } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -189,7 +190,7 @@ export default function ForgotPasswordModal({ onClose, defaultEmail = '' }) {
     }
   };
 
-  return (
+  const modalContent = (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto animate-in fade-in duration-200"
       onClick={(e) => e.target === e.currentTarget && onClose()}
@@ -203,25 +204,23 @@ export default function ForgotPasswordModal({ onClose, defaultEmail = '' }) {
         <button
           type="button"
           onClick={onClose}
-          className="absolute right-4 top-4 rounded-lg p-1.5 text-muted-slate hover:text-dark-slate hover:bg-slate-100 transition-colors"
+          className="absolute right-4 top-4 rounded-full p-2 text-muted-slate hover:text-dark-slate bg-slate-100/70 hover:bg-slate-200/70 transition-colors cursor-pointer"
           aria-label="Close"
         >
-          <X className="h-5 w-5" />
+          <X className="h-4 w-4" />
         </button>
 
         {/* ── STEP 1: Enter Email ── */}
         {step === 1 && (
-          <div className="space-y-5">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-accent/10 flex items-center justify-center text-accent shrink-0">
-                <KeyRound className="h-5 w-5" />
+          <div className="space-y-6">
+            <div className="flex flex-col items-center text-center pt-1">
+              <div className="h-14 w-14 rounded-full bg-[#EFF6FF] flex items-center justify-center text-[#252578] mb-4">
+                <Mail className="h-6 w-6" />
               </div>
-              <div>
-                <h2 className="text-xl font-bold text-primary tracking-tight">Forgot Password?</h2>
-                <p className="text-xs text-muted-slate mt-0.5">
-                  Enter your registered email to receive a recovery code.
-                </p>
-              </div>
+              <h2 className="text-2xl font-bold text-[#1E293B] tracking-tight">Forgot Password?</h2>
+              <p className="text-sm text-[#8D8B8F] mt-1.5 max-w-xs leading-relaxed">
+                Enter your registered email address and we&apos;ll send you a 6-digit recovery code.
+              </p>
             </div>
 
             {error && (
@@ -496,4 +495,6 @@ export default function ForgotPasswordModal({ onClose, defaultEmail = '' }) {
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : modalContent;
 }
