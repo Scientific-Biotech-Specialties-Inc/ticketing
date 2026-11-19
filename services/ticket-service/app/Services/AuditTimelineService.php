@@ -339,6 +339,10 @@ class AuditTimelineService
                 return "{$who} reassigned the ticket"
                     . ($added !== '' ? ". Added: {$added}" : '')
                     . ($removed !== '' ? ". Removed: {$removed}" : '');
+            case 'escalated_to_managers':
+                $managerNames = implode(', ', array_filter(array_map(fn ($m) => $m['name'] ?? null, (array) ($details['managers'] ?? []))));
+                return 'Escalated to ' . ($managerNames !== '' ? $managerNames : 'the department managers')
+                    . ($reason ? ": {$reason}" : '');
             case 'manager_reassignment_acknowledged':
                 return 'Manager reassignment acknowledged by Customer Service';
             case 'accept':

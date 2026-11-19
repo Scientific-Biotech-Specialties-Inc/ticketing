@@ -263,7 +263,11 @@ class ManagerDashboardService
                 });
         }
 
-        $tickets = $rows->map(function ($t) use ($now, $assigneesByTicket) {
+        // Tickets escalated to this manager: they may join the ticket conversation.
+        $managerId = (int) ($manager->emp_id ?? 0);
+        $escalationManagers = app(EscalationParticipants::class)->managerIdsFor($ticketIds);
+
+        $tickets = $rows->map(function ($t) use ($now, $assigneesByTicket, $managerId, $escalationManagers) {
             $isEscalated = strcasecmp(trim((string) $t->status_name), 'Escalated') === 0;
             $isBreached = $this->slaOutcomes->isOpenBreach($t, $now);
 
@@ -301,6 +305,7 @@ class ManagerDashboardService
                 'is_breached' => $isBreached,
                 // Managers step in only on escalated or breached tickets.
                 'can_reassign' => $isEscalated || $isBreached,
+                'can_join_conversation' => in_array($managerId, $escalationManagers[(int) $t->ticket_ID] ?? [], true),
                 'created_at' => $t->created_at ? Carbon::parse($t->created_at)->toIso8601String() : null,
                 'updated_at' => $t->updated_at ? Carbon::parse($t->updated_at)->toIso8601String() : null,
             ];

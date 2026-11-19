@@ -921,7 +921,7 @@ export default function EmployeeMyTickets({ roleContext }) {
       )}
 
       <TicketModal
-        showDepartmentSelector
+        departmentFromCategory
         isOpen={isModalOpen}
         onClose={() => {
           setIsModalOpen(false);

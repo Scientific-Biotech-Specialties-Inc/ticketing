@@ -57,6 +57,10 @@ Route::middleware('internal.token')
 Route::middleware('internal.token')
     ->get('/internal/tickets/{ticketId}/hold-requests/pending', [\App\Http\Controllers\HoldRequestController::class, 'pending'])
     ->whereNumber('ticketId');
+// Managers a ticket was escalated to; messaging-service lets them join the conversation.
+Route::middleware('internal.token')
+    ->get('/internal/tickets/{ticketId}/escalation-managers', [\App\Http\Controllers\InternalEscalationParticipantsController::class, 'show'])
+    ->whereNumber('ticketId');
 // Spec 0048: hold request display state for employee-service ticket lists.
 Route::middleware('internal.token')
     ->get('/internal/hold-requests/states', [\App\Http\Controllers\HoldRequestController::class, 'states']);

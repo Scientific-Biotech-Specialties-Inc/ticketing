@@ -196,7 +196,7 @@ class TicketService
      */
     public function getFormOptions(): array
     {
-        return \Illuminate\Support\Facades\Cache::remember('ticket_form_options_cache', 3600, function () {
+        return \Illuminate\Support\Facades\Cache::remember('ticket_form_options_cache_v2', 3600, function () {
             $machines = DB::table('machines')
                 ->select('machine_ID', 'machine_name', 'serial_number')
                 ->orderBy('machine_name')
@@ -231,9 +231,11 @@ class TicketService
                     'value' => $row->machine_ID,
                     'label' => $row->machine_name . ' - ' . $row->serial_number,
                 ])->values()->all(),
+                // track: the department the category belongs to (internal tickets: 'it' makes equipment optional).
                 'category_options' => $problemCategories->map(fn ($row) => [
                     'value' => $row->problem_category_ID,
                     'label' => $row->category_name,
+                    'track' => app(CategoryTrack::class)->forName((string) $row->category_name),
                 ])->values()->all(),
                 'priority_options' => $priorities->map(fn ($row) => [
                     'value' => $row->priority_ID,
@@ -1950,6 +1952,13 @@ class TicketService
             }
             $escalationManagerIds = array_values(array_unique(array_filter($escalationManagerIds)));
             $assignedManagerId = $escalationManagerIds[0] ?? null;
+
+            // The escalation managers may join the ticket conversation (messaging-service checks this).
+            try {
+                app(EscalationParticipants::class)->record($ticketId, $escalationManagerIds, (int) $assignedBy, (string) $actorType, $escReason);
+            } catch (\Throwable $e) {
+                Log::warning("Failed to record escalation managers for ticket #{$ticketId}: " . $e->getMessage());
+            }
 
             $mgrTitle = "Urgent: Ticket Escalated - {$ticketRef}";
             $mgrMessage = "Manager Alert: Ticket {$ticketRef}: \"{$ticketTitle}\" has been escalated to you. Reason: \"{$escReason}\". Immediate departmental intervention required.";

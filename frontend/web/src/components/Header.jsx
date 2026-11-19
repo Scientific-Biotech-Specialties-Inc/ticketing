@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Home, User, Bell, PanelLeft, ChevronDown } from 'lucide-react';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, checkIsServiceManager, checkIsItManager, checkIsCSManager } from '@/context/AuthContext';
 import { getNotifications, markNotificationRead, markNotificationsRead, getTicketDetails, getAssignableEmployees, getDepartments, respondReassignment, acceptTicket } from '@/services/ticketService';
 import useRealtimeRefresh from '@/hooks/useRealtimeRefresh';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
@@ -12,6 +12,21 @@ import { TicketSummary, AssignModal } from '@/components/CSModals';
 import { getSystemStatus } from '@/services/configurationService';
 import tokenStore from '@/auth/tokenStore';
 import { isReassignmentDenied } from '@/utils/reassignmentUtils';
+
+/**
+ * Profile card role line. Department managers read as their manager title rather than
+ * the raw account role ("employee"). Order matters: CS before Service (the Service check
+ * matches "Customer Service"), and Service before IT (the IT check matches any department
+ * name containing "it", e.g. Facilities).
+ */
+export const profileRoleLabel = (u) => {
+  if (!u) return '';
+  // CS first: the Service check also matches "Customer Service" departments.
+  if (checkIsCSManager(u)) return 'CS Manager';
+  if (checkIsServiceManager(u)) return 'Service Manager';
+  if (checkIsItManager(u)) return 'IT Manager';
+  return String(u.role || '');
+};
 
 const checkUserIsCS = (u) => {
   if (!u) return false;
@@ -444,7 +459,7 @@ export default function Header({ sidebarHovered }) {
               </div>
               <div className="hidden sm:flex flex-col items-start leading-tight text-left">
                 <span className="text-sm font-semibold text-dark-slate">{user?.name || 'User'}</span>
-                <span className="text-xs text-muted-slate capitalize">{user?.role || ''}</span>
+                <span className="text-xs text-muted-slate capitalize">{profileRoleLabel(user)}</span>
               </div>
               <ChevronDown className="w-4 h-4 text-muted-slate ml-1" />
             </button>

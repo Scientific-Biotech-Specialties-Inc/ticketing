@@ -244,8 +244,12 @@ class TicketController extends Controller
             $request->merge(['attachments' => []]);
         }
 
+        // The department follows the category the employee picked (employees no longer choose it).
         // Equipment is required for Service (department 1) and optional for IT (department 2).
-        $internalDeptId = $request->input('department_id') ? (int) $request->input('department_id') : null;
+        $categoryId = (int) $request->input('problem_category_ID', 0);
+        $internalDeptId = $categoryId > 0
+            ? app(\App\Services\CategoryTrack::class)->departmentIdFor($categoryId)
+            : \App\Services\CategoryTrack::SERVICE_DEPARTMENT_ID;
         if ($request->has('machine_ID') && in_array($request->input('machine_ID'), ['', 'null'], true)) {
             $request->merge(['machine_ID' => null]);
         }

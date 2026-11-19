@@ -52,6 +52,9 @@ class MessageSent implements ShouldBroadcastNow
             'sender_role' => $this->message->sender_role ?? null,
             'message' => $this->message->message,
             'attachments' => $this->message->attachments ?? [],
+            // Set on "manager joined the conversation" system messages.
+            'event' => $this->message->event ?? null,
+            'joined_emp_id' => $this->message->joined_emp_id ?? null,
             'created_at' => $this->message->created_at ? $this->message->created_at->toIso8601String() : now()->toIso8601String(),
         ];
     }

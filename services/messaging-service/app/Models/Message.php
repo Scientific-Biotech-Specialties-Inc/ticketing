@@ -24,6 +24,8 @@ class Message extends Model
         'deleted_by',
         'is_internal',
         'exclude_ai',
+        'event',          // e.g. 'manager_joined' for an escalation manager joining the conversation
+        'joined_emp_id',  // the manager who joined, for 'manager_joined'
     ];
 
     /**

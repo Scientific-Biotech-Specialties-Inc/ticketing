@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { downloadAttachment } from '@/utils/attachmentFiles';
 import { useLocation } from 'react-router-dom';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, checkIsServiceManager, checkIsItManager } from '@/context/AuthContext';
 import { MessageCircle, Send, Users, User, AlertCircle, MoreVertical, Edit2, Trash2, Archive, RotateCcw, X, Info, History, Sparkles, Bot, Clock, Paperclip, FileText, Download, ShieldAlert, Loader2, Menu } from 'lucide-react';
 import {
   getTicketMessages,
@@ -11,6 +11,7 @@ import {
   deleteTicketMessage,
   pingThreadPresence,
   clearThreadPresence,
+  joinTicketConversation,
 } from '@/services/messagingService';
 import { getMessagingEcho } from '@/services/messagingEcho';
 import useRealtimeRefresh from '@/hooks/useRealtimeRefresh';
@@ -22,6 +23,7 @@ import {
   getEmployeeAssignedTickets,
   getTicketDetails,
   updateTicket,
+  getManagerTickets,
 } from '@/services/ticketService';
 import { getMessagingConfiguration } from '@/services/configurationService';
 import axiosInstance from '@/api/axiosInstance';
@@ -107,6 +109,10 @@ export default function MessagingPage() {
   const isCS = checkIsCS(user);
   const isEmployee = checkIsEmployee(user);
   const isCustomer = !isCS && !isEmployee;
+  // Service and IT managers also get the tickets escalated to them (they join to post).
+  const isDeptManager = !isCS && (checkIsServiceManager(user) || checkIsItManager(user));
+  const [isJoining, setIsJoining] = useState(false);
+  const [joinError, setJoinError] = useState('');
 
   const userType = isCS ? 'cs' : (isEmployee ? 'employee' : 'customer');
   const userId = isCustomer ? (user?.id ?? user?.client_ID ?? user?.client_id) : (user?.emp_id ?? user?.id);
@@ -261,9 +267,21 @@ export default function MessagingPage() {
             console.warn('Failed loading assigned tickets for employee messaging', e);
           }
 
+          let escalatedList = [];
+          if (isDeptManager) {
+            try {
+              const mgr = await getManagerTickets();
+              escalatedList = (mgr?.tickets || [])
+                .filter((t) => t.can_join_conversation)
+                .map((t) => ({ ...t, ticket_number: t.ticket_number || t.id, id: t.ticket_ID, escalated_to_me: true }));
+            } catch (e) {
+              console.warn('Failed loading escalated tickets for manager messaging', e);
+            }
+          }
+
           const seen = new Set();
           const merged = [];
-          for (const item of [...assignedList, ...internalList]) {
+          for (const item of [...assignedList, ...internalList, ...escalatedList]) {
             const tid = item.ticket_ID || item.id;
             if (tid && !seen.has(tid)) {
               seen.add(tid);
@@ -411,6 +429,8 @@ export default function MessagingPage() {
         equipment: t.equipment || (t.machine_name ? `${t.machine_name} - ${t.serial_number}` : 'Unspecified equipment'),
         date: t.date_created || t.created_at || t.date || '',
         priority: t.priority || t.priority_name || 'Low',
+        // Escalated to this manager: they read the thread and join before posting.
+        escalatedToMe: Boolean(t.escalated_to_me || t.can_join_conversation),
       };
     });
   }, [tickets, isCS, isEmployee, archiveOnClosureEnabled, user?.id]);
@@ -452,6 +472,39 @@ export default function MessagingPage() {
     const numId = Number(String(selectedContactId).replace(/\D/g, ''));
     return contacts.find(c => c.id === selectedContactId || (numId && Number(c.ticket_ID) === numId));
   }, [contacts, selectedContactId]);
+
+  // An escalation manager reads the thread but joins before posting; the join leaves a system message.
+  const hasJoinedConversation = useMemo(
+    () => messages.some((m) => m.event === 'manager_joined' && Number(m.joined_emp_id) === Number(userId)),
+    [messages, userId]
+  );
+  const needsToJoin = Boolean(
+    isDeptManager && selectedContact?.escalatedToMe && !messagesLoading && !hasJoinedConversation
+  );
+
+  useEffect(() => { setJoinError(''); }, [selectedContactId]);
+
+  const handleJoinConversation = useCallback(async () => {
+    if (!selectedContactId || isJoining) return;
+    setIsJoining(true);
+    setJoinError('');
+    try {
+      const res = await joinTicketConversation(selectedContactId);
+      const joinedMsg = res?.message_obj;
+      if (joinedMsg) {
+        const id = joinedMsg.id || joinedMsg._id;
+        setMessages((prev) => (prev.some((m) => (m.id || m._id) === id) ? prev : [...prev, { ...joinedMsg, id, _id: id }]));
+      } else {
+        // Already joined elsewhere: reload so the existing join message is present.
+        const msgs = await getTicketMessages(selectedContactId);
+        setMessages(msgs || []);
+      }
+    } catch (err) {
+      setJoinError(err?.response?.data?.message || 'Could not join the conversation. Please try again.');
+    } finally {
+      setIsJoining(false);
+    }
+  }, [selectedContactId, isJoining]);
 
   // 4. Fetch messages and bind WebSockets on selection
   useEffect(() => {
@@ -505,6 +558,8 @@ export default function MessagingPage() {
             sender_id: e.sender_id,
             sender_name: e.sender_name,
             sender_type: e.sender_type,
+            event: e.event,
+            joined_emp_id: e.joined_emp_id,
             sender_role: e.sender_role,
             message: e.message || '',
             attachments: e.attachments || [],
@@ -1589,6 +1644,28 @@ export default function MessagingPage() {
                   <p className="text-xs text-amber-950 font-semibold">
                     This conversation is archived because the ticket is Closed. The message thread is locked and read-only.
                   </p>
+                </div>
+              ) : needsToJoin ? (
+                <div
+                  data-testid="join-conversation-bar"
+                  className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 border-t border-border bg-page flex-shrink-0"
+                >
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-foreground">This ticket was escalated to you.</p>
+                    <p className="text-xs text-muted-foreground">
+                      Join the conversation to send messages. Everyone in the thread sees that you joined.
+                    </p>
+                    {joinError && <p role="alert" className="text-xs text-destructive mt-1">{joinError}</p>}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleJoinConversation}
+                    disabled={isJoining}
+                    className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-white hover:bg-primary/90 disabled:opacity-60 cursor-pointer"
+                  >
+                    {isJoining ? <Loader2 size={14} className="animate-spin" /> : <Users size={14} />}
+                    Join conversation
+                  </button>
                 </div>
               ) : isCS && !selectedContact.is_internal && selectedContact.type !== 'internal' && Number(selectedContact.requested_by) === Number(user?.emp_id ?? user?.id) ? (
                 <div className="flex items-center justify-center gap-2 px-6 py-4 border-t border-amber-300 bg-amber-50 flex-shrink-0">

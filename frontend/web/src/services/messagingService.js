@@ -41,6 +41,13 @@ messagingClient.interceptors.response.use(
   }
 );
 
+/** A manager the ticket was escalated to joins its conversation (posts one "joined" system message). */
+export const joinTicketConversation = async (ticketId) => {
+  const numericId = Number(String(ticketId).replace(/\D/g, ''));
+  const response = await messagingClient.post(`/tickets/${numericId}/join`);
+  return response.data;
+};
+
 export const getTicketMessages = async (ticketId) => {
   const response = await messagingClient.get(`/tickets/${ticketId}/messages`);
   const messages = response.data?.messages ?? [];

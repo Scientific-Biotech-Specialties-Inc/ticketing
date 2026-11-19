@@ -166,6 +166,9 @@ export default function TicketModal({
   initialDraft = null,
   onDraftSaved = null,
   showDepartmentSelector = false,
+  // Internal tickets: no department picker; the department follows the chosen category
+  // (the server derives it too). IT categories make equipment optional.
+  departmentFromCategory = false,
 }) {
   useLockBodyScroll(isOpen);
   const { user } = useAuth();
@@ -239,7 +242,12 @@ export default function TicketModal({
     : '';
   const categoryError = !formData.problem_category_ID ? 'Category is required.' : '';
   // Equipment is required for Service (1) and optional for IT (2).
-  const isItDepartment = showDepartmentSelector && Number(formData.department_id) === 2;
+  const selectedCategoryTrack = String(
+    options.category_options?.find((o) => String(o.value) === String(formData.problem_category_ID))?.track || ''
+  ).toLowerCase();
+  const isItDepartment = showDepartmentSelector
+    ? Number(formData.department_id) === 2
+    : departmentFromCategory && selectedCategoryTrack === 'it';
   const equipmentError = !isItDepartment && !formData.machine_ID ? 'Equipment is required.' : '';
   const descriptionError = !descTrimmed
     ? 'Description is required.'
@@ -604,6 +612,11 @@ export default function TicketModal({
                 hasError={Boolean(touched.category && categoryError)}
               />
               {touched.category && categoryError && <p className="mt-1.5 text-xs text-red-500">{categoryError}</p>}
+              {departmentFromCategory && formData.problem_category_ID && selectedCategoryTrack && (
+                <p className="mt-1.5 text-xs text-muted-slate" data-testid="derived-department">
+                  Routed to the {selectedCategoryTrack === 'it' ? 'IT' : 'Service'} department based on this category.
+                </p>
+              )}
             </div>
 
             <div className="min-w-0">
