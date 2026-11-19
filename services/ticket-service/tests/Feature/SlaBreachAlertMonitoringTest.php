@@ -504,6 +504,63 @@ class SlaBreachAlertMonitoringTest extends TestCase
      * Requirement: If the Assigned Employee changes after a breach has occurred, the newly assigned employee
      * is also alerted (via their own configured channels) and sees the breach status upon assignment.
      */
+    /**
+     * The first breach alert escalates the ticket to the assignee's department manager: it is
+     * recorded so the manager sees it as escalated to them and CS sees who it went to.
+     */
+    public function test_first_breach_alert_records_the_automatic_escalation_to_the_department_manager(): void
+    {
+        DB::table('employees')->updateOrInsert(['emp_id' => 305], [
+            'first_name' => 'Marta',
+            'last_name' => 'Lim',
+            'email' => 'marta.lim@example.com',
+            'role' => 'Biomedical Manager',
+            'department' => 'Biomedical',
+            'position_level' => 'Manager',
+            'branch' => 'Main',
+            'is_active' => true,
+            'password_hash' => 'secret',
+        ]);
+
+        $ticketId = DB::table('tickets')->insertGetId([
+            'ticket_number' => 'TKT-1006',
+            'ticket_type_ID' => 1,
+            'created_by' => $this->testClientId,
+            'problem_category_ID' => 1,
+            'priority_ID' => 1,
+            'ticket_status_ID' => 1,
+            'title' => 'Infusion Pump Occlusion Alarm',
+            'description' => 'Alarm keeps sounding.',
+            'resolution_due_at' => Carbon::now()->subMinutes(30),
+            'sla_status' => 'On Track',
+            'created_at' => Carbon::now()->subHours(3),
+            'updated_at' => Carbon::now()->subHours(1),
+        ]);
+        DB::table('ticket_assignments')->insert([
+            'ticket_ID' => $ticketId,
+            'employee_ID' => $this->assignedEmpId,
+            'assigned_by' => $this->csEmpId,
+            'created_at' => Carbon::now()->subHours(2),
+        ]);
+
+        $slaService = app(SLAService::class);
+        $slaService->checkAndNotifySlaAlerts();
+        // A second run inside the re-alert window must not escalate again.
+        $slaService->checkAndNotifySlaAlerts();
+
+        $escalations = DB::table('ticket_audit_logs')
+            ->where('ticket_ID', $ticketId)
+            ->where('action_type', \App\Services\EscalationParticipants::EVENT)
+            ->get();
+
+        $this->assertCount(1, $escalations);
+        $this->assertSame('system', $escalations[0]->actor_type);
+        $this->assertSame([305], json_decode($escalations[0]->details, true)['manager_ids']);
+
+        $managers = app(\App\Services\EscalationParticipants::class)->managersFor($ticketId);
+        $this->assertSame([['id' => 305, 'name' => 'Marta Lim', 'department' => 'Biomedical', 'automatic' => true]], $managers);
+    }
+
     public function test_reassignment_of_breached_ticket_alerts_new_employee(): void
     {
         $overdueDate = Carbon::now()->subHours(3);

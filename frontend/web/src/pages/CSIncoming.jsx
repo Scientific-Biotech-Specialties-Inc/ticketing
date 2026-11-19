@@ -154,6 +154,19 @@ export default function CSIncoming() {
   // Row to highlight after a redirect (e.g. CS approved a reassignment on the Assigned page).
   const [highlightTicketId, setHighlightTicketId] = useState(null);
   const highlightScrolledRef = useRef(false);
+  const highlightTimerRef = useRef(null);
+
+  // Highlight a ticket's row for a few seconds (after a redirect or an assignment) and scroll to it.
+  const flashHighlight = useCallback((ticketId) => {
+    const numericId = Number(String(ticketId ?? '').replace(/\D/g, ''));
+    if (!numericId) return;
+    clearTimeout(highlightTimerRef.current);
+    highlightScrolledRef.current = false;
+    setHighlightTicketId(numericId);
+    highlightTimerRef.current = setTimeout(() => setHighlightTicketId(null), 6000);
+  }, []);
+
+  useEffect(() => () => clearTimeout(highlightTimerRef.current), []);
   const newTicketTimerRef = useRef(null);
   const [typeFilter, setTypeFilter] = useState('all');
 
@@ -413,12 +426,10 @@ export default function CSIncoming() {
       setIncomingTab(requestedTab);
       setPage(1);
     }
-    highlightScrolledRef.current = false;
-    setHighlightTicketId(Number(String(targetId).replace(/\D/g, '')));
+    flashHighlight(targetId);
     window.history.replaceState({}, document.title);
-    const timer = setTimeout(() => setHighlightTicketId(null), 6000);
-    return () => clearTimeout(timer);
-  }, [location.state]);
+    return undefined;
+  }, [location.state, flashHighlight]);
 
   // Bring the highlighted row into view once it has rendered.
   useEffect(() => {
@@ -618,6 +629,8 @@ export default function CSIncoming() {
       setTickets((prev) => prev.map((t) => (t.ticket_ID === updated.ticket_ID || t.id === updated.id ? refreshed : t)));
       setModal(null);
       setIncomingTab('pending_assignment');
+      setPage(1);
+      flashHighlight(updated.ticket_ID || updated.id);
       return true;
     }
 
@@ -647,6 +660,8 @@ export default function CSIncoming() {
       setModal(null);
       setIncomingTab('pending_assignment');
       setPage(1);
+      // Show where the ticket went: highlight its row in the Pending Assignment tab.
+      flashHighlight(targetTicketId);
 
       window.dispatchEvent(new Event('notifications:updated'));
 

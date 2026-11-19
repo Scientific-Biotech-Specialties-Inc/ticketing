@@ -106,6 +106,7 @@ class TicketService
             ->leftJoin('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
             ->join('ticket_statuses as ts', 'ts.ticket_status_ID', '=', 't.ticket_status_ID')
             ->leftJoin('clients as c', 'c.id', '=', 't.created_by')
+            ->leftJoin('employees as req', 'req.emp_id', '=', 't.requested_by')
             ->leftJoin('machines as m', 'm.machine_ID', '=', 't.machine_ID')
             ->leftJoin('ticket_priorities as tp', 'tp.priority_ID', '=', 't.priority_ID')
             ->leftJoin('employees as e', 'e.emp_id', '=', 't.assigned_to')
@@ -122,8 +123,11 @@ class TicketService
                 'e.department',
                 't.created_at',
                 'c.client_name',
+                'c.email as client_email',
+                'req.email as requester_employee_email',
                 'm.machine_name',
                 'm.serial_number',
+                't.equipment_name',
                 'tt.type_name as ticket_type',
                 't.sla_rule_id',
                 't.response_due_at',
@@ -164,12 +168,19 @@ class TicketService
             'ticket_number' => $displayNumber,
             'ticket_ID' => (int) $row->ticket_ID,
             'customer' => $row->client_name ?: 'Unknown Customer',
+            // The requester's email (customer, or the employee for internal tickets), when on file.
+            'customer_email' => (bool) $row->is_internal
+                ? ($row->requester_employee_email ?: null)
+                : ($row->client_email ?: null),
             'title' => $row->title,
             'category' => $row->category_name,
             'status' => $row->status_name,
             'priority' => $row->priority_name,
             'department' => $row->department,
-            'equipment' => $row->machine_name . ' - ' . $row->serial_number,
+            'equipment' => $row->machine_name
+                ? $row->machine_name . ' - ' . $row->serial_number
+                : ($row->equipment_name ?: 'Not specified'),
+            'equipment_name' => $row->equipment_name ?? null,
             'sla' => $this->slaLabel($createdAtObj),
             'date' => $createdAtObj ? $createdAtObj->format('m/d/Y') : now()->format('m/d/Y'),
             'assigned' => $assignedIds,
@@ -517,6 +528,7 @@ class TicketService
             fn () => DB::table('tickets')->insertGetId([
                 'ticket_number' => $ticketNumber,
                 'machine_ID' => $validated['machine_ID'] ?? null,
+                'equipment_name' => isset($validated['equipment_name']) ? trim(strip_tags((string) $validated['equipment_name'])) : null,
                 'problem_category_ID' => $validated['problem_category_ID'],
                 'created_by' => 1,
                 'requested_by' => $empId,
@@ -579,6 +591,7 @@ class TicketService
             ]),
             'details' => json_encode([
                 'machine_ID' => $validated['machine_ID'] ?? null,
+                'equipment_name' => $validated['equipment_name'] ?? null,
                 'problem_category_ID' => $validated['problem_category_ID'],
                 'title' => $cleanTitle,
             ]),
@@ -671,6 +684,40 @@ class TicketService
     /**
      * Get detailed ticket data including timeline, attachments, worklogs, and SLA.
      */
+    /**
+     * Managers a ticket is escalated to: every recorded escalation, or, for an open breached ticket
+     * with none recorded (breached before breach escalations were recorded), the department managers
+     * the breach alert goes to.
+     *
+     * @return array<int, array{id: int, name: string, department: ?string, automatic: bool}>
+     */
+    protected function escalatedTo(object $ticket): array
+    {
+        $ticketId = (int) ($ticket->ticket_ID ?? 0);
+        $recorded = app(EscalationParticipants::class)->managersFor($ticketId);
+        if (!empty($recorded)) {
+            return $recorded;
+        }
+
+        $finished = ['resolved', 'closed', 'discarded', 'cancelled'];
+        if (in_array(strtolower(trim((string) ($ticket->status_name ?? ''))), $finished, true)
+            || ($this->slaService->computeTicketSlaMetrics($ticket)['status'] ?? null) !== 'Breached') {
+            return [];
+        }
+
+        return collect($this->slaService->resolveDepartmentManagersForTicket($ticket))
+            ->filter()
+            ->unique('emp_id')
+            ->map(fn ($m) => [
+                'id' => (int) $m->emp_id,
+                'name' => trim(($m->first_name ?? '') . ' ' . ($m->last_name ?? '')) ?: 'Manager #' . $m->emp_id,
+                'department' => $m->department ?? null,
+                'automatic' => true,
+            ])
+            ->values()
+            ->all();
+    }
+
     public function showTicket(int $ticketId, $user, bool $isCustomer): ?array
     {
         $ticket = DB::table('tickets as t')
@@ -696,10 +743,13 @@ class TicketService
                 't.updated_at',
                 'm.machine_name',
                 'm.serial_number',
+                't.equipment_name',
                 'm.model as machine_model',
                 'm.brand as machine_brand',
                 'mc.category_name as equipment_type',
                 'c.client_name',
+                'c.email as client_email',
+                'req.email as requester_employee_email',
                 DB::raw("TRIM(CONCAT(COALESCE(req.first_name, ''), ' ', COALESCE(req.last_name, ''))) as requester_employee_name"),
                 't.created_by',
                 't.assigned_to',
@@ -1327,6 +1377,8 @@ class TicketService
             'machine_ID' => $ticket->machine_ID,
             'machine_name' => $ticket->machine_name,
             'serial_number' => $ticket->serial_number,
+            // Free-text equipment / software name typed by staff on internal tickets.
+            'equipment_name' => $ticket->equipment_name ?? null,
             'machine_model' => $ticket->machine_model ?? null,
             'machine_brand' => $ticket->machine_brand ?? null,
             'equipment_type' => $equipmentType,
@@ -1349,12 +1401,18 @@ class TicketService
             'sla_status' => $this->slaLabel($ticket->created_at, $ticket),
             'resolution_due_at' => (!empty($ticket->resolution_due_at)) ? Carbon::parse($ticket->resolution_due_at)->toIso8601String() : null,
             'sla_metrics' => $this->slaService->computeTicketSlaMetrics($ticket),
-            'equipment' => $ticket->machine_name ? ($ticket->machine_name . ($ticket->serial_number ? ' - ' . $ticket->serial_number : '')) : ($ticket->serial_number ?: 'Not specified'),
+            // Managers the ticket is escalated to, by hand or automatically on an SLA breach.
+            'escalated_to' => $isCustomer ? [] : $this->escalatedTo($ticket),
+            'equipment' => $ticket->machine_name ? ($ticket->machine_name . ($ticket->serial_number ? ' - ' . $ticket->serial_number : '')) : ($ticket->serial_number ?: ($ticket->equipment_name ?: 'Not specified')),
             'customer' => (bool) $ticket->is_internal
                 ? (($ticket->requester_employee_name !== '' && $ticket->requester_employee_name !== null)
                     ? $ticket->requester_employee_name
                     : ($ticket->requested_by ? 'Employee #' . $ticket->requested_by : 'Internal Requester'))
                 : ($ticket->client_name ?: 'Unknown Customer'),
+            // The requester's email (customer, or the employee for internal tickets), when on file.
+            'customer_email' => (bool) $ticket->is_internal
+                ? ($ticket->requester_employee_email ?: null)
+                : ($ticket->client_email ?: null),
             'accepted' => $accepted,
             'assigned_employee' => $primaryAssignedName,
             'assigned_employee_name' => $primaryAssignedName,

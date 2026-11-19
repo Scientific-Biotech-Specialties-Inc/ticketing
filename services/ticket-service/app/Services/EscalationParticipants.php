@@ -119,6 +119,41 @@ class EscalationParticipants
         return array_values(array_unique(array_merge($recorded, $byDepartment)));
     }
 
+    /**
+     * Every manager the ticket was escalated to, oldest first, each listed once, with whether any
+     * escalation reaching them came automatically from an SLA breach.
+     *
+     * @return array<int, array{id: int, name: string, department: ?string, automatic: bool}>
+     */
+    public function managersFor(int $ticketId): array
+    {
+        $byId = [];
+        DB::table('ticket_audit_logs')
+            ->where('ticket_ID', $ticketId)
+            ->where('action_type', self::EVENT)
+            ->orderBy('created_at')
+            ->get(['details', 'actor_type'])
+            ->each(function ($row) use (&$byId) {
+                $details = json_decode((string) $row->details, true) ?: [];
+                $automatic = strcasecmp((string) $row->actor_type, 'system') === 0;
+                foreach ((array) ($details['managers'] ?? []) as $m) {
+                    $id = (int) ($m['id'] ?? 0);
+                    if ($id <= 0) {
+                        continue;
+                    }
+                    $name = trim((string) ($m['name'] ?? ''));
+                    $byId[$id] = [
+                        'id' => $id,
+                        'name' => $name !== '' ? $name : 'Manager #' . $id,
+                        'department' => $m['department'] ?? null,
+                        'automatic' => ($byId[$id]['automatic'] ?? false) || $automatic,
+                    ];
+                }
+            });
+
+        return array_values($byId);
+    }
+
     /** @return int[] */
     public function managerIds(int $ticketId): array
     {

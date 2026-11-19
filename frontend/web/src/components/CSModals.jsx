@@ -1,6 +1,6 @@
 import { safeUrl } from '@/utils/safeUrl';
 import { attachmentUrl } from '@/utils/attachmentFiles';
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   HelpCircle,
@@ -766,10 +766,23 @@ export function SendReminderDialog({ isOpen, onClose, onConfirm, ticket, assigne
 /* ─────────────────────────────────────────────
    TICKET SUMMARY VIEW (post-save / already assigned)
 ───────────────────────────────────────────── */
-export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onEdit, onStatusUpdate, readOnly = false, isLoadingDetails = false }) {
+export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onEdit, onStatusUpdate, readOnly = false, isLoadingDetails = false, onManagerReassignmentSeen }) {
   // Follow the backend while the summary is open so assignee/status changes made elsewhere
   // (another CS agent, the employee accepting) show up without closing and reopening it.
   const { ticket, refresh: refreshLiveTicket } = useLiveTicket(ticketProp);
+
+  // Keep the manager reassignment shown for this whole view, even after opening it marks it seen
+  // (the refreshed ticket no longer carries it).
+  const shownReassignmentRef = useRef(null);
+  if (ticket?.manager_reassignment) shownReassignmentRef.current = ticket.manager_reassignment;
+  const shownReassignment = ticket?.manager_reassignment || shownReassignmentRef.current;
+  const handleReassignmentAcknowledged = useCallback(({ automatic } = {}) => {
+    if (!automatic) {
+      setActionSuccessNotice('Manager reassignment acknowledged.');
+      setTimeout(() => setActionSuccessNotice(''), 6000);
+    }
+    onManagerReassignmentSeen?.();
+  }, [onManagerReassignmentSeen]);
   useLockBodyScroll(!!ticket);
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -812,6 +825,16 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
     const normalized = currentSlaStatus ? String(currentSlaStatus).toLowerCase().replace(/[\s_-]+/g, '') : '';
     return normalized === 'breached' || normalized === 'violated' || Boolean(ticket?.sla_breached);
   }, [currentSlaStatus, ticket?.sla_breached]);
+
+  // Managers the ticket is escalated to (ticket details `escalated_to`). The backend escalates a
+  // breached ticket to its department managers automatically, so a breached or already escalated
+  // ticket shows who it went to instead of an Escalate button.
+  const escalatedTo = Array.isArray(ticket?.escalated_to) ? ticket.escalated_to : [];
+  const isAlreadyEscalated = isBreached || escalatedTo.length > 0 || currentStatus === 'Escalated';
+  const escalatedToText = escalatedTo.length > 0
+    ? escalatedTo.map((m) => (m.department ? `${m.name} (${m.department} Manager)` : m.name)).join(', ')
+    : 'the department manager';
+  const escalationIsAutomatic = escalatedTo.length > 0 ? escalatedTo.some((m) => m.automatic) : isBreached;
 
   // Send Reminder state
   const [showReminderModal, setShowReminderModal] = useState(false);
@@ -1676,7 +1699,19 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                 <div className="flex items-center gap-2">
                   {/* Escalate to a manager is always available on an active ticket. The
                       reassignment and SLA-breach states below already show their own Escalate. */}
-                  {canEscalateFromStatus && !ticket.reassignmentRequested && !(isBreached && !ticket.updated_by_technician) && (
+                  {isAlreadyEscalated && (
+                    <span
+                      data-testid="escalated-to-badge"
+                      title={`${escalationIsAutomatic ? 'Escalated automatically after the SLA breach' : 'Escalated'} to ${escalatedToText}`}
+                      className="h-9 max-w-[320px] px-3 border border-[#FECDCA] bg-[#FEF3F2] text-[#B42318] text-xs font-semibold rounded-lg inline-flex items-center gap-1.5"
+                    >
+                      <ArrowUpRight className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">
+                        {escalationIsAutomatic ? 'Auto-escalated' : 'Escalated'} to {escalatedToText}
+                      </span>
+                    </span>
+                  )}
+                  {canEscalateFromStatus && !ticket.reassignmentRequested && !isAlreadyEscalated && (
                     <button
                       type="button"
                       onClick={() => {
@@ -1691,7 +1726,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                     </button>
                   )}
                   {/* If pending reassignment: No Reassign here since DecisionCard handles it; offer Escalate */}
-                  {ticket.reassignmentRequested ? (
+                  {ticket.reassignmentRequested ? (isAlreadyEscalated ? null : (
                     <button
                       type="button"
                       onClick={() => {
@@ -1703,19 +1738,9 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                       <ArrowUpRight className="w-3.5 h-3.5" />
                       <span>Escalate</span>
                     </button>
-                  ) : isBreached && !ticket.updated_by_technician ? (
-                    /* Breached with no technician update -> Escalate is primary */
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEscalateError('');
-                        setShowEscalateModal(true);
-                      }}
-                      className="h-9 px-4 bg-[#B42318] hover:bg-red-800 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
-                    >
-                      <ArrowUpRight className="w-3.5 h-3.5" />
-                      <span>Escalate</span>
-                    </button>
+                  )) : isBreached && !ticket.updated_by_technician ? (
+                    /* Breached with no technician update: already auto-escalated (badge above), no other primary */
+                    null
                   ) : currentStatus === 'On Hold' && typeof onStatusUpdate === 'function' ? (
                     /* On Hold -> Resume is primary */
                     <button
@@ -1838,23 +1863,11 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
           <AlertBanner
             variant="danger"
             title={`SLA breached · due ${currentSlaDueDate ? formatPHT(currentSlaDueDate) : 'PHT'}`}
-            message={slaGuidanceText}
+            message={`${escalationIsAutomatic ? 'Escalated automatically' : 'Escalated'} to ${escalatedToText}. ${slaGuidanceText}`}
             actions={
-              /* If not pending reassignment, offer inline actions: Escalate (solid red), Reassign (outlined), Remind (outlined) */
+              /* Breached tickets are escalated automatically, so only Reassign and Remind are offered here. */
               !ticket.reassignmentRequested && !readOnly ? (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEscalateError('');
-                      setShowEscalateModal(true);
-                    }}
-                    className="min-h-[36px] px-3 bg-[#B42318] hover:bg-red-800 text-white text-xs font-semibold rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1 shadow-xs"
-                  >
-                    <ArrowUpRight className="w-3 h-3" />
-                    <span>Escalate</span>
-                  </button>
-
                   {onEdit && (
                     <button
                       type="button"
@@ -1920,16 +1933,13 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
         )}
 
         {/* Department manager reassignment CS has not acknowledged yet */}
-        {ticket.manager_reassignment && (
+        {shownReassignment && (
           <ManagerReassignmentCard
-            reassignment={ticket.manager_reassignment}
+            reassignment={shownReassignment}
             ticketId={cleanTicketId}
             readOnly={readOnly}
-            onAcknowledged={() => {
-              setActionSuccessNotice('Manager reassignment acknowledged.');
-              setTimeout(() => setActionSuccessNotice(''), 6000);
-              refreshLiveTicket?.();
-            }}
+            autoAcknowledge
+            onAcknowledged={handleReassignmentAcknowledged}
           />
         )}
 

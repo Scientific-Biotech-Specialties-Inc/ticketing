@@ -245,7 +245,9 @@ class TicketController extends Controller
         }
 
         // The department follows the category the employee picked (employees no longer choose it).
-        // Equipment is required for Service (department 1) and optional for IT (department 2).
+        // Staff type the equipment / software name as text (equipment_name). It is required for
+        // Service (department 1) and optional for IT (department 2). A machine_ID is still accepted
+        // in its place, for older clients and drafts.
         $categoryId = (int) $request->input('problem_category_ID', 0);
         $internalDeptId = $categoryId > 0
             ? app(\App\Services\CategoryTrack::class)->departmentIdFor($categoryId)
@@ -254,10 +256,13 @@ class TicketController extends Controller
             $request->merge(['machine_ID' => null]);
         }
 
+        $request->merge(['equipment_name' => trim((string) $request->input('equipment_name', '')) ?: null]);
+
         $validated = $request->validate([
-            'machine_ID' => $internalDeptId === 2
-                ? ['nullable', 'integer', 'exists:machines,machine_ID']
-                : ['required', 'integer', 'exists:machines,machine_ID'],
+            'machine_ID' => ['nullable', 'integer', 'exists:machines,machine_ID'],
+            'equipment_name' => $internalDeptId === 2
+                ? ['nullable', 'string', 'max:150', $this->ticketService->rejectMarkup()]
+                : ['required_without:machine_ID', 'nullable', 'string', 'max:150', $this->ticketService->rejectMarkup()],
             'problem_category_ID' => ['required', 'integer', 'exists:problem_categories,problem_category_ID'],
             'priority_ID' => ['nullable', 'integer', 'exists:ticket_priorities,priority_ID'],
             'branch_id' => ['nullable', 'string', 'max:64', 'exists:branches,slug'],
@@ -265,6 +270,8 @@ class TicketController extends Controller
             'description' => ['required', 'string', $this->ticketService->rejectMarkup()],
             'attachments' => ['nullable', 'array', 'max:' . \App\Services\TicketConfigurationService::getMaxFileCount()],
             'attachments.*' => ['integer'],
+        ], [
+            'equipment_name.required_without' => 'Enter the equipment or software name.',
         ]);
 
         $deptId = $internalDeptId;

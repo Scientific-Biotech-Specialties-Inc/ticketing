@@ -331,7 +331,7 @@ class TicketDashboardService
             return $sum;
         });
 
-        $recentTickets = Cache::remember("cs_dashboard_recent_{$limit}", 60, function () use ($limit) {
+        $recentTickets = Cache::remember("cs_dashboard_recent_v2_{$limit}", 60, function () use ($limit) {
             return DB::table('tickets as t')
                 ->leftJoin('machines as m', 'm.machine_ID', '=', 't.machine_ID')
                 ->join('ticket_statuses as ts', 'ts.ticket_status_ID', '=', 't.ticket_status_ID')
@@ -362,6 +362,8 @@ class TicketDashboardService
                     't.updated_at',
                     't.requested_by',
                     'c.client_name',
+                    'c.email as client_email',
+                    'req.email as requester_employee_email',
                     DB::raw("TRIM(CONCAT(COALESCE(req.first_name, ''), ' ', COALESCE(req.last_name, ''))) as requester_employee_name")
                 )
                 ->orderByDesc('t.created_at')
@@ -376,6 +378,9 @@ class TicketDashboardService
                         'customer' => (bool) $row->is_internal
                             ? (($row->requester_employee_name !== '' && $row->requester_employee_name !== null) ? $row->requester_employee_name : ($row->requested_by ? 'Employee #' . $row->requested_by : 'Internal Requester'))
                             : ($row->client_name ?: 'Unknown Customer'),
+                        'customer_email' => (bool) $row->is_internal
+                            ? ($row->requester_employee_email ?: null)
+                            : ($row->client_email ?: null),
                         'equipment' => $row->machine_name . ' - ' . $row->serial_number,
                         'status' => $row->status_name,
                         'priority' => $row->priority_name,

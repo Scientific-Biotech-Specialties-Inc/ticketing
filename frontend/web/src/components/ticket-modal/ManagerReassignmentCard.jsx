@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { UserCog, Check, Loader2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatDisplayDate } from '@/utils/dateUtils';
@@ -9,10 +9,28 @@ const names = (list) => (Array.isArray(list) ? list.map((p) => p?.name).filter(B
 /**
  * CS ticket modal banner for a department manager reassignment that CS has not acknowledged yet.
  * Shows who moved the ticket, when, and who was added or removed. Acknowledge clears it for every CS user.
+ * With autoAcknowledge, opening the ticket counts as seeing it: the card acknowledges itself once and
+ * stays visible (without the button) for the rest of this view.
  */
-export default function ManagerReassignmentCard({ reassignment, ticketId, readOnly = false, onAcknowledged }) {
+export default function ManagerReassignmentCard({ reassignment, ticketId, readOnly = false, autoAcknowledge = false, onAcknowledged }) {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
+  const [seen, setSeen] = useState(false);
+  const autoSentRef = useRef(false);
+
+  useEffect(() => {
+    if (!autoAcknowledge || readOnly || !reassignment || !ticketId || autoSentRef.current) return;
+    autoSentRef.current = true;
+    acknowledgeManagerReassignment(ticketId)
+      .then(() => {
+        setSeen(true);
+        onAcknowledged?.({ automatic: true });
+      })
+      .catch(() => {
+        // Leave the Acknowledge button so CS can retry by hand.
+        autoSentRef.current = false;
+      });
+  }, [autoAcknowledge, readOnly, reassignment, ticketId, onAcknowledged]);
 
   if (!reassignment) return null;
 
@@ -26,7 +44,8 @@ export default function ManagerReassignmentCard({ reassignment, ticketId, readOn
     setError('');
     try {
       await acknowledgeManagerReassignment(ticketId);
-      onAcknowledged?.();
+      setSeen(true);
+      onAcknowledged?.({ automatic: false });
     } catch (err) {
       setError(err?.response?.data?.message || 'Failed to acknowledge. Please try again.');
     } finally {
@@ -60,7 +79,13 @@ export default function ManagerReassignmentCard({ reassignment, ticketId, readOn
               <span>{error}</span>
             </div>
           )}
-          {!readOnly && (
+          {seen && (
+            <p className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-emerald-700" data-testid="manager-reassignment-seen">
+              <Check className="w-3.5 h-3.5" aria-hidden="true" />
+              Marked as seen
+            </p>
+          )}
+          {!readOnly && !seen && (
             <div className="mt-4">
               <Button type="button" size="sm" onClick={acknowledge} disabled={isSaving} className="gap-2">
                 {isSaving ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Check className="w-4 h-4" aria-hidden="true" />}

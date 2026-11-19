@@ -87,7 +87,9 @@ class ManagerDashboardService
 
         if (!$isBranchMode) {
             // AC-8: Service and IT scopes are by the assignee's department; unassigned tickets are not in them.
-            $query->whereRaw('LOWER(TRIM(e.department)) = ?', [TechnicalDepartments::normalize($department)]);
+            // Same rule as the manager's ticket list: any open assignment, or assigned_to, in the department.
+            // (A ticket can have a Service engineer in ticket_assignments while assigned_to is someone else.)
+            $this->applyDepartmentScope($query, $department);
         }
 
         $openTickets = $query->select(
@@ -109,11 +111,25 @@ class ManagerDashboardService
             't.created_at'
         )->get();
 
+        // Service / IT: the assignee to show is the one from the manager's own department.
+        $deptAssignees = $isBranchMode
+            ? []
+            : $this->departmentAssignees($openTickets->pluck('ticket_ID')->map(fn ($id) => (int) $id)->all(), $department);
+
         $unassigned = 0;
         $withinSla = 0;
         $breachedQueue = [];
 
         foreach ($openTickets as $t) {
+            $deptAssignee = $deptAssignees[(int) $t->ticket_ID] ?? null;
+            if ($deptAssignee) {
+                $t->assigned_to = $deptAssignee->emp_id;
+                $t->assignee_first_name = $deptAssignee->first_name;
+                $t->assignee_last_name = $deptAssignee->last_name;
+                $t->assignee_email = $deptAssignee->email;
+                $t->assignee_department = $deptAssignee->department;
+            }
+
             if (empty($t->assigned_to)) {
                 $unassigned++;
             }
@@ -196,22 +212,7 @@ class ManagerDashboardService
             $this->dashboardService->applyBranchTicketFilter($scope, $branch);
 
             if (!$isBranchMode) {
-                $deptNorm = TechnicalDepartments::normalize($department);
-                $scope->where(function ($q) use ($deptNorm) {
-                    $q->whereExists(function ($sub) use ($deptNorm) {
-                        $sub->select(DB::raw(1))
-                            ->from('ticket_assignments as ta')
-                            ->join('employees as ae', 'ae.emp_id', '=', 'ta.employee_ID')
-                            ->whereColumn('ta.ticket_ID', 't.ticket_ID')
-                            ->whereNull('ta.completed_at')
-                            ->whereRaw('LOWER(TRIM(ae.department)) = ?', [$deptNorm]);
-                    })->orWhereExists(function ($sub) use ($deptNorm) {
-                        $sub->select(DB::raw(1))
-                            ->from('employees as oe')
-                            ->whereColumn('oe.emp_id', 't.assigned_to')
-                            ->whereRaw('LOWER(TRIM(oe.department)) = ?', [$deptNorm]);
-                    });
-                });
+                $this->applyDepartmentScope($scope, $department);
             }
         };
 
@@ -368,6 +369,57 @@ class ManagerDashboardService
         // Employees without a branch id belong to the main branch (same rule the admin scoping uses).
         return DB::table('branches')->where('id', 1)->first()
             ?? (object) ['id' => 1, 'slug' => 'main', 'name' => 'Main Branch', 'code' => 'MAIN'];
+    }
+
+    /**
+     * Limit a tickets query (aliased t) to tickets with an open assignment, or assigned_to, in the department.
+     * Shared by the dashboard and the ticket list so both count the same tickets.
+     */
+    protected function applyDepartmentScope($query, string $department): void
+    {
+        $deptNorm = TechnicalDepartments::normalize($department);
+        $query->where(function ($q) use ($deptNorm) {
+            $q->whereExists(function ($sub) use ($deptNorm) {
+                $sub->select(DB::raw(1))
+                    ->from('ticket_assignments as ta')
+                    ->join('employees as ae', 'ae.emp_id', '=', 'ta.employee_ID')
+                    ->whereColumn('ta.ticket_ID', 't.ticket_ID')
+                    ->whereNull('ta.completed_at')
+                    ->whereRaw('LOWER(TRIM(ae.department)) = ?', [$deptNorm]);
+            })->orWhereExists(function ($sub) use ($deptNorm) {
+                $sub->select(DB::raw(1))
+                    ->from('employees as oe')
+                    ->whereColumn('oe.emp_id', 't.assigned_to')
+                    ->whereRaw('LOWER(TRIM(oe.department)) = ?', [$deptNorm]);
+            });
+        });
+    }
+
+    /**
+     * The first open assignee from the department for each ticket, keyed by ticket id.
+     *
+     * @param  int[]  $ticketIds
+     * @return array<int, object>
+     */
+    protected function departmentAssignees(array $ticketIds, string $department): array
+    {
+        if (empty($ticketIds)) {
+            return [];
+        }
+
+        $byTicket = [];
+        DB::table('ticket_assignments as ta')
+            ->join('employees as ae', 'ae.emp_id', '=', 'ta.employee_ID')
+            ->whereIn('ta.ticket_ID', $ticketIds)
+            ->whereNull('ta.completed_at')
+            ->whereRaw('LOWER(TRIM(ae.department)) = ?', [TechnicalDepartments::normalize($department)])
+            ->orderBy('ta.assigned_at')
+            ->get(['ta.ticket_ID', 'ae.emp_id', 'ae.first_name', 'ae.last_name', 'ae.email', 'ae.department'])
+            ->each(function ($a) use (&$byTicket) {
+                $byTicket[(int) $a->ticket_ID] ??= $a;
+            });
+
+        return $byTicket;
     }
 
     protected function assigneeName(object $t): string

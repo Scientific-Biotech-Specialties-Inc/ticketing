@@ -486,13 +486,15 @@ export default function CSAssigned() {
 
       window.dispatchEvent(new Event('notifications:updated'));
 
-      // Redirect to "All Assigned" tab and close modal
-      setAssignedTab('all');
-      setPage(1);
+      // The new assignees still have to accept, so the ticket now sits in Incoming
+      // (Pending Assignment). Go there and highlight its row.
       setModal(null);
-
-      // Reconcile with the server (the tab and page change above also trigger a reload).
-      loadLiveData({ forceRefresh: true, source: 'poll' });
+      navigate('/cs/incoming', {
+        state: {
+          highlightTicketId: Number(String(updated.ticket_ID || updated.id).replace(/\D/g, '')),
+          tab: 'pending_assignment',
+        },
+      });
       return true;
     } catch (err) {
       setError('Failed to assign ticket. Please try again.');
@@ -940,6 +942,7 @@ export default function CSAssigned() {
           ticket={modal.ticket}
           isLoadingDetails={Boolean(modal.isLoadingDetails)}
           employees={employees}
+          onManagerReassignmentSeen={() => loadLiveData({ forceRefresh: true, source: 'poll' })}
           onClose={() => setModal(null)}
           onEdit={() => setModal({ mode: 'assign', ticket: modal.ticket })}
           onStatusUpdate={async (updatedFields) => {

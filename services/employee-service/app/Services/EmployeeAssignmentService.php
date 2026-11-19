@@ -1836,6 +1836,7 @@ class EmployeeAssignmentService
                 't.last_reminder_sent_at',
                 'm.machine_name',
                 'm.serial_number',
+                't.equipment_name',
                 'c.client_name',
                 'tt.type_name as ticket_type'
             )
@@ -1854,7 +1855,9 @@ class EmployeeAssignmentService
                 'status' => $row->status_name ?? 'Open',
                 'priority' => $row->priority_name ?? 'Low',
                 'customer' => $row->client_name ?: 'Unknown Customer',
-                'equipment' => ($row->machine_name || $row->serial_number) ? ($row->machine_name . ($row->serial_number ? ' - ' . $row->serial_number : '')) : 'Unspecified Equipment',
+                // Staff type the equipment / software name on internal tickets (tickets.equipment_name).
+                'equipment' => ($row->machine_name || $row->serial_number) ? ($row->machine_name . ($row->serial_number ? ' - ' . $row->serial_number : '')) : ($row->equipment_name ?: 'Unspecified Equipment'),
+                'equipment_name' => $row->equipment_name,
                 'date' => $createdAtObj ? $createdAtObj->format('Y-m-d') : now()->format('Y-m-d'),
                 'lastUpdate' => ($updatedAtObj ?: $createdAtObj ?: now())->toIso8601String(),
                 'slaStatus' => $slaMetrics['status'],

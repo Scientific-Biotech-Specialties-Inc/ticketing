@@ -1185,6 +1185,22 @@ class SLAService
             }
         }
 
+        // The first breach alert escalates the ticket to these managers: record them so they see it as
+        // escalated to them (queue, conversation access) and CS sees who it went to. Re-alerts do not.
+        if (empty($ticket->sla_breach_notified_at)) {
+            try {
+                app(EscalationParticipants::class)->record(
+                    $ticketId,
+                    collect($managers)->filter()->map(fn ($m) => (int) $m->emp_id)->all(),
+                    (int) (DB::table('employees')->value('emp_id') ?? 1),
+                    'system',
+                    "SLA breached ({$overdueDuration}): escalated automatically."
+                );
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning("Failed to record SLA breach escalation for ticket #{$ticketId}: {$e->getMessage()}");
+            }
+        }
+
         // Broadcast real-time change
         // $managers can be empty (no department manager), so never rely on the foreach variable here.
         $lastManager = collect($managers)->filter()->last();
