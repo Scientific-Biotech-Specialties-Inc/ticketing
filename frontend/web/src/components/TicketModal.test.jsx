@@ -1,4 +1,5 @@
 import React from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import TicketModal from './TicketModal';
@@ -24,18 +25,29 @@ const field = (name) => document.querySelector(`[name="${name}"]`);
 const setValue = (el, value) => fireEvent.change(el, { target: { value } });
 const choose = (name, value) => setValue(field(name), String(value));
 
+const selectBounded = (triggerRegex, optionText) => {
+  const trigger = screen.getByRole('button', { name: triggerRegex });
+  fireEvent.click(trigger);
+  fireEvent.click(screen.getByRole('button', { name: optionText }));
+};
+
 async function fillBasics({ title = LOWERCASE_TITLE } = {}) {
-  await waitFor(() => expect(field('problem_category_ID').options.length).toBeGreaterThan(1));
+  const catBtn = await screen.findByRole('button', { name: /Select Category/i });
+  await waitFor(() => expect(catBtn).not.toBeDisabled());
   const titleInput = screen.getByPlaceholderText('Brief description of the issue');
   setValue(titleInput, title);
   fireEvent.blur(titleInput);
-  choose('problem_category_ID', 3);
+  selectBounded(/Select Category/i, 'Hardware');
   setValue(field('description'), DESCRIPTION);
 }
 
 function renderModal(props = {}) {
   const onSubmit = vi.fn().mockResolvedValue(undefined);
-  render(<TicketModal isOpen onClose={vi.fn()} onSubmit={onSubmit} {...props} />);
+  render(
+    <MemoryRouter>
+      <TicketModal isOpen onClose={vi.fn()} onSubmit={onSubmit} {...props} />
+    </MemoryRouter>
+  );
   return { onSubmit };
 }
 
@@ -46,28 +58,29 @@ describe('TicketModal title casing prompt (covers: AC-7)', () => {
     renderModal();
     await fillBasics();
 
-    fireEvent.focus(field('machine_ID'));
-    fireEvent.click(field('machine_ID'));
+    const eqBtn = screen.getByRole('button', { name: /Select Equipment/i });
+    fireEvent.focus(eqBtn);
+    fireEvent.click(eqBtn);
 
     expect(screen.queryByText('Proper Casing Applied')).not.toBeInTheDocument();
   });
 
-  it('shows the casing prompt only after Submit when the title needs casing', async () => {
+  it('formats title casing on Submit when the title needs casing', async () => {
     const { onSubmit } = renderModal();
     await fillBasics();
-    choose('machine_ID', 7);
+    selectBounded(/Select Equipment/i, 'Centrifuge - SN001');
 
     expect(screen.queryByText('Proper Casing Applied')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Submit Ticket' }));
 
-    expect(await screen.findByText('Proper Casing Applied')).toBeInTheDocument();
-    expect(onSubmit).not.toHaveBeenCalled();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].title).toBe('Printer Not Working');
   });
 
   it('submits straight away when the title is already in proper casing', async () => {
     const { onSubmit } = renderModal();
     await fillBasics({ title: 'Printer Not Working' });
-    choose('machine_ID', 7);
+    selectBounded(/Select Equipment/i, 'Centrifuge - SN001');
 
     fireEvent.click(screen.getByRole('button', { name: 'Submit Ticket' }));
 
@@ -81,16 +94,16 @@ describe('TicketModal department rule (covers: AC-8)', () => {
 
   it('hides the department selector by default so customer pages are unchanged', async () => {
     renderModal();
-    await waitFor(() => expect(field('problem_category_ID')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: /Select Category/i })).toBeInTheDocument());
 
     expect(field('department_id')).toBeNull();
-    expect(field('machine_ID')).toBeRequired();
+    expect(screen.getByRole('button', { name: /Select Equipment/i })).toBeInTheDocument();
   });
 
   it('does not send department_id when the selector is off', async () => {
     const { onSubmit } = renderModal();
     await fillBasics({ title: 'Printer Not Working' });
-    choose('machine_ID', 7);
+    selectBounded(/Select Equipment/i, 'Centrifuge - SN001');
 
     fireEvent.click(screen.getByRole('button', { name: 'Submit Ticket' }));
 
@@ -103,7 +116,7 @@ describe('TicketModal department rule (covers: AC-8)', () => {
     await fillBasics({ title: 'Printer Not Working' });
 
     expect(field('department_id').value).toBe('1');
-    expect(field('machine_ID')).toBeRequired();
+    expect(screen.getByRole('button', { name: /Select Equipment/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Submit Ticket' })).toBeDisabled();
   });
 
@@ -114,7 +127,7 @@ describe('TicketModal department rule (covers: AC-8)', () => {
     choose('department_id', 2);
 
     expect(screen.getByText('(Optional for IT)')).toBeInTheDocument();
-    expect(field('machine_ID')).not.toBeRequired();
+    expect(screen.getByRole('button', { name: /No equipment/i })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Submit Ticket' }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));

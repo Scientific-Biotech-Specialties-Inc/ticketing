@@ -2442,31 +2442,45 @@ export default function SuperAdminTicketConfig() {
     }
   };
 
-  const handleSaveEscalation = async () => {
-    if (!editingEscalation.name.trim()) return;
-    try {
-      const payload = {
-        name: editingEscalation.name.trim(),
-        is_active: editingEscalation.isActive,
-        trigger: editingEscalation.trigger,
-        condition_text: editingEscalation.condition?.text || '',
-        condition_highlight: editingEscalation.condition?.highlight || '',
-        action: editingEscalation.action,
-        notify: editingEscalation.notify,
-      };
+  const [isSavingEscalation, setIsSavingEscalation] = useState(false);
 
-      if (editingEscalation.id === null) {
-        await createEscalationRule(payload);
-      } else {
-        await updateEscalationRule(editingEscalation.id, payload);
-      }
-      setEditingEscalation(null);
-      showSuccess('Saved', 'Escalation rule has been saved.');
-      await loadConfig();
-    } catch (err) {
-      console.error('Failed to save escalation rule:', err);
-      showError('Error', 'Failed to save escalation rule.');
-    }
+  const handleSaveEscalation = () => {
+    if (isSavingEscalation || !editingEscalation?.name?.trim()) return;
+    const isNew = editingEscalation.id === null;
+    showConfirm(
+      isNew ? 'Create Escalation Rule?' : 'Update Escalation Rule?',
+      `${isNew ? 'Creating' : 'Updating'} "${editingEscalation.name.trim()}" will immediately affect automated ticket escalation evaluation. Continue?`,
+      async () => {
+        closeNotif();
+        setIsSavingEscalation(true);
+        try {
+          const payload = {
+            name: editingEscalation.name.trim(),
+            is_active: editingEscalation.isActive,
+            trigger: editingEscalation.trigger,
+            condition_text: editingEscalation.condition?.text || '',
+            condition_highlight: editingEscalation.condition?.highlight || '',
+            action: editingEscalation.action,
+            notify: editingEscalation.notify,
+          };
+
+          if (isNew) {
+            await createEscalationRule(payload);
+          } else {
+            await updateEscalationRule(editingEscalation.id, payload);
+          }
+          setEditingEscalation(null);
+          showSuccess('Saved', 'Escalation rule has been saved.');
+          await loadConfig();
+        } catch (err) {
+          console.error('Failed to save escalation rule:', err);
+          showError('Error', 'Failed to save escalation rule.');
+        } finally {
+          setIsSavingEscalation(false);
+        }
+      },
+      { confirmText: isNew ? 'Create Rule' : 'Save Rule' }
+    );
   };
 
   const handleDeleteEscalation = (rule) => {

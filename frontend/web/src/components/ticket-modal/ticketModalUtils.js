@@ -398,4 +398,43 @@ export const buildTechnicianTimeline = (ticket) => {
   return events;
 };
 
+/**
+ * Returns active assignees in order, excluding completed or reassign_requested entries.
+ */
+export const getAssigneeList = (ticket = {}) => {
+  const list = Array.isArray(ticket?.assigned_employees) ? ticket.assigned_employees : [];
+  return list
+    .filter((emp) => {
+      if (!emp) return false;
+      if (emp.completed_at) return false;
+      const status = String(emp.assignment_status || '').toLowerCase();
+      if (status === 'reassign_requested' || status === 'completed') return false;
+      return true;
+    })
+    .map((emp) => {
+      const fullName = emp.name || `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || '';
+      const firstName = emp.first_name || fullName.split(/\s+/)[0] || '';
+      const status = String(emp.assignment_status || '').toLowerCase();
+      return {
+        ...emp,
+        firstName,
+        isAccepted: status === 'accepted',
+        lastReminderSentAt: emp.last_reminder_sent_at || null,
+      };
+    });
+};
+
+/**
+ * Maps a portal pathname to its corresponding messages route.
+ */
+export const getMessagesPath = (pathname = '/') => {
+  const p = String(pathname || '/');
+  if (p.startsWith('/cs-manager')) return '/cs-manager/messages';
+  if (p.startsWith('/cs')) return '/cs/messages';
+  if (p.startsWith('/service-manager')) return '/service-manager/messages';
+  if (p.startsWith('/it-manager')) return '/it-manager/messages';
+  if (p.startsWith('/employee')) return '/employee/messages';
+  return '/messages';
+};
+
 

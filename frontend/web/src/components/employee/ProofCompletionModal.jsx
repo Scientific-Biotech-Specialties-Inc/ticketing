@@ -82,7 +82,7 @@ export default function ProofCompletionModal({
   const isInternal = Boolean(ticket?.title?.startsWith('[Internal]') || ticket?.is_internal || ticket?.ticket_type === 'Internal' || ticket?.type === 'Internal');
   const isProofRejected = ticket.proofRejected === true && ticket.status === 'In Progress';
 
-  const ALLOWED_EXTENSIONS = ['pdf', 'png', 'docx', 'doc'];
+  const ALLOWED_EXTENSIONS = ['pdf', 'png', 'jpg', 'jpeg', 'docx', 'doc'];
   const MAX_FILE_SIZE_MB = 15;
   const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024; // 15MB
   const MAX_TOTAL_SIZE_MB = 45;
@@ -91,14 +91,14 @@ export default function ProofCompletionModal({
   const totalSizeBytes = proofFiles.reduce((acc, f) => acc + (f.size || 0), 0);
   const totalSizeMB = (totalSizeBytes / (1024 * 1024)).toFixed(2);
 
-  // Handle file validation (max 15MB each, max 45MB total, allowed PDF, PNG, Word)
+  // Handle file validation (max 15MB each, max 45MB total, allowed PDF, PNG, JPEG, Word)
   const validateFiles = (incomingFiles, currentFiles = []) => {
     for (let i = 0; i < incomingFiles.length; i++) {
       const file = incomingFiles[i];
       const extension = file.name.split('.').pop().toLowerCase();
       
       if (!ALLOWED_EXTENSIONS.includes(extension)) {
-        return `Invalid file type: "${file.name}". Supported formats: PDF, PNG, Word (.docx, .doc).`;
+        return `Invalid file type: "${file.name}". Supported formats: PDF, PNG, JPG/JPEG, Word (.docx, .doc).`;
       }
       if (file.size > MAX_FILE_SIZE_BYTES) {
         return `File too large: "${file.name}" (${(file.size / (1024 * 1024)).toFixed(2)} MB). Maximum allowed size is ${MAX_FILE_SIZE_MB}MB per file.`;

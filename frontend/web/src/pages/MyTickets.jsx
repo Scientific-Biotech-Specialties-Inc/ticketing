@@ -40,6 +40,7 @@ import { getMaxOpenTicketsLimit, OPEN_STATUS_SET } from '@/data/ticketLimitConfi
 
 import { parseUTCDate } from '@/utils/dateUtils';
 import TitleCasingModal from '@/components/TitleCasingModal';
+import { needsProperCasing, formatProperTitleCase } from '@/utils/titleCaseUtils';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import { hasFeedbackBeenSubmitted, fetchFeedbackForTicket } from '@/data/mockFeedbackData';
 import tokenStore from '@/auth/tokenStore';
@@ -78,7 +79,7 @@ export default function MyTickets({ mode = 'all' }) {
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const urlTicketId = params?.ticketId || searchParams.get('ticketId');
 
   const isLoggedOut =
@@ -822,6 +823,11 @@ export default function MyTickets({ mode = 'all' }) {
 
     let opts = getCachedTicketFormOptions();
     if (!opts) {
+      try {
+        opts = await getTicketFormOptions();
+      } catch {
+        opts = null;
+      }
     }
     setEditOptions(opts);
 
@@ -961,8 +967,16 @@ export default function MyTickets({ mode = 'all' }) {
         title: finalTitle,
         description: editDescription,
       };
-      if (editCategory) payload.problem_category_ID = editCategory;
-      if (editEquipment) payload.machine_ID = editEquipment;
+      if (editCategory) payload.problem_category_ID = Number(editCategory) || editCategory;
+      const selectedCatObj = (editOptions?.problem_categories || editOptions?.category_options || []).find(
+        (c) => String(c.problem_category_ID || c.value) === String(editCategory)
+      );
+      const selectedCatName = String(selectedCatObj?.category_name || selectedCatObj?.label || selectedCatObj?.name || '').toLowerCase();
+      if (selectedCatName === 'software') {
+        payload.machine_ID = null;
+      } else if (editEquipment) {
+        payload.machine_ID = editEquipment;
+      }
       await updateTicket(payload);
       const timestamp = new Date().toISOString();
       try {
@@ -1545,8 +1559,17 @@ export default function MyTickets({ mode = 'all' }) {
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Category</p>
                   {editOptions ? (
                     <select
+                      data-testid="edit-category"
                       value={editCategory}
-                      onChange={(e) => setEditCategory(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEditCategory(val);
+                        const catObj = (editOptions.problem_categories || editOptions.category_options || []).find(
+                          (c) => String(c.problem_category_ID || c.value) === String(val)
+                        );
+                        const catName = String(catObj?.category_name || catObj?.label || catObj?.name || '').toLowerCase();
+                        if (catName === 'software') setEditEquipment('');
+                      }}
                       title={editingTicket.category || ''}
                       className="mt-1 w-full rounded-xl border border-gray-200 bg-surface px-3 py-2 text-sm text-dark-slate outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-brand-accent"
                     >
@@ -1567,30 +1590,39 @@ export default function MyTickets({ mode = 'all' }) {
                     {!editingTicket.assigned_to && editingTicket.status === 'In Progress' ? 'Open' : editingTicket.status}
                   </p>
                 </div>
-                <div className="min-w-0 md:col-span-2">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Equipment</p>
-                  {editOptions ? (
-                    <select
-                      value={editEquipment}
-                      onChange={(e) => setEditEquipment(e.target.value)}
-                      title={editingTicket.equipment || ''}
-                      className="mt-1 w-full rounded-xl border border-gray-200 bg-surface px-3 py-2 text-sm text-dark-slate outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-brand-accent"
-                    >
-                      <option value="">{editingTicket.equipment ? `Current: ${editingTicket.equipment}` : 'Select equipment'}</option>
-                      {(editOptions.equipment_options || editOptions.machines || []).map((m) => {
-                        const optVal = m.machine_ID || m.value || '';
-                        const optLabel = m.machine_name ? `${m.machine_name}${m.serial_number ? ` - ${m.serial_number}` : ''}` : (typeof m.label === 'string' ? m.label : (m.name || `Machine #${optVal}`));
-                        return (
-                          <option key={optVal || optLabel} value={optVal} title={optLabel}>
-                            {optLabel}
-                          </option>
-                        );
-                      })}
-                    </select>
-                  ) : (
-                    <p className="mt-1 text-sm text-dark-slate break-words">{editingTicket.equipment}</p>
-                  )}
-                </div>
+                {(() => {
+                  const catObj = (editOptions?.problem_categories || editOptions?.category_options || []).find(
+                    (c) => String(c.problem_category_ID || c.value) === String(editCategory)
+                  );
+                  const isSoftware = String(catObj?.category_name || catObj?.label || catObj?.name || '').toLowerCase() === 'software';
+                  if (isSoftware) return null;
+                  return (
+                    <div className="min-w-0 md:col-span-2">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Equipment</p>
+                      {editOptions ? (
+                        <select
+                          value={editEquipment}
+                          onChange={(e) => setEditEquipment(e.target.value)}
+                          title={editingTicket.equipment || ''}
+                          className="mt-1 w-full rounded-xl border border-gray-200 bg-surface px-3 py-2 text-sm text-dark-slate outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-brand-accent"
+                        >
+                          <option value="">{editingTicket.equipment ? `Current: ${editingTicket.equipment}` : 'Select equipment'}</option>
+                          {(editOptions.equipment_options || editOptions.machines || []).map((m) => {
+                            const optVal = m.machine_ID || m.value || '';
+                            const optLabel = m.machine_name ? `${m.machine_name}${m.serial_number ? ` - ${m.serial_number}` : ''}` : (typeof m.label === 'string' ? m.label : (m.name || `Machine #${optVal}`));
+                            return (
+                              <option key={optVal || optLabel} value={optVal} title={optLabel}>
+                                {optLabel}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      ) : (
+                        <p className="mt-1 text-sm text-dark-slate break-words">{editingTicket.equipment}</p>
+                      )}
+                    </div>
+                  );
+                })()}
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Date Created</p>
                   <p className="mt-1 text-sm text-dark-slate">{formatDate(editingTicket.date_created)}</p>

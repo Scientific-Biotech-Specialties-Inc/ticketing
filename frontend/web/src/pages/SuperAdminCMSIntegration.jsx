@@ -443,9 +443,9 @@ export default function SuperAdminCMSIntegration() {
               >
                 {settings.cmsApiEndpoint}
               </span>
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 shrink-0">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                Connected
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                Local Sandbox (Mock Data)
               </span>
             </div>
             <p className="text-xs text-muted-slate">
