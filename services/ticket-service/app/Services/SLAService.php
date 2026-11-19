@@ -1636,26 +1636,36 @@ class SLAService
                 default => null,
             };
 
-            $manager = null;
+            // The configured department manager, when that employee actually exists.
             if ($configKey && !empty($configured[$configKey]['id'])) {
-                $manager = DB::table('employees')->where('emp_id', (int) $configured[$configKey]['id'])->first();
+                $configuredManager = DB::table('employees')->where('emp_id', (int) $configured[$configKey]['id'])->first();
+                if ($configuredManager && !in_array((int) $configuredManager->emp_id, $assigneeIds, true)) {
+                    $managers[(int) $configuredManager->emp_id] = $configuredManager;
+                }
             }
 
-            if (!$manager) {
-                $manager = DB::table('employees')
+            // Every active manager of the department is alerted, not only the first one found:
+            // a department can have several managers and each watches its escalations/breaches.
+            $deptManagers = DB::table('employees')
+                ->whereRaw('LOWER(TRIM(COALESCE(department, ""))) = ?', [$deptLower])
+                ->where('is_active', 1)
+                ->whereNotIn('emp_id', $assigneeIds)
+                ->whereRaw('LOWER(COALESCE(position_level, "")) = ?', ['manager'])
+                ->orderBy('emp_id')
+                ->get();
+
+            // Older directories mark managers by role name instead of position level.
+            if ($deptManagers->isEmpty()) {
+                $deptManagers = DB::table('employees')
                     ->whereRaw('LOWER(TRIM(COALESCE(department, ""))) = ?', [$deptLower])
                     ->where('is_active', 1)
                     ->whereNotIn('emp_id', $assigneeIds)
-                    ->where(function ($q) {
-                        $q->whereRaw('LOWER(COALESCE(position_level, "")) = ?', ['manager'])
-                          ->orWhereRaw('LOWER(COALESCE(role, "")) LIKE ?', ['%manager%']);
-                    })
-                    ->orderByRaw("CASE WHEN LOWER(COALESCE(position_level, '')) = 'manager' THEN 1 ELSE 2 END")
+                    ->whereRaw('LOWER(COALESCE(role, "")) LIKE ?', ['%manager%'])
                     ->orderBy('emp_id')
-                    ->first();
+                    ->get();
             }
 
-            if ($manager && !in_array((int) $manager->emp_id, $assigneeIds, true)) {
+            foreach ($deptManagers as $manager) {
                 $managers[(int) $manager->emp_id] = $manager;
             }
         }

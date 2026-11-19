@@ -805,8 +805,12 @@ class TicketService
 
         if ($isCustomer) {
             $auditLogs = $auditLogs->reject(function ($log) {
-                return str_contains(strtolower((string) ($log->action_type ?? '')), 'reassign')
-                    || str_contains(strtolower((string) ($log->event_type ?? '')), 'reassign');
+                $action = strtolower((string) ($log->action_type ?? ''));
+                return str_contains($action, 'reassign')
+                    || str_contains(strtolower((string) ($log->event_type ?? '')), 'reassign')
+                    // Spec 0048 (AC-15): hold requests and every internal row stay staff only.
+                    || str_starts_with($action, 'hold_request')
+                    || (int) ($log->is_internal ?? 0) === 1;
             })->values();
         }
 
@@ -876,6 +880,19 @@ class TicketService
             } elseif ($log->action_type === 'hold') {
                 $reason = $details['reason'] ?? '';
                 $timelineText = "Ticket placed on hold by {$actorName}." . ($reason !== '' ? " Reason: \"{$reason}\"." : '');
+            } elseif ($log->action_type === 'hold_requested') {
+                $remarks = $details['remarks'] ?? '';
+                $timelineText = "On Hold requested by {$actorName}." . ($remarks !== '' ? " Remarks: \"{$remarks}\"." : '');
+            } elseif ($log->action_type === 'hold_request_cancelled') {
+                $why = $details['details'] ?? '';
+                $timelineText = "On Hold request cancelled by {$actorName}." . ($why !== '' ? " ({$why})" : '');
+            } elseif ($log->action_type === 'hold_request_approved') {
+                $note = $details['note'] ?? '';
+                $via = ($details['via'] ?? '') === 'direct_hold' ? ' (closed by a direct hold)' : '';
+                $timelineText = "On Hold request approved by {$actorName}{$via}." . ($note !== '' && $note !== null ? " Note: \"{$note}\"." : '');
+            } elseif ($log->action_type === 'hold_request_rejected') {
+                $reason = $details['reason'] ?? '';
+                $timelineText = "On Hold request rejected by {$actorName}." . ($reason !== '' ? " Reason: \"{$reason}\"." : '');
             } elseif ($log->action_type === 'resume') {
                 $timelineText = "Ticket resumed from hold by {$actorName}.";
             } elseif ($log->action_type === 'resolve') {
@@ -1358,6 +1375,8 @@ class TicketService
             'reassignmentDenied' => !empty($deniedReassign),
             'disapprovalReason' => $actualDenyReason,
             'reassignmentDenyReason' => $actualDenyReason,
+            // Spec 0048 (AC-9, AC-12, AC-15): staff only; omitted entirely for customers below.
+            ...($isCustomer ? [] : app(HoldRequestService::class)->detailsFor($ticket)),
             'proofRejected' => (bool)$ticket->proof_rejected,
             'rejectionReason' => $ticket->rejection_reason,
             'resolved_at' => $resolvedAtIso,
@@ -1446,6 +1465,34 @@ class TicketService
 
         if ($ticket->is_internal && $user instanceof \App\Models\Client) {
             return ['status' => 404, 'data' => ['message' => 'Ticket not found']];
+        }
+
+        // Spec 0048 (AC-2, AC-6): employees cannot set Pending (7) or On Hold (11) themselves; they
+        // file a hold request for CS. While one is pending they cannot change the status at all.
+        $isEmployeeCaller = !($user instanceof \App\Models\Client) && !RoleHelper::isCsOrAdmin($user);
+        $requestedStatus = array_key_exists('ticket_status_ID', $validated) && $validated['ticket_status_ID'] !== null
+            ? (int) $validated['ticket_status_ID']
+            : null;
+        if ($isEmployeeCaller && $requestedStatus !== null) {
+            if (in_array($requestedStatus, [TicketStateMachine::STATUS_ID_PENDING, TicketStateMachine::STATUS_ID_ON_HOLD], true)) {
+                return [
+                    'status' => 422,
+                    'data' => [
+                        'message' => 'Employees cannot set Pending or On Hold directly. Send an On Hold request for Customer Service to review.',
+                        'code' => 'HOLD_APPROVAL_REQUIRED',
+                    ],
+                ];
+            }
+            if ($requestedStatus !== (int) $ticket->ticket_status_ID
+                && DB::table(HoldRequestRecorder::TABLE)->where('ticket_ID', $ticketId)->where('status', HoldRequestRecorder::STATUS_PENDING)->exists()) {
+                return [
+                    'status' => 409,
+                    'data' => [
+                        'message' => 'On Hold request pending CS review. The status cannot change until Customer Service decides.',
+                        'code' => 'HOLD_REQUEST_PENDING',
+                    ],
+                ];
+            }
         }
 
         // 2. Reject status 11 (On Hold) via generic update endpoint
@@ -1773,6 +1820,12 @@ class TicketService
                 // Spec 0039 (AC-3): Resolved, Closed or Discarded ends every holding period.
                 if ((int) $ticket->ticket_status_ID !== $statusToSet) {
                     $this->periods()->releaseForStatus($ticketId, $statusToSet);
+
+                    // Spec 0048 (AC-16): a status change that does not end On Hold cancels a pending hold request.
+                    $endsOnHold = $this->stateMachine->resolveTargetState($statusToSet, $ticket) === TicketStateMachine::STATE_ON_HOLD;
+                    if (!$endsOnHold) {
+                        app(HoldRequestRecorder::class)->cancelForTransition((int) $ticketId, $statusToSet);
+                    }
                 }
 
                 if ($actorType === 'employee') {
@@ -2199,8 +2252,13 @@ class TicketService
 
     /**
      * Put an in-progress ticket on hold.
+     *
+     * Spec 0048 $options (used when CS approves an employee hold request):
+     *   hold_request_id             the request being approved, closed in the hold transaction
+     *   hold_request_note           the optional CS approval note
+     *   skip_assignee_notify_emp_id the requester, who gets "Hold request approved" instead (AC-12)
      */
-    public function holdTicket(int $ticketId, $user, ?string $reason = null): array
+    public function holdTicket(int $ticketId, $user, ?string $reason = null, array $options = []): array
     {
         $ticket = DB::table('tickets')->where('ticket_ID', $ticketId)->first();
         if (!$ticket) {
@@ -2239,7 +2297,12 @@ class TicketService
         }
 
         try {
-            $result = $this->stateMachine->applyTransition($ticketId, 'hold', ['reason' => $trimmedReason], $user);
+            $holdContext = ['reason' => $trimmedReason];
+            if (!empty($options['hold_request_id'])) {
+                $holdContext['hold_request_id'] = (int) $options['hold_request_id'];
+                $holdContext['hold_request_note'] = $options['hold_request_note'] ?? null;
+            }
+            $result = $this->stateMachine->applyTransition($ticketId, 'hold', $holdContext, $user);
 
             if (($result['status'] ?? 0) === 200 && !empty($result['data']['transitioned'])) {
                 // TODO: TS005 per-user notification preferences
@@ -2276,7 +2339,8 @@ class TicketService
                         );
                     }
 
-                    if (!empty($ticket->assigned_to)) {
+                    $skipAssignee = (int) ($options['skip_assignee_notify_emp_id'] ?? 0);
+                    if (!empty($ticket->assigned_to) && (int) $ticket->assigned_to !== $skipAssignee) {
                         $this->notificationService->notifyRecipient(
                             (int) $ticket->assigned_to,
                             'employee',
@@ -2316,15 +2380,28 @@ class TicketService
             return ['status' => 404, 'data' => ['message' => 'Ticket not found']];
         }
 
-        if (!RoleHelper::isCsOrAdmin($user)) {
+        // An employee assigned to the ticket may resume it too: an On Hold ticket must be
+        // resumed before it can be resolved, and the assignee is the one resolving it.
+        $resumingEmpId = (int) ($user->emp_id ?? 0);
+        $isAssignee = $resumingEmpId > 0 && (
+            (int) ($ticket->assigned_to ?? 0) === $resumingEmpId
+            || DB::table('ticket_assignments')
+                ->where('ticket_ID', $ticketId)
+                ->where('employee_ID', $resumingEmpId)
+                ->exists()
+        );
+        $isCsOrAdmin = RoleHelper::isCsOrAdmin($user);
+
+        if (!$isCsOrAdmin && !$isAssignee) {
             return [
                 'status' => 403,
                 'data' => [
-                    'message' => 'Only Customer Service or Administrators can resume a ticket from on hold.',
+                    'message' => 'Only Customer Service, Administrators, or the assigned employee can resume a ticket from on hold.',
                     'code' => 'FORBIDDEN',
                 ],
             ];
         }
+        $resumedByAssignee = $isAssignee && !$isCsOrAdmin;
 
         try {
             $result = $this->stateMachine->applyTransition($ticketId, 'resume', [], $user);
@@ -2358,7 +2435,25 @@ class TicketService
                         );
                     }
 
-                    if (!empty($ticket->assigned_to)) {
+                    if ($resumedByAssignee) {
+                        // Tell the CSR who delegated the ticket that the employee resumed it.
+                        $delegatorId = (int) (DB::table('ticket_assignments')
+                            ->where('ticket_ID', $ticketId)
+                            ->where('employee_ID', $resumingEmpId)
+                            ->value('assigned_by') ?? 0);
+                        if ($delegatorId > 0 && $delegatorId !== $resumingEmpId) {
+                            $emp = DB::table('employees')->where('emp_id', $resumingEmpId)->first();
+                            $empName = $emp ? trim($emp->first_name . ' ' . $emp->last_name) : 'The assigned employee';
+                            $this->notificationService->notifyRecipient(
+                                $delegatorId,
+                                'employee',
+                                'Ticket Resumed',
+                                "{$empName} resumed Ticket {$ticketRef} from On Hold. It is back in progress.",
+                                $ticketId,
+                                $resumeData
+                            );
+                        }
+                    } elseif (!empty($ticket->assigned_to)) {
                         $this->notificationService->notifyRecipient(
                             (int) $ticket->assigned_to,
                             'employee',

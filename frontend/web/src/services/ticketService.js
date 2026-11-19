@@ -861,6 +861,53 @@ export const holdTicket = async (ticketId, reason) => {
   return response.data;
 };
 
+// ─── Spec 0048: employee On Hold requests, decided by Customer Service ─────────
+const afterHoldRequestChange = (ticketId) => {
+  if (ticketId) clearTicketDetailsCache(String(ticketId));
+  clearIncomingTicketsCache();
+  clearCSDashboardCache();
+  clearEmployeeTicketsCache();
+  notifyCsTicketRefresh();
+};
+
+/** Employee asks CS to put an assigned ticket On Hold (remarks 3 to 250 characters). */
+export const requestHoldTicket = async (ticketId, remarks) => {
+  const numericId = Number(String(ticketId).replace(/\D/g, ''));
+  const response = await ticketClient.post(`/tickets/${numericId}/hold-requests`, {
+    remarks: String(remarks || '').trim(),
+  });
+  afterHoldRequestChange(numericId);
+  return response.data;
+};
+
+/** The requesting employee withdraws a pending hold request. */
+export const cancelHoldRequest = async (holdRequestId, ticketId) => {
+  const response = await ticketClient.post(`/hold-requests/${Number(holdRequestId)}/cancel`);
+  afterHoldRequestChange(ticketId ? Number(String(ticketId).replace(/\D/g, '')) : null);
+  return response.data;
+};
+
+/** CS approves: the ticket goes On Hold with the employee's remark as the reason. */
+export const approveHoldRequest = async (holdRequestId, ticketId, note) => {
+  const trimmed = String(note || '').trim();
+  const response = await ticketClient.post(
+    `/hold-requests/${Number(holdRequestId)}/approve`,
+    trimmed ? { note: trimmed } : {}
+  );
+  clearCustomerDashboardCache();
+  afterHoldRequestChange(ticketId ? Number(String(ticketId).replace(/\D/g, '')) : null);
+  return response.data;
+};
+
+/** CS rejects with a required reason (3 to 1000 characters). The ticket is unchanged. */
+export const rejectHoldRequest = async (holdRequestId, ticketId, reason) => {
+  const response = await ticketClient.post(`/hold-requests/${Number(holdRequestId)}/reject`, {
+    reason: String(reason || '').trim(),
+  });
+  afterHoldRequestChange(ticketId ? Number(String(ticketId).replace(/\D/g, '')) : null);
+  return response.data;
+};
+
 export const resumeTicket = async (ticketId) => {
   const numericId = Number(String(ticketId).replace(/\D/g, ''));
   const response = await ticketClient.post(`/tickets/${numericId}/resume`);
@@ -1123,9 +1170,13 @@ export const requestReassignment = async ({ ticketId, reason }) => {
   return response.data;
 };
 
-export const respondReassignment = async ({ ticketId, action, newEmployeeId, reason }) => {
+export const respondReassignment = async ({ ticketId, action, newEmployeeId, newEmployeeIds, reason }) => {
   const body = { action };
   if (newEmployeeId !== undefined) body.new_employee_id = newEmployeeId;
+  // CS can reassign to several employees at once.
+  if (Array.isArray(newEmployeeIds) && newEmployeeIds.length > 0) {
+    body.new_employee_ids = newEmployeeIds.map(Number);
+  }
   if (reason !== undefined) body.reason = reason;
   const response = await employeeClient.post(`/tickets/${ticketId}/reassign-respond`, body);
 
@@ -1599,6 +1650,19 @@ export const getEscalateHandoff = async (conversationId) => {
 };
 
 // Internal Notes (TS028)
+/**
+ * Spec 0038 (AC-31): record that CS opened a proof of completion file. The server only lets
+ * CS approve (resolve/close) a Pending Evaluation ticket after every proof file is recorded.
+ * Returns { viewed_attachment_ids, all_viewed }.
+ */
+export const recordProofView = async (ticketId, attachmentId) => {
+  const numericId = Number(String(ticketId).replace(/\D/g, ''));
+  const response = await ticketClient.post(`/tickets/${numericId}/proof-views`, {
+    attachment_id: Number(attachmentId),
+  });
+  return response.data;
+};
+
 export const getInternalNotes = async (ticketId) => {
   const response = await ticketClient.get(`/tickets/${ticketId}/internal-notes`);
   return response.data?.notes ?? response.data?.data ?? [];
@@ -1715,6 +1779,16 @@ export const getAdminDashboard = (params = {}) => getSharedReport('/admin/dashbo
  */
 export const getManagerDashboard = ({ forceRefresh = false } = {}) =>
   getSharedReport('/manager/dashboard', forceRefresh ? { forceRefresh: true } : {});
+
+/**
+ * The signed-in Service / IT / CS manager's ticket list. Each ticket carries its assignees and
+ * is_escalated / is_breached / can_reassign flags; scope is decided by the server.
+ * Returns { manager_id, scope, tickets }.
+ */
+export const getManagerTickets = async () => {
+  const response = await ticketClient.get('/manager/tickets');
+  return response.data;
+};
 
 export const getAdminReports = async (params = {}) => {
   const response = await ticketClient.get('/admin/reports', { params });

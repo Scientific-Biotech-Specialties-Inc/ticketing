@@ -395,6 +395,9 @@ class TicketDashboardService
                 ->toArray();
         });
 
+        // Spec 0048: status column shows Pending On Hold / On Hold Rejected (added after the cache, so it is always fresh).
+        $recentTickets = app(HoldRequestService::class)->annotateRows($recentTickets);
+
         return [
             'summary' => $summary,
             'recent_tickets' => $recentTickets,
@@ -754,6 +757,9 @@ class TicketDashboardService
                     'last_reminder_sent_at' => $row->last_reminder_sent_at ? Carbon::parse($row->last_reminder_sent_at)->toIso8601String() : null,
                 ];
             })->values()->toArray();
+
+            // Spec 0048: status column shows Pending On Hold / On Hold Rejected.
+            $incomingTickets = app(HoldRequestService::class)->annotateRows($incomingTickets);
 
             return [
                 'incoming_tickets' => $incomingTickets,

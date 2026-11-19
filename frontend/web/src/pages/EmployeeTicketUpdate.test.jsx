@@ -122,17 +122,16 @@ describe('EmployeeTicketUpdate Component Tests', () => {
     });
   });
 
-  it.each(['Pending', 'On Hold'])('opens the confirm dialog and saves when changing status to %s', async (target) => {
-    const details = {
+  // Spec 0048 (AC-1): Pending and On Hold need CS approval, so the employee dropdown no longer offers them.
+  it('offers only In Progress and Resolved in the status dropdown', async () => {
+    ticketService.getTicketDetails.mockResolvedValue({
       id: 'TKTS-00017',
       ticket_ID: 8,
       title: 'Status Change Ticket',
       status: 'In Progress',
       priority: 'Medium',
       timeline: [],
-    };
-    ticketService.getTicketDetails.mockResolvedValue(details);
-    ticketService.updateEmployeeTicket.mockResolvedValueOnce({});
+    });
 
     render(
       <MemoryRouter initialEntries={[{ pathname: '/employee/ticket-update', state: { ticket: { ticket_ID: 8, status: 'In Progress' } } }]}>
@@ -143,17 +142,43 @@ describe('EmployeeTicketUpdate Component Tests', () => {
     );
 
     await screen.findByText('Status Change Ticket');
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: target } });
-    fireEvent.change(screen.getByPlaceholderText(/Provide detailed notes/i), { target: { value: 'Waiting on parts' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save Status Change' }));
+    const options = Array.from(screen.getByRole('combobox').querySelectorAll('option')).map((o) => o.value);
+    expect(options).toEqual(['In Progress', 'Resolved']);
+    expect(screen.getByRole('button', { name: /Request On Hold/i })).toBeInTheDocument();
+  });
 
-    expect(await screen.findByText('Confirm Status Change')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Yes, Save Changes/i }));
-
-    await waitFor(() => {
-      expect(ticketService.updateEmployeeTicket).toHaveBeenCalledTimes(1);
+  // Spec 0048 (AC-6): while a hold request is pending the status form and reassignment are locked.
+  it('locks the status form and reassignment while an On Hold request is pending', async () => {
+    ticketService.getTicketDetails.mockResolvedValue({
+      id: 'TKTS-00017',
+      ticket_ID: 8,
+      title: 'Pending Hold Ticket',
+      status: 'In Progress',
+      priority: 'Medium',
+      timeline: [],
+      pending_hold_request: {
+        id: 3,
+        status: 'pending',
+        remarks: 'Waiting on a replacement board',
+        requested_by: { id: 6, name: 'Support Engineer' },
+        requested_at: '2026-11-18T08:00:00+00:00',
+      },
     });
-    const formData = ticketService.updateEmployeeTicket.mock.calls[0][1];
-    expect(formData.get('status')).toBe(target);
+
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/employee/ticket-update', state: { ticket: { ticket_ID: 8, status: 'In Progress' } } }]}>
+        <Routes>
+          <Route path="/employee/ticket-update" element={<EmployeeTicketUpdate />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Pending Hold Ticket');
+    expect(screen.getByRole('combobox')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Request Reassignment' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /^Request On Hold$/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel Request' })).toBeInTheDocument();
+    expect(screen.getAllByText('On Hold request pending CS review').length).toBeGreaterThan(0);
+    expect(screen.getByText('Pending On Hold')).toBeInTheDocument();
   });
 });

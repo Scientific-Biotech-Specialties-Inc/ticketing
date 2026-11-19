@@ -25,6 +25,7 @@ export function ConfirmationModal({
   requiresReason = false,
   reasonPlaceholder = "Please provide remarks or reason for this action...",
   requiresPassword = false,
+  icon = null, // optional element overriding the variant's default icon
   children,
 }) {
   const [reason, setReason] = React.useState("");
@@ -83,7 +84,7 @@ export function ConfirmationModal({
         {/* Status Icon Badge centered */}
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full mb-3" style={{ background: undefined }}>
           <div className={cn("h-14 w-14 rounded-full flex items-center justify-center", config.bg)}>
-            {config.icon}
+            {icon || config.icon}
           </div>
         </div>
 

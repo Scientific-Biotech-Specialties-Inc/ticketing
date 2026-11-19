@@ -22,114 +22,12 @@ import SlaStatusBadge, { getTicketSlaDueDate, getTicketSlaStatus } from '@/compo
 import { AssignModal } from '@/components/CSModals';
 import CustomerTicketDetailModal from '@/components/CustomerTicketDetailModal';
 import {
-  getCSIncomingTickets,
+  getManagerTickets,
   getAssignableEmployees,
   assignTicketToEmployees,
-  getDepartments,
 } from '@/services/ticketService';
 import { cn } from '@/lib/utils';
-
-// Fallback seed tickets for instant responsiveness
-const MOCK_SERVICE_TICKETS = [
-  {
-    id: 8001,
-    ticket_ID: 'TICK-SRV-101',
-    title: 'Siemens Magnetom Lumina 3T MRI - Cryostat Helium Pressure Spike',
-    description: 'Cold head compressor fault causing helium boil-off warning. Imaging suite shut down.',
-    priority: 'Critical',
-    status: 'In Progress',
-    department: 'Service',
-    category: 'Equipment',
-    created_at: new Date(Date.now() - 36 * 3600 * 1000).toISOString(),
-    sla_due_date: new Date(Date.now() - 14 * 3600 * 1000).toISOString(),
-    assigned: [1028],
-    assigned_names: ['Carlos Mendoza'],
-  },
-  {
-    id: 8002,
-    ticket_ID: 'TICK-SRV-102',
-    title: 'GE Revolution Apex CT Scanner - Slip-Ring Thermal Overheat Warning',
-    description: 'High-speed slip ring telemetry reporting abnormal rotor thermal gradient during chest helical scan.',
-    priority: 'Critical',
-    status: 'In Progress',
-    department: 'Service',
-    category: 'Radiology',
-    created_at: new Date(Date.now() - 18 * 3600 * 1000).toISOString(),
-    sla_due_date: new Date(Date.now() - 4 * 3600 * 1000).toISOString(),
-    assigned: [2],
-    assigned_names: ['Mark Reyes'],
-  },
-  {
-    id: 8003,
-    ticket_ID: 'TICK-SRV-103',
-    title: 'Baxter Prismaflex CRRT Hemodialysis Unit - Pressure Transducer Fault',
-    description: 'Effluent line sensor calibration variance exceeds safety tolerance in ICU Ward 4.',
-    priority: 'Critical',
-    status: 'Pending Assignment',
-    department: 'Service',
-    category: 'Biomedical',
-    created_at: new Date(Date.now() - 8 * 3600 * 1000).toISOString(),
-    sla_due_date: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-    assigned: [],
-    assigned_names: [],
-  },
-  {
-    id: 8004,
-    ticket_ID: 'TICK-SRV-104',
-    title: 'Philips EPIQ Elite Ultrasound - Transducer Beam Calibration Drift',
-    description: 'Periodic PM calibration required for cardiac phased-array probes.',
-    priority: 'Medium',
-    status: 'In Progress',
-    department: 'Service',
-    category: 'Maintenance',
-    created_at: new Date(Date.now() - 12 * 3600 * 1000).toISOString(),
-    sla_due_date: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-    assigned: [4],
-    assigned_names: ['Bernadette Gonzaga'],
-  },
-  {
-    id: 8005,
-    ticket_ID: 'TICK-SRV-105',
-    title: 'Carestream DRX Evolution Plus X-Ray - Collimator Shutter Sticking',
-    description: 'Manual and motorized collimator leaves binding at full field-of-view aperture.',
-    priority: 'High',
-    status: 'Pending Assignment',
-    department: 'Service',
-    category: 'Hardware',
-    created_at: new Date(Date.now() - 4 * 3600 * 1000).toISOString(),
-    sla_due_date: new Date(Date.now() + 12 * 3600 * 1000).toISOString(),
-    assigned: [],
-    assigned_names: [],
-  },
-  {
-    id: 8006,
-    ticket_ID: 'TICK-SRV-106',
-    title: 'Mindray BeneView T8 Patient Monitor - Defibrillator Sync Interface Loss',
-    description: 'Cardiology recovery ward monitor failing analog sync pulse to defibrillator cart.',
-    priority: 'Low',
-    status: 'In Progress',
-    department: 'Service',
-    category: 'Biomedical',
-    created_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-    sla_due_date: new Date(Date.now() + 48 * 3600 * 1000).toISOString(),
-    assigned: [1050],
-    assigned_names: ['Oliver Queen'],
-  },
-  {
-    id: 8007,
-    ticket_ID: 'TICK-SRV-107',
-    title: 'Olympus EVIS EXERA III Video Colonoscope - Light Guide Insertion Bundle',
-    description: 'Endoscopy tower report of reduced illumination intensity on distal tip optics.',
-    priority: 'Medium',
-    status: 'Pending Assignment',
-    department: 'Service',
-    category: 'Equipment',
-    created_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
-    sla_due_date: new Date(Date.now() + 36 * 3600 * 1000).toISOString(),
-    assigned: [],
-    assigned_names: [],
-  },
-];
+import { holdRequestDisplayStatus } from '@/utils/holdRequestStatus';
 
 export default function ServiceManagerTickets() {
   const { user } = useAuth();
@@ -153,37 +51,23 @@ export default function ServiceManagerTickets() {
   const [assignEmployees, setAssignEmployees] = useState([]);
   const [assignDepartments, setAssignDepartments] = useState([]);
   const [detailModalTicket, setDetailModalTicket] = useState(null);
+  const [loadError, setLoadError] = useState('');
+  // The signed-in manager: never offered as an assignee to themself.
+  const [managerId, setManagerId] = useState(() => Number(user?.emp_id ?? 0) || null);
 
-  // Fetch Service Tickets
+  // Tickets in this manager's scope (assignee department + branch), decided by the server.
   const loadTickets = useCallback(async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
     setRefreshing(true);
+    setLoadError('');
     try {
-      const apiTickets = await getCSIncomingTickets({ limit: 100, forceRefresh: true });
-      const serviceScoped = (apiTickets || []).filter((t) => {
-        const dept = (t.department || t.department_target || '').toLowerCase();
-        const cat = (t.category || '').toLowerCase();
-        return (
-          dept.includes('service') ||
-          dept.includes('biomedical') ||
-          dept.includes('radiology') ||
-          dept.includes('facilities') ||
-          cat.includes('equipment') ||
-          cat.includes('hardware') ||
-          cat.includes('machine') ||
-          cat.includes('calibration') ||
-          cat.includes('maintenance') ||
-          cat.includes('repair') ||
-          cat.includes('biomedical') ||
-          cat.includes('radiology')
-        );
-      });
-
-      const merged = serviceScoped.length > 0 ? serviceScoped : MOCK_SERVICE_TICKETS;
-      setTickets(merged);
+      const data = await getManagerTickets();
+      setTickets(Array.isArray(data?.tickets) ? data.tickets : []);
+      if (data?.manager_id) setManagerId(Number(data.manager_id));
     } catch (err) {
-      console.warn('Failed to load Service tickets, falling back to mock tickets:', err);
-      setTickets(MOCK_SERVICE_TICKETS);
+      console.error('Failed to load manager tickets:', err);
+      setTickets([]);
+      setLoadError(err?.response?.data?.message || 'Failed to load your department tickets. Please refresh.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -194,76 +78,47 @@ export default function ServiceManagerTickets() {
     loadTickets();
   }, [loadTickets]);
 
-  // Fetch assignable employees & departments
+  // Staff directory for the assign modal (it fetches eligibility itself; this list fills in names).
   useEffect(() => {
-    Promise.all([
-      getAssignableEmployees({ forceRefresh: false }).catch(() => []),
-      getDepartments().catch(() => []),
-    ]).then(([emps, deps]) => {
-      const formattedStaff = [
-        { id: 1028, name: 'Carlos Mendoza (Service Manager)', email: 'carlos.mendoza@hospital.com', role: 'Lead Service Engineer', department: 'Service' },
-        { id: 2, name: 'Mark Reyes', email: 'employee@gmail.com', role: 'Service Engineer', department: 'Service' },
-        { id: 4, name: 'Bernadette Gonzaga', email: 'slosinada@gmail.com', role: 'Biomedical Support Engineer', department: 'Service' },
-        { id: 1050, name: 'Oliver Queen', email: 'oliver.queen@hospital.com', role: 'Senior Diagnostic Systems Engineer', department: 'Service' },
-        { id: 1058, name: 'Wanda Maximoff', email: 'wanda.maximoff@hospital.com', role: 'Radiology Maintenance Specialist', department: 'Service' },
-      ];
-
-      const mergedEmps = [...formattedStaff];
-      (emps || []).forEach((e) => {
-        const id = Number(e.id ?? e.emp_id);
-        if (!mergedEmps.some((m) => m.id === id)) {
-          mergedEmps.push({
-            id,
+    getAssignableEmployees({ forceRefresh: false })
+      .catch(() => [])
+      .then((emps) => {
+        setAssignEmployees(
+          (emps || []).map((e) => ({
+            id: Number(e.id ?? e.emp_id),
             name: e.name || `${e.first_name || ''} ${e.last_name || ''}`.trim() || e.email,
             email: e.email,
             role: e.role,
             department: e.department || 'Service',
-          });
-        }
+          }))
+        );
+        setAssignDepartments(['IT', 'Customer Service', 'Service']);
       });
-
-      setAssignEmployees(mergedEmps);
-      setAssignDepartments(['IT', 'Customer Service', 'Service']);
-    });
   }, []);
+
+  const assignableStaff = useMemo(
+    () => assignEmployees.filter((e) => !managerId || Number(e.id) !== Number(managerId)),
+    [assignEmployees, managerId]
+  );
 
   // Filtered & Evaluated Tickets
   const evaluatedTickets = useMemo(() => {
     return tickets.map((t) => {
-      const assignedList = Array.isArray(t.assigned)
-        ? t.assigned
-        : Array.isArray(t.assigned_to)
-        ? t.assigned_to
-        : t.assigned_to_user
-        ? [t.assigned_to_user]
-        : [];
-
-      const assignedNamesList = Array.isArray(t.assigned_names)
-        ? t.assigned_names
-        : Array.isArray(t.assignee_names)
-        ? t.assignee_names
-        : [];
-
-      const isUnassigned =
-        assignedList.length === 0 &&
-        assignedNamesList.length === 0 &&
-        (!t.status || t.status.toLowerCase().includes('pending assignment') || t.status.toLowerCase() === 'unassigned');
-
-      const assigneeName = assignedNamesList.length > 0
-        ? assignedNamesList.join(', ')
-        : assignedList.length > 0
-        ? `Engineer #${assignedList[0]}`
-        : 'Unassigned';
-
+      const assignees = Array.isArray(t.assignees) ? t.assignees : [];
+      const isUnassigned = assignees.length === 0;
+      const assigneeName = isUnassigned ? 'Unassigned' : assignees.map((a) => a.name).join(', ');
       const dueDate = getTicketSlaDueDate(t);
-      const isBreached = dueDate ? new Date() > new Date(dueDate) : false;
 
       return {
         ...t,
+        // AssignModal pre-selects these and reads `assigned` as employee ids.
+        assigned: assignees.map((a) => a.id),
         isUnassigned,
         assigneeName,
         dueDate,
-        isBreached,
+        isBreached: Boolean(t.is_breached),
+        isEscalated: Boolean(t.is_escalated),
+        canReassign: Boolean(t.can_reassign),
       };
     });
   }, [tickets]);
@@ -272,7 +127,7 @@ export default function ServiceManagerTickets() {
     return evaluatedTickets.filter((t) => {
       if (search) {
         const q = search.toLowerCase();
-        const matchesId = (t.ticket_ID || `TICK-${t.id}`).toLowerCase().includes(q);
+        const matchesId = String(t.id || t.ticket_ID || '').toLowerCase().includes(q);
         const matchesTitle = (t.title || '').toLowerCase().includes(q);
         const matchesDesc = (t.description || '').toLowerCase().includes(q);
         const matchesAssignee = (t.assigneeName || '').toLowerCase().includes(q);
@@ -340,36 +195,23 @@ export default function ServiceManagerTickets() {
     setAssigneeFilter('All');
   };
 
-  const handleAssignSubmit = async (payload) => {
-    try {
-      if (payload.ticketId) {
-        await assignTicketToEmployees(payload.ticketId, payload.employeeIds, payload.priority, payload.department);
-      }
-      const assignedEmployeeObjs = assignEmployees.filter((e) =>
-        (payload.employeeIds || []).includes(e.id)
-      );
-      const assignedNames = assignedEmployeeObjs.map((e) => e.name);
+  const PRIORITY_IDS = { Low: 1, Medium: 2, High: 3, Critical: 4 };
 
-      setTickets((prev) =>
-        prev.map((t) => {
-          if (t.id === payload.ticketId || t.ticket_ID === payload.ticketId) {
-            return {
-              ...t,
-              status: 'In Progress',
-              priority: payload.priority || t.priority,
-              assigned: payload.employeeIds,
-              assigned_names: assignedNames,
-            };
-          }
-          return t;
-        })
-      );
+  // AssignModal calls onSave(updatedTicket) and closes itself when this resolves truthy.
+  const handleAssignSave = async (updated) => {
+    const ticketId = Number(updated?.ticket_ID || String(updated?.id || '').replace(/\D/g, ''));
+    const employeeIds = (updated?.assigned || []).map(Number).filter(Boolean);
+    if (!ticketId || employeeIds.length === 0) return false;
 
-      setAssignModalTicket(null);
-    } catch (err) {
-      console.error('Failed to assign ticket:', err);
-      window.alert('Failed to reassign ticket. Please try again.');
-    }
+    await assignTicketToEmployees({
+      ticketId,
+      employeeIds,
+      assignedByEmail: user?.email,
+      priorityId: PRIORITY_IDS[updated?.priority] ?? undefined,
+    });
+    // Errors propagate: AssignModal shows the server message (e.g. an ineligible engineer).
+    await loadTickets({ silent: true });
+    return true;
   };
 
   return (
@@ -428,9 +270,9 @@ export default function ServiceManagerTickets() {
               <option value="All">All Statuses</option>
               <option value="Pending Assignment">Pending Assignment</option>
               <option value="In Progress">In Progress</option>
-              <option value="Pending">Pending</option>
-              <option value="Resolved">Resolved</option>
-              <option value="Closed">Closed</option>
+              <option value="Escalated">Escalated</option>
+              <option value="On Hold">On Hold</option>
+              <option value="Pending Evaluation">Pending Evaluation</option>
             </select>
           </div>
 
@@ -480,6 +322,12 @@ export default function ServiceManagerTickets() {
         </div>
       </div>
 
+      {loadError && (
+        <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-2 text-xs font-semibold text-destructive">
+          {loadError}
+        </div>
+      )}
+
       {/* Ticket Queue Table Card */}
       <div className="rounded-xl border border-border bg-card shadow-xs overflow-hidden min-h-[500px] flex flex-col justify-between">
         <div className="overflow-x-auto">
@@ -518,7 +366,7 @@ export default function ServiceManagerTickets() {
                     )}
                   >
                     <TableCell className="font-mono text-xs font-bold text-primary">
-                      {t.ticket_ID || `TICK-${t.id}`}
+                      {t.id || `TKT-${String(t.ticket_ID).padStart(4, '0')}`}
                     </TableCell>
 
                     <TableCell>
@@ -543,8 +391,8 @@ export default function ServiceManagerTickets() {
                     </TableCell>
 
                     <TableCell>
-                      <Badge variant={getStatusBadgeVariant(t.status)} className="text-[10px]">
-                        {t.status || 'Pending Assignment'}
+                      <Badge variant={getStatusBadgeVariant(holdRequestDisplayStatus(t))} className="text-[10px]">
+                        {holdRequestDisplayStatus(t, t.status || 'Pending Assignment')}
                       </Badge>
                     </TableCell>
 
@@ -573,11 +421,16 @@ export default function ServiceManagerTickets() {
                       <div className="flex items-center justify-end gap-1.5">
                         <Button
                           size="sm"
+                          disabled={!t.canReassign}
+                          title={t.canReassign
+                            ? (t.isEscalated ? 'Escalated: reassign this ticket' : 'SLA breached: reassign this ticket')
+                            : 'Managers can reassign only escalated or SLA-breached tickets'}
                           onClick={(e) => {
                             e.stopPropagation();
+                            if (!t.canReassign) return;
                             setAssignModalTicket(t);
                           }}
-                          className="text-xs h-7 px-2.5 bg-[#252578] hover:bg-[#1d1d60] text-white font-medium gap-1 cursor-pointer"
+                          className="text-xs h-7 px-2.5 bg-[#252578] hover:bg-[#1d1d60] text-white font-medium gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           {t.isUnassigned ? <UserPlus className="w-3 h-3" /> : <UserCheck className="w-3 h-3" />}
                           <span>{t.isUnassigned ? 'Assign' : 'Reassign'}</span>
@@ -611,11 +464,12 @@ export default function ServiceManagerTickets() {
       {assignModalTicket && (
         <AssignModal
           ticket={assignModalTicket}
-          employees={assignEmployees}
+          employees={assignableStaff}
           departments={assignDepartments}
           priorityOptions={['Low', 'Medium', 'High', 'Critical']}
           onClose={() => setAssignModalTicket(null)}
-          onAssign={handleAssignSubmit}
+          onSave={handleAssignSave}
+          excludeEmployeeIds={managerId ? [managerId] : []}
         />
       )}
 

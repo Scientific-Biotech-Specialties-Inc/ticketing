@@ -738,7 +738,7 @@ export default function Notifications() {
               }}
               onStatusUpdate={async (upd) => {
                 try {
-                  if (upd.reassignmentStatus) {
+                  if (upd.reassignmentStatus && !upd.reassignmentHandled) {
                     const nid = Number(String(activeTicket.ticket_ID || activeTicket.id).replace(/\D/g, ''));
                     const act = upd.reassignmentStatus === 'Approved' ? 'approve' : 'deny';
                     await respondReassignment({ ticketId: nid, action: act });

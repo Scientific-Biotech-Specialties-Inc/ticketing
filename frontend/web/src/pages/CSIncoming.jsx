@@ -29,6 +29,7 @@ import {
   closeTicket,
   CS_TICKET_REFRESH_EVENT,
 } from '@/services/ticketService';
+import { holdRequestDisplayStatus } from '@/utils/holdRequestStatus';
 
 const normalizeDepartmentName = (value = '') => value.trim().toLowerCase().replace(/\s+/g, ' ');
 
@@ -50,7 +51,8 @@ const buildEmployeeSignature = (list = []) => list
   ].join(':'))
   .join('|');
 
-const getDisplayStatus = (ticket) => ticket.status;
+// Spec 0048: Pending On Hold / On Hold Rejected while an employee hold request is involved.
+const getDisplayStatus = (ticket) => holdRequestDisplayStatus(ticket);
 
 const buildTicketSearchString = (t) => {
   if (!t) return '';
@@ -149,6 +151,9 @@ export default function CSIncoming() {
   });
   const [incomingTab, setIncomingTab] = useState('open'); // 'open' | 'pending_assignment' | 'all'
   const [newTicketId, setNewTicketId] = useState(null);
+  // Row to highlight after a redirect (e.g. CS approved a reassignment on the Assigned page).
+  const [highlightTicketId, setHighlightTicketId] = useState(null);
+  const highlightScrolledRef = useRef(false);
   const newTicketTimerRef = useRef(null);
   const [typeFilter, setTypeFilter] = useState('all');
 
@@ -398,6 +403,32 @@ export default function CSIncoming() {
   useEffect(() => {
     loadLiveData({ forceRefresh: true });
   }, [queueQuery, loadLiveData]);
+
+  // Redirect target: open the requested tab and highlight the ticket's row for a few seconds.
+  useEffect(() => {
+    const targetId = location.state?.highlightTicketId;
+    if (!targetId) return undefined;
+    const requestedTab = location.state?.tab;
+    if (['open', 'pending_assignment', 'all'].includes(requestedTab)) {
+      setIncomingTab(requestedTab);
+      setPage(1);
+    }
+    highlightScrolledRef.current = false;
+    setHighlightTicketId(Number(String(targetId).replace(/\D/g, '')));
+    window.history.replaceState({}, document.title);
+    const timer = setTimeout(() => setHighlightTicketId(null), 6000);
+    return () => clearTimeout(timer);
+  }, [location.state]);
+
+  // Bring the highlighted row into view once it has rendered.
+  useEffect(() => {
+    if (!highlightTicketId || highlightScrolledRef.current) return;
+    const row = document.querySelector(`[data-ticket-row="${highlightTicketId}"]`);
+    if (row) {
+      highlightScrolledRef.current = true;
+      row.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    }
+  }, [highlightTicketId, tickets]);
 
   useEffect(() => {
     // assignTicketId (from a notification's Assign button) opens the assignment modal directly.
@@ -899,13 +930,19 @@ export default function CSIncoming() {
             ) : (
               paginated.map((t, idx) => {
                 const isNew = t.id === newTicketId || t.ticket_ID === newTicketId;
+                const rowNumericId = Number(t.ticket_ID || String(t.id || '').replace(/\D/g, ''));
+                const isHighlighted = highlightTicketId != null && rowNumericId === highlightTicketId;
 
                 return (
                   <TableRow
                     key={t.id}
+                    data-ticket-row={rowNumericId || undefined}
+                    aria-current={isHighlighted ? 'true' : undefined}
                     onClick={() => handleRowAction(t)}
-                    className={`cursor-pointer hover:bg-muted/50 transition-colors ${
-                      isNew ? 'bg-primary/5' : idx === 0 && page === 1 ? 'bg-muted/20' : ''
+                    className={`cursor-pointer hover:bg-muted/50 transition-colors duration-700 ${
+                      isHighlighted
+                        ? 'bg-accent/10 shadow-[inset_4px_0_0_0_#2E85D8]'
+                        : isNew ? 'bg-primary/5' : idx === 0 && page === 1 ? 'bg-muted/20' : ''
                     }`}
                   >
                     <TableCell className="font-semibold text-primary whitespace-nowrap">
@@ -1002,7 +1039,8 @@ export default function CSIncoming() {
               const numericId = modal.ticket.ticket_ID || Number(String(updatedFields.id || modal.ticket.id).replace(/\D/g, ''));
               
               if (updatedFields.reassignmentStatus) {
-                await respondReassignment({
+                // TicketSummary's decision card already called reassign-respond.
+                if (!updatedFields.reassignmentHandled) await respondReassignment({
                   ticketId: numericId,
                   action: updatedFields.reassignmentStatus === 'Approved' ? 'approve' : 'deny',
                   reason: updatedFields.reassignmentDenyReason ?? '',

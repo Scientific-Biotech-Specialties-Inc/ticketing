@@ -887,11 +887,23 @@ class EmployeeAssignmentService
             return ['status' => 404, 'data' => ['message' => 'Ticket not found']];
         }
 
+        // Spec 0048 (AC-2): employees no longer set Pending or On Hold; they send a hold request to CS.
+        $requestedStatus = strtolower(trim((string) ($validated['status'] ?? '')));
+        if (in_array($requestedStatus, ['pending', 'on hold'], true)) {
+            return [
+                'status' => 422,
+                'data' => [
+                    'message' => 'Employees cannot set Pending or On Hold directly. Send an On Hold request for Customer Service to review.',
+                    'code' => 'HOLD_APPROVAL_REQUIRED',
+                ],
+            ];
+        }
+
         if ((int) $ticket->ticket_status_ID === 11) {
             return [
                 'status' => 422,
                 'data' => [
-                    'message' => 'Ticket is currently on hold. Customer Service must resume it before work or updates can be logged.',
+                    'message' => 'Ticket is currently On Hold. Resume the ticket before resolving or updating it.',
                     'code' => 'TICKET_ON_HOLD',
                 ],
             ];
@@ -927,6 +939,16 @@ class EmployeeAssignmentService
 
         // Internal tickets store a placeholder in created_by, so there is no customer to notify.
         $notifyCustomer = !(bool) $ticket->is_internal;
+
+        // Spec 0048 (AC-6): while an On Hold request is pending, no status change (proof included).
+        // Work logs and internal notes carry no status and are still allowed.
+        if ($isProof || ($newStatusName && $this->isDifferentStatus($ticket, $newStatusName))) {
+            $gate = app(HoldRequestGate::class);
+            $blocked = $gate->blockedResponse($gate->hasPendingRequest($ticketId));
+            if ($blocked !== null) {
+                return $blocked;
+            }
+        }
 
         // Validate the status change before any side effects: replacing proofs and binding
         // attachments call attachment-service, which a database rollback cannot undo.
@@ -1236,6 +1258,16 @@ class EmployeeAssignmentService
      *
      * Returns a 422 response payload when the transition is not allowed, or null when it is.
      */
+    /** Spec 0048: true when the named status differs from the ticket's current one. */
+    private function isDifferentStatus(object $ticket, string $statusName): bool
+    {
+        $statusId = DB::table('ticket_statuses')
+            ->whereRaw('LOWER(status_name) = ?', [strtolower(trim($statusName))])
+            ->value('ticket_status_ID');
+
+        return !$statusId || (int) $statusId !== (int) $ticket->ticket_status_ID;
+    }
+
     private function validateEmployeeStatusChange(object $ticket, string $newStatusName): ?array
     {
         $statusId = DB::table('ticket_statuses')
@@ -1623,7 +1655,10 @@ class EmployeeAssignmentService
                 });
         }
 
-        return $rows->map(function ($row) use ($pendingReassigns, $deniedReassigns, $deniedAuditReasons, $ticketTimelines) {
+        // Spec 0048: status column display state from ticket-service (display only, so it fails open).
+        $holdStates = app(HoldRequestGate::class)->statesFor($rows->pluck('ticket_ID')->all());
+
+        return $rows->map(function ($row) use ($pendingReassigns, $deniedReassigns, $deniedAuditReasons, $ticketTimelines, $holdStates) {
             $pendingReassign = $pendingReassigns->get($row->ticket_ID);
             $deniedReassign = $deniedReassigns->get($row->ticket_ID);
 
@@ -1672,6 +1707,7 @@ class EmployeeAssignmentService
                 'is_internal' => ($row->ticket_type ?? '') === 'Internal',
                 'last_reminder_sent_at' => $row->last_reminder_sent_at ? Carbon::parse($row->last_reminder_sent_at)->toIso8601String() : null,
                 'timeline' => $ticketTimelines->get($row->ticket_ID, []),
+                'hold_request_state' => $holdStates[(int) $row->ticket_ID] ?? null,
             ];
         })->values()->all();
     }

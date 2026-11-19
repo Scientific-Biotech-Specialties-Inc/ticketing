@@ -67,6 +67,11 @@ export function getStatusBadgeVariant(status, tier = "medium") {
   const s = String(status || "").toLowerCase().trim();
   const prefix = tier === "high" ? "" : `${tier}-`;
 
+  // Spec 0048: hold request display states (the stored ticket status is unchanged).
+  if (s === "pending on hold") return `${prefix}destructive`;
+  if (s === "on hold rejected") return `${prefix}destructive`;
+  // CS rejected the proof of completion; the ticket itself is back In Progress.
+  if (s === "proof rejected") return `${prefix}destructive`;
   if (s === "open" || s === "new" || s === "pending assignment" || s === "pending_assignment") return `${prefix}info`;
   if (s === "in_progress" || s === "in progress" || s === "pending" || s === "assigned" || s === "pending approval") {
     return `${prefix}warning`;

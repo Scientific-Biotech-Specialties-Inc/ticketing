@@ -163,6 +163,129 @@ class ManagerDashboardService
     }
 
     /**
+     * The manager's ticket list (Service / IT manager tickets page): open tickets in the
+     * manager's scope, with their assignees and whether each is escalated or breached.
+     * Same scope as the dashboard: assignee department (any open assignment, or assigned_to)
+     * for Service and IT managers, the whole branch for the CS manager. Not cached, so a
+     * reassignment shows on the next load.
+     *
+     * @return array{scope: array, tickets: array<int, array>}
+     */
+    public function ticketsForManager(object $manager): array
+    {
+        $department = self::supportedDepartment($manager->department ?? null);
+        $isBranchMode = $department === self::CUSTOMER_SERVICE;
+        $branch = $this->resolveBranch($manager);
+        $now = now();
+
+        $query = DB::table('tickets as t')
+            ->join('ticket_statuses as ts', 'ts.ticket_status_ID', '=', 't.ticket_status_ID')
+            ->leftJoin('ticket_priorities as tp', 'tp.priority_ID', '=', 't.priority_ID')
+            ->leftJoin('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
+            ->whereNotIn(DB::raw('LOWER(TRIM(ts.status_name))'), self::NOT_OPEN_STATUSES);
+
+        $this->dashboardService->applyBranchTicketFilter($query, $branch);
+
+        if (!$isBranchMode) {
+            $deptNorm = TechnicalDepartments::normalize($department);
+            $query->where(function ($q) use ($deptNorm) {
+                $q->whereExists(function ($sub) use ($deptNorm) {
+                    $sub->select(DB::raw(1))
+                        ->from('ticket_assignments as ta')
+                        ->join('employees as ae', 'ae.emp_id', '=', 'ta.employee_ID')
+                        ->whereColumn('ta.ticket_ID', 't.ticket_ID')
+                        ->whereNull('ta.completed_at')
+                        ->whereRaw('LOWER(TRIM(ae.department)) = ?', [$deptNorm]);
+                })->orWhereExists(function ($sub) use ($deptNorm) {
+                    $sub->select(DB::raw(1))
+                        ->from('employees as oe')
+                        ->whereColumn('oe.emp_id', 't.assigned_to')
+                        ->whereRaw('LOWER(TRIM(oe.department)) = ?', [$deptNorm]);
+                });
+            });
+        }
+
+        $rows = $query->select(
+            't.ticket_ID',
+            't.ticket_number',
+            't.title',
+            't.description',
+            't.ticket_status_ID',
+            'ts.status_name',
+            't.priority_ID',
+            'tp.priority_name',
+            'pc.category_name',
+            't.assigned_to',
+            't.resolution_due_at',
+            't.resolved_at',
+            't.closed_at',
+            't.sla_status',
+            't.escalation_reason',
+            't.created_at',
+            't.updated_at'
+        )->orderByDesc('t.updated_at')->get();
+
+        $ticketIds = $rows->pluck('ticket_ID')->map(fn ($id) => (int) $id)->all();
+        $assigneesByTicket = [];
+        if (!empty($ticketIds)) {
+            DB::table('ticket_assignments as ta')
+                ->join('employees as e', 'e.emp_id', '=', 'ta.employee_ID')
+                ->whereIn('ta.ticket_ID', $ticketIds)
+                ->whereNull('ta.completed_at')
+                ->select('ta.ticket_ID', 'e.emp_id', 'e.first_name', 'e.last_name', 'e.department', 'ta.assignment_status')
+                ->orderBy('ta.assigned_at')
+                ->get()
+                ->each(function ($a) use (&$assigneesByTicket) {
+                    $name = trim("{$a->first_name} {$a->last_name}");
+                    $assigneesByTicket[(int) $a->ticket_ID][] = [
+                        'id' => (int) $a->emp_id,
+                        'name' => $name !== '' ? $name : 'Engineer #' . $a->emp_id,
+                        'department' => $a->department,
+                        'assignment_status' => $a->assignment_status,
+                    ];
+                });
+        }
+
+        $tickets = $rows->map(function ($t) use ($now, $assigneesByTicket) {
+            $isEscalated = strcasecmp(trim((string) $t->status_name), 'Escalated') === 0;
+            $isBreached = $this->slaOutcomes->isOpenBreach($t, $now);
+
+            return [
+                'ticket_ID' => (int) $t->ticket_ID,
+                'id' => TicketNumberGeneratorService::refFor($t->ticket_ID, $t->ticket_number ?? null),
+                'title' => $t->title,
+                'description' => $t->description,
+                'status' => $t->status_name,
+                'ticket_status_ID' => (int) $t->ticket_status_ID,
+                'priority' => $t->priority_name,
+                'priority_ID' => $t->priority_ID ? (int) $t->priority_ID : null,
+                'category' => $t->category_name,
+                'assigned_to' => $t->assigned_to ? (int) $t->assigned_to : null,
+                'assignees' => $assigneesByTicket[(int) $t->ticket_ID] ?? [],
+                'resolution_due_at' => $t->resolution_due_at ? Carbon::parse($t->resolution_due_at)->toIso8601String() : null,
+                'sla_status' => $isBreached ? 'Breached' : $t->sla_status,
+                'escalation_reason' => $t->escalation_reason,
+                'is_escalated' => $isEscalated,
+                'is_breached' => $isBreached,
+                // Managers step in only on escalated or breached tickets.
+                'can_reassign' => $isEscalated || $isBreached,
+                'created_at' => $t->created_at ? Carbon::parse($t->created_at)->toIso8601String() : null,
+                'updated_at' => $t->updated_at ? Carbon::parse($t->updated_at)->toIso8601String() : null,
+            ];
+        })->values()->all();
+
+        return [
+            'scope' => [
+                'department' => $department,
+                'branch_id' => $branch->id,
+                'branch_name' => $branch->name,
+                'mode' => $isBranchMode ? 'branch' : 'department',
+            ],
+            'tickets' => $tickets,
+        ];
+    }
+
+    /**
      * Open, has an SLA, not on hold, and not yet past its resolution deadline.
      */
     protected function isWithinSla(object $ticket, Carbon $now): bool

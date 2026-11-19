@@ -25,8 +25,19 @@ import { Badge, getStatusBadgeVariant } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@/components/ui/table';
 import { DataTableSkeleton, DataTableEmptyState } from '@/components/ui/data-table';
+import { holdRequestDisplayStatus } from '@/utils/holdRequestStatus';
 
 const getDisplayStatus = (ticket) => ticket.status;
+
+/**
+ * Display only: once CS rejects a proof of completion the ticket returns to In Progress,
+ * and the status column shows "Proof Rejected" until the employee submits new proof
+ * (the server clears proof_rejected on resubmission).
+ */
+const PROOF_REJECTED_LABEL = 'Proof Rejected';
+const isProofRejectedInProgress = (t) =>
+  Boolean(t?.proofRejected || t?.proof_rejected) &&
+  String(t?.status || '').trim().toLowerCase() === 'in progress';
 
 const buildTicketSearchString = (t) => {
   if (!t) return '';
@@ -53,7 +64,8 @@ const buildTicketSearchString = (t) => {
     getDisplayStatus(t) === 'Reopen' ? 'Reopened' : (getDisplayStatus(t) || '')
   );
   const reassignmentBadge = t.reassignmentRequested ? 'pending reassignment' : '';
-  const statusStr = `${rawStatus} ${displayStatus} ${reassignmentBadge}`;
+  const proofRejectedBadge = isProofRejectedInProgress(t) ? 'proof rejected' : '';
+  const statusStr = `${rawStatus} ${displayStatus} ${reassignmentBadge} ${proofRejectedBadge}`;
   const dept = String(t.department || '');
   const equip = String(t.equipment || t.machine_name || '');
   const facility = String(t.facility || '');
@@ -97,6 +109,7 @@ const renderSlaBadge = (ticket) => <SlaStatusBadge ticket={ticket} showDueDate={
 export default function CSAssigned() {
   const { user } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [tickets, setTickets] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -765,9 +778,22 @@ export default function CSAssigned() {
                       {t.category}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={getStatusBadgeVariant(isReassignmentReq ? 'Pending Reassignment' : t.status)}>
-                        {isReassignmentReq ? 'Pending Reassignment' : (t.status === 'Reopen' ? 'Reopened' : t.status)}
-                      </Badge>
+                      {(() => {
+                        const label = isReassignmentReq
+                          ? 'Pending Reassignment'
+                          : isProofRejectedInProgress(t)
+                          ? PROOF_REJECTED_LABEL
+                          : holdRequestDisplayStatus(t, t.status === 'Reopen' ? 'Reopened' : t.status);
+                        const reason = label === PROOF_REJECTED_LABEL ? (t.rejectionReason || t.rejection_reason) : '';
+                        return (
+                          <Badge
+                            variant={getStatusBadgeVariant(label)}
+                            title={reason ? `Proof rejected: "${reason}". The ticket is still In Progress.` : undefined}
+                          >
+                            {label}
+                          </Badge>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell>
                       {renderSlaBadge(t)}
@@ -860,6 +886,7 @@ export default function CSAssigned() {
       {!modalLoading && modal?.mode === 'summary' && (
         <TicketSummary
           ticket={modal.ticket}
+          isLoadingDetails={Boolean(modal.isLoadingDetails)}
           employees={employees}
           onClose={() => setModal(null)}
           onEdit={() => setModal({ mode: 'assign', ticket: modal.ticket })}
@@ -879,11 +906,21 @@ export default function CSAssigned() {
               const numericId = modal.ticket.ticket_ID || Number(String(updatedFields.id || modal.ticket.id).replace(/\D/g, ''));
               
               if (updatedFields.reassignmentStatus) {
-                await respondReassignment({
+                // TicketSummary's decision card already called reassign-respond.
+                if (!updatedFields.reassignmentHandled) await respondReassignment({
                   ticketId: numericId,
                   action: updatedFields.reassignmentStatus === 'Approved' ? 'approve' : 'deny',
                   reason: updatedFields.reassignmentDenyReason ?? '',
                 });
+                if (updatedFields.reassignmentStatus === 'Approved') {
+                  // The new assignees still have to accept, so the ticket now sits in Incoming
+                  // (Pending Assignment). Go there and highlight its row.
+                  setModal(null);
+                  navigate('/cs/incoming', {
+                    state: { highlightTicketId: Number(numericId), tab: 'pending_assignment' },
+                  });
+                  return;
+                }
                 setAssignedTab('all');
                 setPage(1);
               } else {
@@ -913,6 +950,10 @@ export default function CSAssigned() {
               setModal(null);
             } catch (err) {
               console.error('Failed to update ticket status on backend:', err);
+              // Undo the optimistic row update and let the modal show why it failed
+              // (e.g. a proof file not yet viewed), instead of failing silently.
+              loadLiveData({ forceRefresh: true, source: 'poll' });
+              throw err;
             }
 
             // Reload the current page so tabs, counts, and SLA cards reflect the update.

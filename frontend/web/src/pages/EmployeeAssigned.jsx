@@ -22,6 +22,7 @@ import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@
 import { DataTableSkeleton, DataTableEmptyState } from '@/components/ui/data-table';
 import { Button } from '@/components/ui/button';
 import Pagination from '@/components/Pagination';
+import { holdRequestDisplayStatus } from '@/utils/holdRequestStatus';
 
 const CLOSED_STATUSES = ['Closed', 'Resolved', 'Discarded', 'Discarded by Customer'];
 
@@ -383,6 +384,15 @@ export default function EmployeeAssigned() {
       return;
     }
 
+    // Spec 0048 (AC-2): employees cannot set Pending (7) or On Hold (11); they send a hold request to CS.
+    if (newStatus === 'Pending' || newStatus === 'On Hold') {
+      setActionError(getActionError(
+        { response: { data: { message: 'Pending and On Hold need Customer Service approval. Open the ticket and use "Request On Hold".' } } },
+        'Pending and On Hold need Customer Service approval.'
+      ));
+      return;
+    }
+
     const statusMap = {
       'Open': 1,
       'In Progress': 2,
@@ -390,9 +400,7 @@ export default function EmployeeAssigned() {
       'Closed': 4,
       'Escalated': 5,
       'Pending Evaluation': 6,
-      'Pending': 7,
       'Reopened': 8,
-      'On Hold': 11,
     };
     const ticketObj = tickets.find((t) => t.id === id);
     if (!ticketObj) return;
@@ -665,8 +673,8 @@ export default function EmployeeAssigned() {
                           </span>
                         </div>
                       ) : (
-                        <Badge variant={getStatusBadgeVariant(t.status)}>
-                          {t.status}
+                        <Badge variant={getStatusBadgeVariant(holdRequestDisplayStatus(t))}>
+                          {holdRequestDisplayStatus(t)}
                         </Badge>
                       )}
                       {(() => {

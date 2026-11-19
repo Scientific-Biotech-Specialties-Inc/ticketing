@@ -49,6 +49,9 @@ class EmployeeReassignmentController extends Controller
 
         if ($request->input('action') === 'approve') {
             $rules['new_employee_id'] = ['nullable', 'integer', 'exists:employees,emp_id'];
+            // CS may hand the ticket to several employees at once.
+            $rules['new_employee_ids'] = ['nullable', 'array'];
+            $rules['new_employee_ids.*'] = ['integer', 'distinct', 'exists:employees,emp_id'];
         } else {
             $rules['reason'] = ['nullable', 'string'];
         }

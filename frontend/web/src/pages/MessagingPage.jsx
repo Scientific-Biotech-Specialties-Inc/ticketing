@@ -196,6 +196,7 @@ export default function MessagingPage() {
   const [aiLoading, setAiLoading] = useState(false);
 
   const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
 
   const currentTicketMessages = useMemo(() => {
     if (!selectedContactId) return [];
@@ -497,7 +498,7 @@ export default function MessagingPage() {
           if (prev.some(m => (m.id && (m.id === msgId || m.id === e.id || m.id === e._id)) || (m._id && (m._id === msgId || m._id === e.id || m._id === e._id)))) {
             return prev;
           }
-          return [...prev, {
+          const incoming = {
             id: msgId,
             _id: msgId,
             ticket_id: e.ticket_id,
@@ -508,7 +509,22 @@ export default function MessagingPage() {
             message: e.message || '',
             attachments: e.attachments || [],
             created_at: e.created_at,
-          }];
+          };
+          // The broadcast of our own message usually lands before the send request
+          // resolves. Swap it into the optimistic "Sending..." bubble's slot instead of
+          // appending a second copy, so the list never grows and then shrinks (the jump).
+          const optimisticIdx = prev.findIndex(m =>
+            m.isPending &&
+            m.sender_type === e.sender_type &&
+            Number(m.sender_id) === Number(e.sender_id) &&
+            (m.message || '') === (e.message || '')
+          );
+          if (optimisticIdx !== -1) {
+            const next = [...prev];
+            next[optimisticIdx] = incoming;
+            return next;
+          }
+          return [...prev, incoming];
         });
       }
     });
@@ -711,9 +727,21 @@ export default function MessagingPage() {
     };
   }, []);
 
-  // 6. Scroll to bottom of message logs
+  // 6. Scroll to bottom of message logs.
+  // Scroll only the message pane: scrollIntoView also scrolls every ancestor (the page
+  // itself), which made the whole layout jump each time a message was sent.
+  const lastScrolledContactRef = useRef(null);
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView?.({ behavior: 'smooth' });
+    const pane = messagesContainerRef.current;
+    if (!pane) return;
+    const contactChanged = lastScrolledContactRef.current !== selectedContactId;
+    lastScrolledContactRef.current = selectedContactId;
+    const top = pane.scrollHeight;
+    if (typeof pane.scrollTo === 'function') {
+      pane.scrollTo({ top, behavior: contactChanged ? 'auto' : 'smooth' });
+    } else {
+      pane.scrollTop = top;
+    }
   }, [messages.length, selectedContactId]);
 
   const handleSelectContact = useCallback((contactId) => {
@@ -1223,7 +1251,7 @@ export default function MessagingPage() {
               )}
 
               {/* Messages */}
-              <div className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 space-y-3 bg-page">
+              <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-3 sm:px-6 py-4 space-y-3 bg-page">
                 {messagesLoading ? (
                   <div className="text-center py-8 text-slate-muted">Loading chat history...</div>
                 ) : currentTicketMessages.length === 0 ? (

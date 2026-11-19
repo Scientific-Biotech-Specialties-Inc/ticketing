@@ -35,6 +35,7 @@ import {
   ArrowUpRight,
   MessageCircle,
   Search,
+  PlayCircle,
 } from 'lucide-react';
 import { formatDisplayDate } from '@/utils/dateUtils';
 import { formatProperSentenceCase } from '@/utils/titleCaseUtils';
@@ -52,8 +53,8 @@ import {
   getEligibleEmployees,
   getAssignableEmployees,
   updateTicket,
-  acceptTicket,
   respondReassignment,
+  recordProofView,
 } from '@/services/ticketService';
 import { getTicketMessages } from '@/services/messagingService';
 import {
@@ -77,6 +78,7 @@ import {
   getAllAssignees,
 } from './ticket-modal';
 import CustomerTicketDetailModal from './CustomerTicketDetailModal';
+import HoldRequestDecisionCard from './ticket-modal/HoldRequestDecisionCard';
 import InternalNotesSection, { NoteList } from './InternalNotesSection';
 import TicketFeedbackSection from './feedback/TicketFeedbackSection';
 import { hasFeedbackBeenSubmitted } from '@/data/mockFeedbackData';
@@ -84,7 +86,9 @@ import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import useLiveTicket from '@/hooks/useLiveTicket';
 import { priorityColors } from '@/constants/employeeTickets';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { ConfirmationModal } from '@/components/ui/confirmation-modal';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Badge, getStatusBadgeVariant } from '@/components/ui/badge';
 import EscalateTicketModal from './cs/EscalateTicketModal';
 import { getEscalationManagers } from '@/utils/escalationManagers';
 
@@ -761,10 +765,10 @@ export function SendReminderDialog({ isOpen, onClose, onConfirm, ticket, assigne
 /* ─────────────────────────────────────────────
    TICKET SUMMARY VIEW (post-save / already assigned)
 ───────────────────────────────────────────── */
-export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onEdit, onStatusUpdate, readOnly = false }) {
+export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onEdit, onStatusUpdate, readOnly = false, isLoadingDetails = false }) {
   // Follow the backend while the summary is open so assignee/status changes made elsewhere
   // (another CS agent, the employee accepting) show up without closing and reopening it.
-  const { ticket } = useLiveTicket(ticketProp);
+  const { ticket, refresh: refreshLiveTicket } = useLiveTicket(ticketProp);
   useLockBodyScroll(!!ticket);
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -772,6 +776,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
   // Reassignment Reject Modal State
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [showResumeConfirm, setShowResumeConfirm] = useState(false);
   const [previewFile, setPreviewFile] = useState(null);
 
   // Active Tab state: 'details' | 'timeline' | 'notes' | 'files'
@@ -786,6 +791,9 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
   const [currentCategory, setCurrentCategory] = useState(ticket?.category || '');
   const [currentPriority, setCurrentPriority] = useState(ticket?.priority || 'Low');
   const [currentStatus, setCurrentStatus] = useState(ticket?.status || 'Pending');
+  // The Transition Matrix only allows Escalated from these states (not On Hold, Pending
+  // Evaluation, Reopened, Resolved, Closed, or an already Escalated ticket).
+  const canEscalateFromStatus = ['Open', 'Pending Assignment', 'Assigned', 'In Progress'].includes(currentStatus);
   const [currentHoldReason, setCurrentHoldReason] = useState(ticket?.hold_reason || '');
 
   // Dynamic SLA Due Date & SLA Status states
@@ -832,8 +840,8 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
   // Proof rejection state
   const [showRejectProofInput, setShowRejectProofInput] = useState(false);
   const [proofRejectionReason, setProofRejectionReason] = useState('');
-  const [proofOpened, setProofOpened] = useState(false);
-  const [proofAccepted, setProofAccepted] = useState(false);
+  // Keys of the proof documents CS has opened; every one must be viewed before resolving.
+  const [viewedProofKeys, setViewedProofKeys] = useState(() => new Set());
 
   const cleanTicketId = useMemo(() => {
     const raw = ticket?.ticket_ID || ticket?.id;
@@ -1344,6 +1352,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
     try {
       const ticketId = cleanTicketId || ticket.ticket_ID || ticket.id;
       await resumeTicket(ticketId);
+      setShowResumeConfirm(false);
       const timestamp = new Date().toISOString();
       const nextStatus = isTicketAssigned ? 'In Progress' : 'Pending Assignment';
       const resumeTimelineEvent = {
@@ -1385,33 +1394,39 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
   };
 
   // Reassignment Decision Handlers
-  const handleApproveAndReassign = async (newEmployeeId) => {
+  const handleApproveAndReassign = async (newEmployeeIdsInput) => {
+    // DecisionCard passes an array (multi-select checklist); accept a single ID too.
+    const newEmployeeIds = (Array.isArray(newEmployeeIdsInput) ? newEmployeeIdsInput : [newEmployeeIdsInput])
+      .map(Number)
+      .filter((id) => Number.isFinite(id) && id > 0);
+    if (newEmployeeIds.length === 0) return;
+
     setIsProcessing(true);
     setActionErrorNotice('');
     try {
       const tId = cleanTicketId || ticket.ticket_ID || ticket.id;
-      const targetEmp = (employees || []).find(e => String(e.id) === String(newEmployeeId) || String(e.emp_id) === String(newEmployeeId));
-      const targetName = targetEmp?.name || `Technician #${newEmployeeId}`;
+      const nameOf = (id) => {
+        const emp = (employees || []).find(e => String(e.id) === String(id) || String(e.emp_id) === String(id));
+        return emp?.name || `Technician #${id}`;
+      };
+      const targetNames = newEmployeeIds.map(nameOf);
+      const targetName = targetNames.join(', ');
 
-      // 1. Call respondReassignment endpoint
+      // The reassign-respond endpoint removes the requester and assigns every selected
+      // employee in one transaction. A failure (e.g. an ineligible employee) is surfaced
+      // to the CSR instead of being papered over with a second assign call.
       await respondReassignment({
         ticketId: tId,
         action: 'approve',
-        newEmployeeId: Number(newEmployeeId),
-      }).catch((e) => console.warn('respondReassignment API call failed, falling back to local update:', e));
-
-      // 2. Assign to employee
-      await acceptTicket({
-        ticketId: tId,
-        employeeIds: [Number(newEmployeeId)],
-        assignedByEmail: user?.email,
-      }).catch(() => {});
+        newEmployeeId: newEmployeeIds[0],
+        newEmployeeIds,
+      });
 
       const timestamp = new Date().toISOString();
       ticket.reassignmentRequested = false;
       ticket.reassignmentStatus = 'Approved';
-      ticket.assigned_to = Number(newEmployeeId);
-      ticket.assigned = [Number(newEmployeeId)];
+      ticket.assigned_to = newEmployeeIds[0];
+      ticket.assigned = newEmployeeIds;
       ticket.assigned_employee = targetName;
       ticket.status = 'In Progress';
 
@@ -1428,8 +1443,10 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
         ...ticket,
         reassignmentRequested: false,
         reassignmentStatus: 'Approved',
-        assigned_to: Number(newEmployeeId),
-        assigned: [Number(newEmployeeId)],
+        // Already sent to the reassign-respond endpoint above; parents must not resend it.
+        reassignmentHandled: true,
+        assigned_to: newEmployeeIds[0],
+        assigned: newEmployeeIds,
         assigned_employee: targetName,
         status: 'In Progress',
         timeline: [...ticket.timeline],
@@ -1481,6 +1498,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
         reassignmentRequested: false,
         reassignmentStatus: 'Denied',
         reassignmentDenyReason: reason,
+        reassignmentHandled: true,
         status: 'In Progress',
         timeline: [...ticket.timeline],
       };
@@ -1550,12 +1568,48 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
   // Proof documents Handling (External tickets)
   const isExternal = !ticket.is_internal && ticket.ticket_type !== 'Internal' && ticket.type !== 'Internal';
   const hasProof = proofFiles.length > 0;
+  const proofKeyOf = (file, idx) => String(file?.id || getFileName(file) || `proof-${idx}`);
+  const viewedProofCount = proofFiles.filter((f, i) => viewedProofKeys.has(proofKeyOf(f, i))).length;
+  const allProofViewed = hasProof && viewedProofCount === proofFiles.length;
 
-  const openProofPreview = (file) => {
+  const markProofViewed = (key) =>
+    setViewedProofKeys((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+
+  const openProofPreview = async (file) => {
     const fName = getFileName(file);
     const fUrl = getFileUrl(file);
     setPreviewFile({ name: fName, url: fUrl });
-    setProofOpened(true);
+    const idx = proofFiles.indexOf(file);
+    const key = proofKeyOf(file, idx === -1 ? 0 : idx);
+
+    // The server refuses to resolve until it has recorded a view of every proof file,
+    // so report the view and only count it once the server accepts it.
+    const attachmentId = Number(file?.id);
+    if (!Number.isInteger(attachmentId) || attachmentId <= 0 || ticket.status !== 'Pending Evaluation') {
+      markProofViewed(key);
+      return;
+    }
+    try {
+      await recordProofView(cleanTicketId || ticket.ticket_ID || ticket.id, attachmentId);
+      markProofViewed(key);
+    } catch (err) {
+      const status = err?.response?.status;
+      const message = err?.response?.data?.message || '';
+      // A file the server does not count as proof (e.g. from an earlier assignment) is not
+      // required for approval, so viewing it locally is enough.
+      if (status === 422 && /not a proof of completion/i.test(message)) {
+        markProofViewed(key);
+        return;
+      }
+      console.error('Failed to record proof view:', err);
+      setActionErrorNotice(message || 'Could not record that you viewed this proof file. Please open it again.');
+    }
+  };
+
+  // "View and Resolve": open the next proof document not yet viewed.
+  const openNextUnviewedProof = () => {
+    const nextIdx = proofFiles.findIndex((f, i) => !viewedProofKeys.has(proofKeyOf(f, i)));
+    if (nextIdx !== -1) openProofPreview(proofFiles[nextIdx]);
   };
 
   // Timeline events count
@@ -1619,6 +1673,22 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
             primaryAction={
               !readOnly ? (
                 <div className="flex items-center gap-2">
+                  {/* Escalate to a manager is always available on an active ticket. The
+                      reassignment and SLA-breach states below already show their own Escalate. */}
+                  {canEscalateFromStatus && !ticket.reassignmentRequested && !(isBreached && !ticket.updated_by_technician) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEscalateError('');
+                        setShowEscalateModal(true);
+                      }}
+                      title="Escalate this ticket to a manager"
+                      className="h-9 px-4 border border-[#B42318] text-[#B42318] hover:bg-red-50 text-xs font-semibold rounded-lg transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                    >
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                      <span>Escalate</span>
+                    </button>
+                  )}
                   {/* If pending reassignment: No Reassign here since DecisionCard handles it; offer Escalate */}
                   {ticket.reassignmentRequested ? (
                     <button
@@ -1649,7 +1719,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                     /* On Hold -> Resume is primary */
                     <button
                       type="button"
-                      onClick={handleResumeTicket}
+                      onClick={() => setShowResumeConfirm(true)}
                       disabled={isProcessing}
                       className="h-9 px-4 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer shadow-xs"
                     >
@@ -1660,17 +1730,12 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                     /* In Progress -> Resolve ticket is primary */
                     <button
                       type="button"
-                      disabled={isProcessing || (isExternal && hasProof && (!proofOpened || !proofAccepted))}
+                      disabled={isProcessing || (isExternal && hasProof && !allProofViewed)}
+                      title={isExternal && hasProof && !allProofViewed ? 'View every proof of completion document before resolving.' : undefined}
                       onClick={async () => {
-                        if (isExternal && hasProof) {
-                          if (!proofOpened) {
-                            window.alert('Please open and review the proof of completion documents before accepting.');
-                            return;
-                          }
-                          if (!proofAccepted) {
-                            window.alert('Please accept the proof of completion before resolving this ticket.');
-                            return;
-                          }
+                        if (isExternal && hasProof && !allProofViewed) {
+                          window.alert('Please view every proof of completion document before resolving this ticket.');
+                          return;
                         }
                         setIsProcessing(true);
                         try {
@@ -1750,6 +1815,13 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
           dateFiled={ticket.date || ticket.date_created || ticket.created_at}
           description={ticket.description}
           pendingReassignment={Boolean(ticket.reassignmentRequested)}
+          customBadges={
+            ticket.pending_hold_request ? (
+              <Badge variant={getStatusBadgeVariant('Pending On Hold')}>Pending On Hold</Badge>
+            ) : ticket.latest_rejected_hold_request ? (
+              <Badge variant={getStatusBadgeVariant('On Hold Rejected')}>On Hold Rejected</Badge>
+            ) : null
+          }
         />
 
         {/* 2. StatusStepper (Rendered ABOVE alert as requested) */}
@@ -1822,6 +1894,27 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
             variant="warning"
             title="Ticket is Currently On Hold"
             message={`The SLA timer is temporarily paused while awaiting external information.${currentHoldReason ? ` Reason: "${currentHoldReason}"` : ''}`}
+          />
+        )}
+
+        {/* Spec 0048 (AC-9): employee On Hold request awaiting the CS decision */}
+        {ticket.pending_hold_request && (
+          <HoldRequestDecisionCard
+            holdRequest={ticket.pending_hold_request}
+            ticketId={cleanTicketId}
+            readOnly={readOnly}
+            onDecided={(decision, request) => {
+              if (decision === 'approve') {
+                setCurrentStatus('On Hold');
+                setCurrentHoldReason(request?.remarks || '');
+                setCurrentSlaStatus('Paused');
+                setActionSuccessNotice('On Hold request approved. The ticket is On Hold and the SLA clock is paused.');
+              } else {
+                setActionSuccessNotice('On Hold request rejected. The employee has been notified.');
+              }
+              setTimeout(() => setActionSuccessNotice(''), 6000);
+              refreshLiveTicket?.();
+            }}
           />
         )}
 
@@ -1911,7 +2004,20 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                   </div>
                 )}
 
-                {proofFiles.length > 0 ? (
+                {/* Full details (with proof files) are still loading: skeleton, not "no files" */}
+                {isLoadingDetails && proofFiles.length === 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" aria-busy="true" aria-label="Loading proof of completion files">
+                    {[0, 1].map((i) => (
+                      <div key={i} className="flex items-center gap-3 rounded-lg border border-blue-200 bg-white p-3">
+                        <Skeleton className="h-10 w-10 shrink-0 rounded-lg" />
+                        <div className="flex-1 space-y-2">
+                          <Skeleton className="h-3 w-3/4" />
+                          <Skeleton className="h-3 w-1/3" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : proofFiles.length > 0 ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {proofFiles.map((file, idx) => (
                       <AttachmentCard
@@ -1966,11 +2072,17 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                   </div>
                 ) : (
                   <div className="flex gap-2 pt-1">
-                    <button type="button" onClick={() => setShowRejectProofInput(true)} className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold">Reject Proof</button>
+                    <button type="button" disabled={isLoadingDetails} onClick={() => setShowRejectProofInput(true)} className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold disabled:opacity-50 disabled:cursor-not-allowed">Reject Proof</button>
                     <button
                       type="button"
-                      disabled={isProcessing}
+                      disabled={isProcessing || isLoadingDetails || !hasProof}
+                      title={isLoadingDetails ? 'Loading proof of completion files...' : !hasProof ? 'No proof of completion was uploaded, so the ticket cannot be resolved here.' : undefined}
                       onClick={async () => {
+                        // CS must see every proof document before the ticket can be resolved.
+                        if (!allProofViewed) {
+                          openNextUnviewedProof();
+                          return;
+                        }
                         setIsProcessing(true);
                         try {
                           const timestamp = new Date().toISOString();
@@ -1983,14 +2095,23 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                           onClose();
                         } catch (err) {
                           console.error(err);
+                          setActionErrorNotice(err?.response?.data?.message || 'Failed to resolve the ticket. Please try again.');
                         } finally {
                           setIsProcessing(false);
                         }
                       }}
-                      className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-semibold"
+                      className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Approve &amp; Resolve
+                      {isProcessing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : allProofViewed ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      {allProofViewed ? 'Resolve Ticket' : 'View and Resolve'}
                     </button>
+                    {hasProof && (
+                      <span className={`self-center text-[11px] font-semibold ${allProofViewed ? 'text-emerald-700' : 'text-blue-900/70'}`}>
+                        {allProofViewed
+                          ? 'All proof documents viewed'
+                          : `${viewedProofCount} of ${proofFiles.length} proof document${proofFiles.length > 1 ? 's' : ''} viewed`}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
@@ -2189,6 +2310,20 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
         )}
       </TicketDetailModalShell>
 
+      {/* Confirmation before resuming an On Hold ticket */}
+      <ConfirmationModal
+        isOpen={showResumeConfirm}
+        onClose={() => !isProcessing && setShowResumeConfirm(false)}
+        loading={isProcessing}
+        variant="primary"
+        icon={<PlayCircle className="h-6 w-6" />}
+        title="Resume Ticket?"
+        description={`Resume ${ticket?.id || 'this ticket'} from On Hold? It goes back to ${isTicketAssigned ? 'In Progress' : 'Pending Assignment'} and the SLA clock starts running again.`}
+        confirmLabel="Yes, Resume Ticket"
+        cancelLabel="Cancel"
+        onConfirm={handleResumeTicket}
+      />
+
       {/* Reject Reassignment Dialog with Mandatory Reason Textarea */}
       <RejectReasonModal
         isOpen={showRejectModal}
@@ -2275,7 +2410,13 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
 /* ─────────────────────────────────────────────
    ASSIGN MODAL
 ───────────────────────────────────────────── */
-export function AssignModal({ ticket, employees, departments, priorityOptions, onClose, onSave, onCloseTicket }) {
+export function AssignModal({ ticket, employees, departments, priorityOptions, onClose, onSave, onCloseTicket, excludeEmployeeIds = [] }) {
+  // Employees who must not be offered (e.g. a manager reassigning never sees themself).
+  const excludedIds = useMemo(
+    () => new Set((excludeEmployeeIds || []).map((id) => String(id))),
+    [excludeEmployeeIds]
+  );
+  const notExcluded = (e) => !excludedIds.has(String(e?.id ?? e?.emp_id));
   const navigate = useNavigate();
   // Close without assigning is offered only when the superadmin Transition Matrix
   // allows the ticket's current state to move to Closed (backend sends allowed_transitions).
@@ -2346,22 +2487,23 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
 
   const eligibleEmployeesList = useMemo(() => {
     if (eligibilityData?.eligible_employees && Array.isArray(eligibilityData.eligible_employees)) {
+      const offered = eligibilityData.eligible_employees.filter(notExcluded);
       if (department && department.trim() !== '') {
-        return eligibilityData.eligible_employees.filter(
+        return offered.filter(
           (e) => (e.department || '').toLowerCase() === department.trim().toLowerCase()
         );
       }
-      return eligibilityData.eligible_employees;
+      return offered;
     }
     return [];
-  }, [eligibilityData, department]);
+  }, [eligibilityData, department, excludedIds]);
 
   const ineligibleEmployeesList = useMemo(() => {
     if (eligibilityData?.ineligible_employees && Array.isArray(eligibilityData.ineligible_employees)) {
-      return eligibilityData.ineligible_employees;
+      return eligibilityData.ineligible_employees.filter(notExcluded);
     }
     return [];
-  }, [eligibilityData]);
+  }, [eligibilityData, excludedIds]);
 
   const departmentManagers = useMemo(() => {
     return eligibilityData?.department_managers || null;

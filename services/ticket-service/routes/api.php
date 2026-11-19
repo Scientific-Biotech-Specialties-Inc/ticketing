@@ -53,6 +53,13 @@ Route::middleware(['internal.token', 'auth.subsystem'])
 Route::middleware('internal.token')
     ->get('/internal/customers/{clientId}/assets', [\App\Http\Controllers\InternalCustomerAssetController::class, 'index'])
     ->whereNumber('clientId');
+// Spec 0048: employee-service asks whether a hold request is pending before a status change.
+Route::middleware('internal.token')
+    ->get('/internal/tickets/{ticketId}/hold-requests/pending', [\App\Http\Controllers\HoldRequestController::class, 'pending'])
+    ->whereNumber('ticketId');
+// Spec 0048: hold request display state for employee-service ticket lists.
+Route::middleware('internal.token')
+    ->get('/internal/hold-requests/states', [\App\Http\Controllers\HoldRequestController::class, 'states']);
 
 Route::middleware('auth.subsystem')->group(function () {
     // ─── Customer Ticket Drafts (spec 0034: verified customer token only) ────
@@ -75,6 +82,7 @@ Route::middleware('auth.subsystem')->group(function () {
     Route::get('/admin/dashboard', [TicketDashboardController::class, 'adminDashboard'])->middleware('no-cache');
     // Spec 0031: live summary and breached queue for Service, IT and Customer Service managers.
     Route::get('/manager/dashboard', [\App\Http\Controllers\ManagerDashboardController::class, 'dashboard'])->middleware('no-cache');
+    Route::get('/manager/tickets', [\App\Http\Controllers\ManagerDashboardController::class, 'tickets'])->middleware('no-cache');
     Route::get('/admin-reports', [TicketDashboardController::class, 'adminReports'])->middleware('no-cache');
     Route::get('/admin/reports', [TicketDashboardController::class, 'adminReports'])->middleware('no-cache');
     Route::post('/admin/reports/export', [\App\Http\Controllers\ReportExportController::class, 'export'])->middleware(['no-cache', 'throttle:30,1']);
@@ -107,6 +115,11 @@ Route::middleware('auth.subsystem')->group(function () {
     Route::match(['put', 'patch'], '/tickets/{ticketId}', [TicketController::class, 'updateTicket']);
     Route::delete('/tickets/{ticketId}', [TicketController::class, 'destroy']);
     Route::post('/tickets/{ticketId}/hold', [TicketController::class, 'holdTicket']);
+    // Spec 0048: employee On Hold requests, decided by Customer Service.
+    Route::post('/tickets/{ticketId}/hold-requests', [\App\Http\Controllers\HoldRequestController::class, 'store'])->whereNumber('ticketId');
+    Route::post('/hold-requests/{id}/cancel', [\App\Http\Controllers\HoldRequestController::class, 'cancel'])->whereNumber('id');
+    Route::post('/hold-requests/{id}/approve', [\App\Http\Controllers\HoldRequestController::class, 'approve'])->whereNumber('id');
+    Route::post('/hold-requests/{id}/reject', [\App\Http\Controllers\HoldRequestController::class, 'reject'])->whereNumber('id');
     Route::post('/tickets/{ticketId}/resume', [TicketController::class, 'resumeTicket']);
     Route::post('/tickets/{ticketId}/resolve', [TicketController::class, 'resolveTicket']);
     Route::post('/tickets/{ticketId}/close', [TicketController::class, 'closeTicket']);

@@ -691,6 +691,23 @@ class TicketStateMachine
                 'is_internal' => ($resolvedTargetState === self::STATE_ON_HOLD) ? 1 : 0,
                 'created_at' => now(),
             ]);
+
+            // 6. Spec 0048: close hold requests in this same transaction.
+            //    Entering On Hold approves the pending request (AC-10 via request, AC-13 via a
+            //    direct hold); approving a request that is no longer pending throws and rolls
+            //    everything back (AC-17). Any other transition cancels it (AC-16).
+            $holdRequests = app(HoldRequestRecorder::class);
+            if ($resolvedTargetState === self::STATE_ON_HOLD) {
+                $holdRequests->closeForHold(
+                    (int) $ticketId,
+                    !empty($context['hold_request_id']) ? (int) $context['hold_request_id'] : null,
+                    (int) $actorId,
+                    (string) $actorType,
+                    $context['hold_request_note'] ?? null
+                );
+            } else {
+                $holdRequests->cancelForTransition((int) $ticketId, $updateFields['ticket_status_ID'] ?? null);
+            }
         });
 
         // Cache invalidation (with the ticket id, so the customer's counts key is deleted directly)

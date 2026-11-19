@@ -37,6 +37,7 @@ import { Badge, getStatusBadgeVariant } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@/components/ui/table';
 import { DataTableSkeleton } from '@/components/ui/data-table';
+import { holdRequestDisplayStatus } from '@/utils/holdRequestStatus';
 
 export default function CSDashboard() {
   const { refreshKey = 0 } = useOutletContext() || {};
@@ -642,7 +643,7 @@ export default function CSDashboard() {
                           {t.customer || 'Customer'}
                         </TableCell>
                         <TableCell>
-                          <Badge variant={getStatusBadgeVariant(t.status)}>{t.status}</Badge>
+                          <Badge variant={getStatusBadgeVariant(holdRequestDisplayStatus(t))}>{holdRequestDisplayStatus(t)}</Badge>
                         </TableCell>
                         <TableCell>
                           <Badge variant={t.priority === 'Critical' ? 'destructive' : t.priority === 'High' ? 'warning' : 'secondary'}>
