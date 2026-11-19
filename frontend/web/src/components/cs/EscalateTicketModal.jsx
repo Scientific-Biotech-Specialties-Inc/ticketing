@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import { getEligibleEmployees } from '@/services/ticketService';
-import { getEscalationManagers } from '@/utils/escalationManagers';
+import { getAssigneeDepartments, getEscalationManagers } from '@/utils/escalationManagers';
 
 /**
  * Categorize ticket into Service, IT, or Others
@@ -77,7 +77,8 @@ export default function EscalateTicketModal({
   const [escalationReason, setEscalationReason] = useState('');
   const [validationError, setValidationError] = useState('');
   const [departmentManagers, setDepartmentManagers] = useState(null);
-  const [loadingManagers, setLoadingManagers] = useState(false);
+  // Starts loading so no placeholder manager flashes before the real one arrives.
+  const [loadingManagers, setLoadingManagers] = useState(true);
 
   const categoryName = ticket?.category || ticket?.category_name || '';
   const categoryType = useMemo(
@@ -98,6 +99,8 @@ export default function EscalateTicketModal({
   useEffect(() => {
     if (!isOpen || !ticketKey) return undefined;
     let cancelled = false;
+    // Drop managers from a previously opened ticket so they never show for this one.
+    setDepartmentManagers(null);
     setLoadingManagers(true);
     getEligibleEmployees(ticket)
       .then((data) => { if (!cancelled) setDepartmentManagers(data?.department_managers || null); })
@@ -107,9 +110,12 @@ export default function EscalateTicketModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, ticketKey]);
 
+  // While the configured managers load, no directory guess is used: rows show a skeleton instead.
   const escalationTargets = useMemo(
-    () => getEscalationManagers(assignees, departmentManagers, employees),
-    [assignees, departmentManagers, employees]
+    () => (loadingManagers
+      ? getAssigneeDepartments(assignees, employees).map((department) => ({ department, manager: null }))
+      : getEscalationManagers(assignees, departmentManagers, employees)),
+    [assignees, departmentManagers, employees, loadingManagers]
   );
 
   useEffect(() => {
@@ -218,11 +224,15 @@ export default function EscalateTicketModal({
                       className="p-3 rounded-xl border border-slate-200 bg-white flex items-center justify-between gap-3"
                     >
                       <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shrink-0 bg-[#252578] text-white">
-                          {manager ? String(manager.name || 'M').charAt(0).toUpperCase() : <Building2 className="w-4 h-4" />}
-                        </div>
+                        {loadingManagers ? (
+                          <Skeleton className="w-9 h-9 rounded-full shrink-0" />
+                        ) : (
+                          <div className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shrink-0 bg-[#252578] text-white">
+                            {manager ? String(manager.name || 'M').charAt(0).toUpperCase() : <Building2 className="w-4 h-4" />}
+                          </div>
+                        )}
                         <div className="min-w-0">
-                          {loadingManagers && !manager ? (
+                          {loadingManagers ? (
                             <>
                               <Skeleton className="h-3 w-32 mb-2" />
                               <Skeleton className="h-3 w-24" />
@@ -297,7 +307,7 @@ export default function EscalateTicketModal({
             </Button>
             <Button
               type="submit"
-              disabled={isEscalating || !hasAssignees}
+              disabled={isEscalating || !hasAssignees || loadingManagers}
               className="bg-[#252578] hover:bg-[#1e1e60] text-white px-5 flex items-center gap-1.5"
             >
               {isEscalating ? (

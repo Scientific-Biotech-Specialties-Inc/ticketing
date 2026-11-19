@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Search, Loader2, Filter, RotateCcw, X, AlertTriangle, Clock, CheckCircle2, PauseCircle, HelpCircle, ArrowUpDown, Bell } from 'lucide-react';
+import { Search, Loader2, Filter, RotateCcw, X, AlertTriangle, Clock, CheckCircle2, PauseCircle, HelpCircle, ArrowUpDown, Bell, UserCog } from 'lucide-react';
 import Pagination from '@/components/Pagination';
 import { useAuth } from '@/context/AuthContext';
 import useRealtimeRefresh from '@/hooks/useRealtimeRefresh';
@@ -141,7 +141,7 @@ export default function CSAssigned() {
   });
   const [showFilters, setShowFilters] = useState(false);
   const [typeFilter, setTypeFilter] = useState('all');
-  const [assignedTab, setAssignedTab] = useState('all'); // 'all' | 'in_progress' | 'pending_evaluation' | 'on_hold' | 'reassigned' | 'resolved_closed'
+  const [assignedTab, setAssignedTab] = useState('all'); // 'all' | 'in_progress' | 'pending_evaluation' | 'on_hold' | 'reassigned' | 'manager_reassigned' | 'resolved_closed'
 
   // Spec 0037: the server applies the tab, filters, SLA filter, sort, and pagination,
   // and counts the tab badges and SLA cards, so the cards match the rows on every page.
@@ -390,6 +390,7 @@ export default function CSAssigned() {
     inProgress: tabCounts?.inProgress ?? 0,
     pendingEval: tabCounts?.pendingEval ?? 0,
     reassigned: tabCounts?.reassigned ?? 0,
+    managerReassigned: tabCounts?.managerReassigned ?? 0,
     onHold: tabCounts?.onHold ?? 0,
     resolvedClosed: tabCounts?.resolvedClosed ?? 0,
   };
@@ -519,6 +520,32 @@ export default function CSAssigned() {
         </div>
       )}
 
+      {/* Department manager reassignments CS has not acknowledged yet */}
+      {counts.managerReassigned > 0 && assignedTab !== 'manager_reassigned' && (
+        <div
+          role="status"
+          data-testid="manager-reassigned-banner"
+          className="rounded-xl border border-accent/30 bg-accent/5 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-2 text-sm text-foreground">
+            <UserCog className="w-4 h-4 text-accent shrink-0" aria-hidden="true" />
+            <span>
+              {counts.managerReassigned === 1
+                ? '1 ticket was reassigned by a department manager.'
+                : `${counts.managerReassigned} tickets were reassigned by a department manager.`}
+            </span>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => { setAssignedTab('manager_reassigned'); setPage(1); }}
+          >
+            View
+          </Button>
+        </div>
+      )}
+
       {/* Assigned Tabs placed at top */}
       <div className="flex border-b border-border gap-2 overflow-x-auto shrink-0">
         <button
@@ -583,6 +610,22 @@ export default function CSAssigned() {
             assignedTab === 'reassigned' ? 'bg-warning/15 text-warning' : 'bg-muted text-muted-foreground'
           }`}>
             {counts.reassigned}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => { setAssignedTab('manager_reassigned'); setPage(1); }}
+          className={`pb-3 px-4 text-sm font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
+            assignedTab === 'manager_reassigned'
+              ? 'border-accent text-accent'
+              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+          }`}
+        >
+          <span>Manager Reassigned</span>
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+            assignedTab === 'manager_reassigned' ? 'bg-accent/15 text-accent' : 'bg-muted text-muted-foreground'
+          }`}>
+            {counts.managerReassigned}
           </span>
         </button>
       </div>
@@ -749,6 +792,15 @@ export default function CSAssigned() {
                         {isReassignmentReq && (
                           <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-warning/15 text-warning w-fit">
                             Reassignment Requested
+                          </span>
+                        )}
+                        {t.manager_reassignment && (
+                          <span
+                            className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/30 w-fit flex items-center gap-1"
+                            title={`Reassigned by ${t.manager_reassignment.manager_name || 'a department manager'}${t.manager_reassignment.reassigned_at ? ` on ${formatDisplayDate(t.manager_reassignment.reassigned_at)}` : ''}`}
+                          >
+                            <UserCog className="w-2.5 h-2.5" />
+                            {`Reassigned by ${t.manager_reassignment.department || 'Department'} Manager`}
                           </span>
                         )}
                         {(t.last_reminder_sent_at || t.lastReminderSentAt) && (

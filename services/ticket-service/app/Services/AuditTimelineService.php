@@ -331,6 +331,16 @@ class AuditTimelineService
                 return 'SLA breached' . (!empty($details['overdue_duration']) ? ' (' . $details['overdue_duration'] . ')' : '');
             case 'sla_breached_reassigned':
                 return 'SLA breached and ticket reassigned';
+            case 'manager_reassigned':
+                $names = fn ($list) => implode(', ', array_filter(array_map(fn ($p) => $p['name'] ?? null, (array) $list)));
+                $who = trim(($details['department'] ?? '') . ' Manager ' . ($details['manager_name'] ?? ''));
+                $added = $names($details['added'] ?? []);
+                $removed = $names($details['removed'] ?? []);
+                return "{$who} reassigned the ticket"
+                    . ($added !== '' ? ". Added: {$added}" : '')
+                    . ($removed !== '' ? ". Removed: {$removed}" : '');
+            case 'manager_reassignment_acknowledged':
+                return 'Manager reassignment acknowledged by Customer Service';
             case 'accept':
                 return 'Ticket accepted';
             case 'reassign_request':

@@ -54,6 +54,8 @@ export default function ServiceManagerTickets() {
   const [loadError, setLoadError] = useState('');
   // The signed-in manager: never offered as an assignee to themself.
   const [managerId, setManagerId] = useState(() => Number(user?.emp_id ?? 0) || null);
+  // The manager's own department (from the server scope): the only staff they may assign or remove.
+  const [managerDepartment, setManagerDepartment] = useState('Service');
 
   // Tickets in this manager's scope (assignee department + branch), decided by the server.
   const loadTickets = useCallback(async ({ silent = false } = {}) => {
@@ -64,6 +66,7 @@ export default function ServiceManagerTickets() {
       const data = await getManagerTickets();
       setTickets(Array.isArray(data?.tickets) ? data.tickets : []);
       if (data?.manager_id) setManagerId(Number(data.manager_id));
+      if (data?.scope?.department) setManagerDepartment(data.scope.department);
     } catch (err) {
       console.error('Failed to load manager tickets:', err);
       setTickets([]);
@@ -197,11 +200,24 @@ export default function ServiceManagerTickets() {
 
   const PRIORITY_IDS = { Low: 1, Medium: 2, High: 3, Critical: 4 };
 
+  const inManagerDept = (a) =>
+    String(a?.department || '').trim().toLowerCase() === String(managerDepartment).trim().toLowerCase();
+
+  // Other departments' assignees are not the manager's to change, so they stay on the ticket.
+  const otherDeptAssigneeIds = (t) =>
+    (Array.isArray(t?.assignees) ? t.assignees : []).filter((a) => !inManagerDept(a)).map((a) => Number(a.id));
+
+  const openAssignModal = (t) => {
+    const ownIds = (Array.isArray(t.assignees) ? t.assignees : []).filter(inManagerDept).map((a) => Number(a.id));
+    setAssignModalTicket({ ...t, department: managerDepartment, assigned: ownIds });
+  };
+
   // AssignModal calls onSave(updatedTicket) and closes itself when this resolves truthy.
   const handleAssignSave = async (updated) => {
     const ticketId = Number(updated?.ticket_ID || String(updated?.id || '').replace(/\D/g, ''));
-    const employeeIds = (updated?.assigned || []).map(Number).filter(Boolean);
-    if (!ticketId || employeeIds.length === 0) return false;
+    const selectedIds = (updated?.assigned || []).map(Number).filter(Boolean);
+    if (!ticketId || selectedIds.length === 0) return false;
+    const employeeIds = Array.from(new Set([...selectedIds, ...otherDeptAssigneeIds(assignModalTicket)]));
 
     await assignTicketToEmployees({
       ticketId,
@@ -428,7 +444,7 @@ export default function ServiceManagerTickets() {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (!t.canReassign) return;
-                            setAssignModalTicket(t);
+                            openAssignModal(t);
                           }}
                           className="text-xs h-7 px-2.5 bg-[#252578] hover:bg-[#1d1d60] text-white font-medium gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                         >
@@ -470,6 +486,7 @@ export default function ServiceManagerTickets() {
           onClose={() => setAssignModalTicket(null)}
           onSave={handleAssignSave}
           excludeEmployeeIds={managerId ? [managerId] : []}
+          lockedDepartment={managerDepartment}
         />
       )}
 

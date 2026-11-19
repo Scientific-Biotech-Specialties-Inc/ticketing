@@ -182,6 +182,9 @@ class ManagerDashboardService
             ->join('ticket_statuses as ts', 'ts.ticket_status_ID', '=', 't.ticket_status_ID')
             ->leftJoin('ticket_priorities as tp', 'tp.priority_ID', '=', 't.priority_ID')
             ->leftJoin('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
+            // Requester: the client, or the employee who raised an internal ticket.
+            ->leftJoin('clients as c', 'c.id', '=', 't.created_by')
+            ->leftJoin('employees as req', 'req.emp_id', '=', 't.requested_by')
             ->whereNotIn(DB::raw('LOWER(TRIM(ts.status_name))'), self::NOT_OPEN_STATUSES);
 
         $this->dashboardService->applyBranchTicketFilter($query, $branch);
@@ -221,27 +224,41 @@ class ManagerDashboardService
             't.closed_at',
             't.sla_status',
             't.escalation_reason',
+            't.created_by',
+            't.requested_by',
+            't.is_internal',
+            'c.client_name',
+            'c.email as client_email',
+            DB::raw("TRIM(CONCAT(COALESCE(req.first_name, ''), ' ', COALESCE(req.last_name, ''))) as requester_employee_name"),
+            'req.email as requester_employee_email',
             't.created_at',
             't.updated_at'
         )->orderByDesc('t.updated_at')->get();
 
         $ticketIds = $rows->pluck('ticket_ID')->map(fn ($id) => (int) $id)->all();
         $assigneesByTicket = [];
+        $onlineSince = $now->copy()->subSeconds(max(1, (int) config('presence.online_window_seconds', 90)));
         if (!empty($ticketIds)) {
             DB::table('ticket_assignments as ta')
                 ->join('employees as e', 'e.emp_id', '=', 'ta.employee_ID')
                 ->whereIn('ta.ticket_ID', $ticketIds)
                 ->whereNull('ta.completed_at')
-                ->select('ta.ticket_ID', 'e.emp_id', 'e.first_name', 'e.last_name', 'e.department', 'ta.assignment_status')
+                ->select('ta.ticket_ID', 'e.emp_id', 'e.first_name', 'e.last_name', 'e.department', 'e.is_active', 'e.last_seen_at', 'ta.assignment_status')
                 ->orderBy('ta.assigned_at')
                 ->get()
-                ->each(function ($a) use (&$assigneesByTicket) {
+                ->each(function ($a) use (&$assigneesByTicket, $onlineSince) {
                     $name = trim("{$a->first_name} {$a->last_name}");
+                    // Presence comes from heartbeat freshness (spec 0035); no heartbeat means offline.
+                    $isOnline = (bool) $a->is_active
+                        && !empty($a->last_seen_at)
+                        && Carbon::parse($a->last_seen_at)->greaterThanOrEqualTo($onlineSince);
                     $assigneesByTicket[(int) $a->ticket_ID][] = [
                         'id' => (int) $a->emp_id,
                         'name' => $name !== '' ? $name : 'Engineer #' . $a->emp_id,
                         'department' => $a->department,
                         'assignment_status' => $a->assignment_status,
+                        'presence' => !$a->is_active ? 'inactive' : ($isOnline ? 'online' : 'offline'),
+                        'is_online' => $isOnline,
                     ];
                 });
         }
@@ -249,6 +266,15 @@ class ManagerDashboardService
         $tickets = $rows->map(function ($t) use ($now, $assigneesByTicket) {
             $isEscalated = strcasecmp(trim((string) $t->status_name), 'Escalated') === 0;
             $isBreached = $this->slaOutcomes->isOpenBreach($t, $now);
+
+            // Same requester rule as the ticket details payload (TicketService).
+            $isInternal = (bool) $t->is_internal;
+            $requesterName = $isInternal
+                ? (($t->requester_employee_name ?? '') !== ''
+                    ? $t->requester_employee_name
+                    : ($t->requested_by ? 'Employee #' . $t->requested_by : 'Internal Requester'))
+                : ($t->client_name ?: 'Unknown Customer');
+            $requesterEmail = $isInternal ? ($t->requester_employee_email ?: null) : ($t->client_email ?: null);
 
             return [
                 'ticket_ID' => (int) $t->ticket_ID,
@@ -260,6 +286,12 @@ class ManagerDashboardService
                 'priority' => $t->priority_name,
                 'priority_ID' => $t->priority_ID ? (int) $t->priority_ID : null,
                 'category' => $t->category_name,
+                'customer' => $requesterName,
+                'customer_name' => $requesterName,
+                'customer_email' => $requesterEmail,
+                'created_by' => $t->created_by ? (int) $t->created_by : null,
+                'requested_by' => $t->requested_by ? (int) $t->requested_by : null,
+                'is_internal' => $isInternal,
                 'assigned_to' => $t->assigned_to ? (int) $t->assigned_to : null,
                 'assignees' => $assigneesByTicket[(int) $t->ticket_ID] ?? [],
                 'resolution_due_at' => $t->resolution_due_at ? Carbon::parse($t->resolution_due_at)->toIso8601String() : null,

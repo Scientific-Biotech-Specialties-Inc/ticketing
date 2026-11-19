@@ -760,6 +760,8 @@ class TicketDashboardService
 
             // Spec 0048: status column shows Pending On Hold / On Hold Rejected.
             $incomingTickets = app(HoldRequestService::class)->annotateRows($incomingTickets);
+            // Department manager reassignments CS has not acknowledged yet.
+            $incomingTickets = app(ManagerReassignmentNotice::class)->annotateRows($incomingTickets);
 
             return [
                 'incoming_tickets' => $incomingTickets,
@@ -872,6 +874,7 @@ class TicketDashboardService
             'pending_evaluation' => $query->where('ts.status_name', 'Pending Evaluation'),
             'on_hold' => $query->where('ts.status_name', 'On Hold'),
             'reassigned' => $query->whereRaw($this->pendingReassignSql()),
+            'manager_reassigned' => $query->whereRaw(ManagerReassignmentNotice::pendingSql('t')),
             'resolved_closed' => $query->whereIn('ts.status_name', ['Resolved', 'Closed']),
             default => null,
         };
@@ -898,6 +901,7 @@ class TicketDashboardService
             ->selectRaw($count("ts.status_name = 'In Progress'") . ' as in_progress')
             ->selectRaw($count("ts.status_name = 'Pending Evaluation'") . ' as pending_eval')
             ->selectRaw($count($this->pendingReassignSql()) . ' as reassigned')
+            ->selectRaw($count(ManagerReassignmentNotice::pendingSql('t')) . ' as manager_reassigned')
             ->selectRaw($count("ts.status_name = 'On Hold'") . ' as on_hold')
             ->selectRaw($count("ts.status_name IN ('Resolved', 'Closed')") . ' as resolved_closed')
             ->first();
@@ -909,6 +913,7 @@ class TicketDashboardService
             'inProgress' => (int) ($row->in_progress ?? 0),
             'pendingEval' => (int) ($row->pending_eval ?? 0),
             'reassigned' => (int) ($row->reassigned ?? 0),
+            'managerReassigned' => (int) ($row->manager_reassigned ?? 0),
             'onHold' => (int) ($row->on_hold ?? 0),
             'resolvedClosed' => (int) ($row->resolved_closed ?? 0),
         ];

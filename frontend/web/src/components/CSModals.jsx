@@ -1,7 +1,7 @@
 import { safeUrl } from '@/utils/safeUrl';
 import { attachmentUrl } from '@/utils/attachmentFiles';
 import React, { useState, useMemo, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
   HelpCircle,
   X,
@@ -79,6 +79,7 @@ import {
 } from './ticket-modal';
 import CustomerTicketDetailModal from './CustomerTicketDetailModal';
 import HoldRequestDecisionCard from './ticket-modal/HoldRequestDecisionCard';
+import ManagerReassignmentCard from './ticket-modal/ManagerReassignmentCard';
 import InternalNotesSection, { NoteList } from './InternalNotesSection';
 import TicketFeedbackSection from './feedback/TicketFeedbackSection';
 import { hasFeedbackBeenSubmitted } from '@/data/mockFeedbackData';
@@ -1918,6 +1919,20 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
           />
         )}
 
+        {/* Department manager reassignment CS has not acknowledged yet */}
+        {ticket.manager_reassignment && (
+          <ManagerReassignmentCard
+            reassignment={ticket.manager_reassignment}
+            ticketId={cleanTicketId}
+            readOnly={readOnly}
+            onAcknowledged={() => {
+              setActionSuccessNotice('Manager reassignment acknowledged.');
+              setTimeout(() => setActionSuccessNotice(''), 6000);
+              refreshLiveTicket?.();
+            }}
+          />
+        )}
+
         {/* Employee Reminder Dispatched Banner (for test compatibility) */}
         {currentLastReminder && (
           <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3 text-xs text-indigo-900 flex items-start gap-2 shadow-xs">
@@ -2410,7 +2425,9 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
 /* ─────────────────────────────────────────────
    ASSIGN MODAL
 ───────────────────────────────────────────── */
-export function AssignModal({ ticket, employees, departments, priorityOptions, onClose, onSave, onCloseTicket, excludeEmployeeIds = [] }) {
+export function AssignModal({ ticket, employees, departments, priorityOptions, onClose, onSave, onCloseTicket, excludeEmployeeIds = [], lockedDepartment = '' }) {
+  // A department manager (Service or IT) only sees and picks staff from their own department.
+  const lockedDept = String(lockedDepartment || '').trim();
   // Employees who must not be offered (e.g. a manager reassigning never sees themself).
   const excludedIds = useMemo(
     () => new Set((excludeEmployeeIds || []).map((id) => String(id))),
@@ -2418,6 +2435,8 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
   );
   const notExcluded = (e) => !excludedIds.has(String(e?.id ?? e?.emp_id));
   const navigate = useNavigate();
+  // Router pathname (without the /ticketing/ base) picks the right role's messages page.
+  const { pathname: routePath } = useLocation();
   // Close without assigning is offered only when the superadmin Transition Matrix
   // allows the ticket's current state to move to Closed (backend sends allowed_transitions).
   const canCloseWithoutAssigning = typeof onCloseTicket === 'function'
@@ -2431,7 +2450,7 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
   const [priority, setPriority] = useState(ticket?.priority || 'Low');
   // Only IT and Service are assignable; any other stored department starts as "all eligible".
   const [department, setDepartment] = useState(
-    ['it', 'service'].includes(String(ticket?.department || '').trim().toLowerCase()) ? ticket.department : ''
+    lockedDept || (['it', 'service'].includes(String(ticket?.department || '').trim().toLowerCase()) ? ticket.department : '')
   );
   const [deptAutoNotice, setDeptAutoNotice] = useState('');
   const [selectedEmployees, setSelectedEmployees] = useState(ticket?.assigned || []);
@@ -2488,6 +2507,9 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
   const eligibleEmployeesList = useMemo(() => {
     if (eligibilityData?.eligible_employees && Array.isArray(eligibilityData.eligible_employees)) {
       const offered = eligibilityData.eligible_employees.filter(notExcluded);
+      if (lockedDept) {
+        return offered.filter((e) => (e.department || '').trim().toLowerCase() === lockedDept.toLowerCase());
+      }
       if (department && department.trim() !== '') {
         return offered.filter(
           (e) => (e.department || '').toLowerCase() === department.trim().toLowerCase()
@@ -2496,14 +2518,16 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
       return offered;
     }
     return [];
-  }, [eligibilityData, department, excludedIds]);
+  }, [eligibilityData, department, excludedIds, lockedDept]);
 
   const ineligibleEmployeesList = useMemo(() => {
     if (eligibilityData?.ineligible_employees && Array.isArray(eligibilityData.ineligible_employees)) {
-      return eligibilityData.ineligible_employees.filter(notExcluded);
+      return eligibilityData.ineligible_employees
+        .filter(notExcluded)
+        .filter((e) => !lockedDept || (e.department || '').trim().toLowerCase() === lockedDept.toLowerCase());
     }
     return [];
-  }, [eligibilityData, excludedIds]);
+  }, [eligibilityData, excludedIds, lockedDept]);
 
   const departmentManagers = useMemo(() => {
     return eligibilityData?.department_managers || null;
@@ -2521,8 +2545,8 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
 
   // CS assigns tickets to the IT and Service departments only (eligible staff come from those two).
   const filteredDepartments = useMemo(() => {
-    return ['IT', 'Service'];
-  }, []);
+    return lockedDept ? [lockedDept] : ['IT', 'Service'];
+  }, [lockedDept]);
 
   const searchedEligibleEmployees = useMemo(() => {
     if (!employeeSearchQuery.trim()) return eligibleEmployeesList;
@@ -2696,7 +2720,9 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
               const openConversation = () => {
                 const tId = ticket.ticket_ID || ticket.id;
                 onClose();
-                navigate('/cs/messages', { state: { selectedTicketId: tId } });
+                const messagesPath = ['/cs-manager', '/service-manager', '/it-manager']
+                  .find((prefix) => routePath.startsWith(prefix));
+                navigate(messagesPath ? `${messagesPath}/messages` : '/cs/messages', { state: { selectedTicketId: tId } });
               };
               return (
                 <div className="mb-4 flex items-center justify-between gap-4 rounded-xl border border-border bg-page p-4" data-testid="assign-requester">
@@ -2765,17 +2791,23 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
               </label>
               <select
                 value={department}
+                disabled={Boolean(lockedDept)}
                 onChange={(e) => {
                   setDepartment(e.target.value);
                   setDeptAutoNotice('');
                 }}
-                className="w-full px-3 py-2 text-sm bg-card border border-border rounded-xl text-slate-dark focus:ring-2 focus:ring-accent outline-none transition-all shadow-xs"
+                className="w-full px-3 py-2 text-sm bg-card border border-border rounded-xl text-slate-dark focus:ring-2 focus:ring-accent outline-none transition-all shadow-xs disabled:opacity-70 disabled:cursor-not-allowed"
               >
-                <option value="">All eligible departments for this category...</option>
+                {!lockedDept && <option value="">All eligible departments for this category...</option>}
                 {filteredDepartments.map((d) => (
                   <option key={d} value={d}>{d}</option>
                 ))}
               </select>
+              {lockedDept && (
+                <p className="mt-2 text-xs text-slate-muted">
+                  Only {lockedDept} department staff are shown. Assignees from other departments stay on the ticket.
+                </p>
+              )}
               {deptAutoNotice && (
                 <div className="mt-2 text-xs bg-amber-50 text-amber-900 border border-amber-200 rounded-lg p-2.5 flex items-center gap-2">
                   <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />

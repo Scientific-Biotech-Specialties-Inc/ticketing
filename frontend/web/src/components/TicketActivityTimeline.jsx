@@ -60,6 +60,9 @@ function eventLabel(entry) {
   return titleCase(type) || 'Update';
 }
 
+/** Lists (e.g. assignee names) read as "A, B"; anything else as text. */
+const formatStateValue = (value) => (Array.isArray(value) ? value.join(', ') : String(value));
+
 /** Only changes that really have an old and a new value get the before/after strip. */
 function beforeAfterOf(entry) {
   const before = entry.before_state;
@@ -69,8 +72,8 @@ function beforeAfterOf(entry) {
   if (!field || !(field in after)) return null;
   return {
     field: FIELD_LABELS[field] || titleCase(field.replace(/_ID$/i, '')),
-    before: before[field] == null ? '' : String(before[field]),
-    after: after[field] == null ? 'None' : String(after[field]),
+    before: before[field] == null ? '' : formatStateValue(before[field]),
+    after: after[field] == null ? 'None' : formatStateValue(after[field]) || 'None',
   };
 }
 

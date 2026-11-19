@@ -86,11 +86,23 @@ class EmployeeAssignmentController extends Controller
             }
         }
 
-        $assignedBy = DB::table('employees')
-            ->where('email', $validated['assigned_by_email'] ?? '')
-            ->value('emp_id') ?? ($user ? $user->emp_id : 2);
+        // A Service or IT manager may only add or remove staff from their own department.
+        $scope = app(\App\Services\ManagerAssignmentScope::class);
+        $manager = $scope->scopedManager($user);
+        if ($manager) {
+            $violation = $scope->violation($manager, $ticketId, $validated['employee_ids']);
+            if ($violation !== null) {
+                return response()->json(['message' => $violation, 'code' => 'OUTSIDE_MANAGER_DEPARTMENT'], 403);
+            }
+        }
 
-        $result = $this->assignmentService->assignTicket($ticketId, $validated, $assignedBy);
+        $assignedBy = $manager
+            ? (int) $manager->emp_id
+            : (DB::table('employees')
+                ->where('email', $validated['assigned_by_email'] ?? '')
+                ->value('emp_id') ?? ($user ? $user->emp_id : 2));
+
+        $result = $this->assignmentService->assignTicket($ticketId, $validated, $assignedBy, $manager);
         return response()->json($result['data'], $result['status']);
     }
 

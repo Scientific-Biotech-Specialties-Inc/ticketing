@@ -870,6 +870,14 @@ const afterHoldRequestChange = (ticketId) => {
   notifyCsTicketRefresh();
 };
 
+/** CS acknowledges a department manager reassignment; clears the notice for every CS user. */
+export const acknowledgeManagerReassignment = async (ticketId) => {
+  const numericId = Number(String(ticketId).replace(/\D/g, ''));
+  const response = await ticketClient.post(`/tickets/${numericId}/manager-reassignment/acknowledge`);
+  afterHoldRequestChange(numericId);
+  return response.data;
+};
+
 /** Employee asks CS to put an assigned ticket On Hold (remarks 3 to 250 characters). */
 export const requestHoldTicket = async (ticketId, remarks) => {
   const numericId = Number(String(ticketId).replace(/\D/g, ''));

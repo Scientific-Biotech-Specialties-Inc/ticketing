@@ -1283,6 +1283,8 @@ class TicketService
                 'e.email',
                 'e.department',
                 'e.role',
+                'e.is_active',
+                'e.last_seen_at',
                 'ta.assignment_status',
                 'ta.assigned_at',
                 'ta.accepted_at',
@@ -1364,7 +1366,20 @@ class TicketService
                     'assignment_status' => $e->assignment_status,
                     'completed_at' => $e->completed_at,
                 ])->values()->all()
-                : $assignedEmployees->toArray(),
+                : $assignedEmployees->map(function ($e) {
+                    // Spec 0035 presence for staff: online only on a fresh heartbeat, never assumed.
+                    $onlineSince = now()->subSeconds(max(1, (int) config('presence.online_window_seconds', 90)));
+                    $isOnline = (bool) $e->is_active
+                        && !empty($e->last_seen_at)
+                        && Carbon::parse($e->last_seen_at)->greaterThanOrEqualTo($onlineSince);
+                    $row = (array) $e;
+                    unset($row['last_seen_at']);
+                    $row['presence'] = !$e->is_active ? 'inactive' : ($isOnline ? 'online' : 'offline');
+                    $row['is_online'] = $isOnline;
+                    return $row;
+                })->values()->all(),
+            // Unacknowledged department manager reassignment (staff only; customers never see it).
+            'manager_reassignment' => $isCustomer ? null : app(ManagerReassignmentNotice::class)->pendingForTicket((int) $ticketId),
             'reassignmentRequested' => !empty($pendingReassign),
             'reassignmentReason' => $pendingReassign ? $pendingReassign->reason : null,
             'reassignmentRequestedBy' => $pendingReassign ? ($pendingReassign->requesting_employee_name ?: 'Assigned Employee') : null,

@@ -130,6 +130,7 @@ Route::middleware('auth.subsystem')->group(function () {
     Route::get('/tickets/{ticketId}/customer-info', [TicketController::class, 'customerContext']);
     Route::get('/tickets/escalate-handoff/{conversationId}', [TicketController::class, 'escalateHandoff']);
     Route::get('/tickets/{id}/timeline', [TicketTimelineController::class, 'timeline'])->middleware('no-cache');
+    Route::post('/tickets/{ticketId}/manager-reassignment/acknowledge', [\App\Http\Controllers\ManagerReassignmentController::class, 'acknowledge'])->whereNumber('ticketId');
 
     // ─── Staff-Only Internal Notes (TS028) ────────────────────────────────────
     Route::get('/tickets/{ticketId}/internal-notes', [TicketController::class, 'getInternalNotes']);
