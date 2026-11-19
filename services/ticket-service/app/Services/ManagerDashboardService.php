@@ -187,26 +187,40 @@ class ManagerDashboardService
             ->leftJoin('employees as req', 'req.emp_id', '=', 't.requested_by')
             ->whereNotIn(DB::raw('LOWER(TRIM(ts.status_name))'), self::NOT_OPEN_STATUSES);
 
-        $this->dashboardService->applyBranchTicketFilter($query, $branch);
+        // Tickets escalated to this manager show (and can be reassigned) even outside their branch scope.
+        $escalatedToMe = $isBranchMode
+            ? []
+            : app(EscalationParticipants::class)->ticketIdsForManager((int) ($manager->emp_id ?? 0), $department);
 
-        if (!$isBranchMode) {
-            $deptNorm = TechnicalDepartments::normalize($department);
-            $query->where(function ($q) use ($deptNorm) {
-                $q->whereExists(function ($sub) use ($deptNorm) {
-                    $sub->select(DB::raw(1))
-                        ->from('ticket_assignments as ta')
-                        ->join('employees as ae', 'ae.emp_id', '=', 'ta.employee_ID')
-                        ->whereColumn('ta.ticket_ID', 't.ticket_ID')
-                        ->whereNull('ta.completed_at')
-                        ->whereRaw('LOWER(TRIM(ae.department)) = ?', [$deptNorm]);
-                })->orWhereExists(function ($sub) use ($deptNorm) {
-                    $sub->select(DB::raw(1))
-                        ->from('employees as oe')
-                        ->whereColumn('oe.emp_id', 't.assigned_to')
-                        ->whereRaw('LOWER(TRIM(oe.department)) = ?', [$deptNorm]);
+        $scoped = function ($scope) use ($branch, $isBranchMode, $department) {
+            $this->dashboardService->applyBranchTicketFilter($scope, $branch);
+
+            if (!$isBranchMode) {
+                $deptNorm = TechnicalDepartments::normalize($department);
+                $scope->where(function ($q) use ($deptNorm) {
+                    $q->whereExists(function ($sub) use ($deptNorm) {
+                        $sub->select(DB::raw(1))
+                            ->from('ticket_assignments as ta')
+                            ->join('employees as ae', 'ae.emp_id', '=', 'ta.employee_ID')
+                            ->whereColumn('ta.ticket_ID', 't.ticket_ID')
+                            ->whereNull('ta.completed_at')
+                            ->whereRaw('LOWER(TRIM(ae.department)) = ?', [$deptNorm]);
+                    })->orWhereExists(function ($sub) use ($deptNorm) {
+                        $sub->select(DB::raw(1))
+                            ->from('employees as oe')
+                            ->whereColumn('oe.emp_id', 't.assigned_to')
+                            ->whereRaw('LOWER(TRIM(oe.department)) = ?', [$deptNorm]);
+                    });
                 });
-            });
-        }
+            }
+        };
+
+        $query->where(function ($outer) use ($scoped, $escalatedToMe) {
+            $outer->where(fn ($scope) => $scoped($scope));
+            if (!empty($escalatedToMe)) {
+                $outer->orWhereIn('t.ticket_ID', $escalatedToMe);
+            }
+        });
 
         $rows = $query->select(
             't.ticket_ID',
@@ -267,7 +281,9 @@ class ManagerDashboardService
         $managerId = (int) ($manager->emp_id ?? 0);
         $escalationManagers = app(EscalationParticipants::class)->managerIdsFor($ticketIds);
 
-        $tickets = $rows->map(function ($t) use ($now, $assigneesByTicket, $managerId, $escalationManagers) {
+        $tickets = $rows->map(function ($t) use ($now, $assigneesByTicket, $managerId, $escalationManagers, $escalatedToMe) {
+            $escalatedToThisManager = in_array($managerId, $escalationManagers[(int) $t->ticket_ID] ?? [], true)
+                || in_array((int) $t->ticket_ID, $escalatedToMe, true);
             $isEscalated = strcasecmp(trim((string) $t->status_name), 'Escalated') === 0;
             $isBreached = $this->slaOutcomes->isOpenBreach($t, $now);
 
@@ -305,7 +321,8 @@ class ManagerDashboardService
                 'is_breached' => $isBreached,
                 // Managers step in only on escalated or breached tickets.
                 'can_reassign' => $isEscalated || $isBreached,
-                'can_join_conversation' => in_array($managerId, $escalationManagers[(int) $t->ticket_ID] ?? [], true),
+                'can_join_conversation' => $escalatedToThisManager,
+                'escalated_to_me' => $escalatedToThisManager,
                 'created_at' => $t->created_at ? Carbon::parse($t->created_at)->toIso8601String() : null,
                 'updated_at' => $t->updated_at ? Carbon::parse($t->updated_at)->toIso8601String() : null,
             ];

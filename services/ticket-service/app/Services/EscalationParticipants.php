@@ -77,6 +77,48 @@ class EscalationParticipants
         return $byTicket;
     }
 
+    /**
+     * Tickets escalated to this manager: named in an escalation record, or currently Escalated with an
+     * active assignee in the manager's department (the rule escalation uses to pick managers, which
+     * also covers escalations recorded before this table existed). Branch does not matter.
+     *
+     * @return int[]
+     */
+    public function ticketIdsForManager(int $managerId, ?string $department): array
+    {
+        if ($managerId <= 0) {
+            return [];
+        }
+
+        $recorded = DB::table('ticket_audit_logs')
+            ->where('action_type', self::EVENT)
+            ->whereRaw("JSON_CONTAINS(JSON_EXTRACT(details, '$.manager_ids'), ?)", [json_encode($managerId)])
+            ->pluck('ticket_ID')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $byDepartment = [];
+        $dept = strtolower(trim((string) $department));
+        if ($dept !== '') {
+            $byDepartment = DB::table('tickets as t')
+                ->join('ticket_statuses as ts', 'ts.ticket_status_ID', '=', 't.ticket_status_ID')
+                ->whereRaw('LOWER(TRIM(ts.status_name)) = ?', ['escalated'])
+                ->whereExists(function ($sub) use ($dept) {
+                    $sub->select(DB::raw(1))
+                        ->from('ticket_assignments as ta')
+                        ->join('employees as ae', 'ae.emp_id', '=', 'ta.employee_ID')
+                        ->whereColumn('ta.ticket_ID', 't.ticket_ID')
+                        ->whereNull('ta.completed_at')
+                        ->whereRaw('LOWER(TRIM(ae.department)) = ?', [$dept]);
+                })
+                ->pluck('t.ticket_ID')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+        }
+
+        return array_values(array_unique(array_merge($recorded, $byDepartment)));
+    }
+
     /** @return int[] */
     public function managerIds(int $ticketId): array
     {

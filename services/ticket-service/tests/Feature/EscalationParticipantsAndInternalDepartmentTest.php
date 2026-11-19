@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Employee;
 use App\Services\CategoryTrack;
 use App\Services\EscalationParticipants;
+use App\Services\ManagerDashboardService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -122,5 +123,48 @@ class EscalationParticipantsAndInternalDepartmentTest extends TestCase
             ])
             ->assertStatus(422)
             ->assertJsonValidationErrors(['machine_ID']);
+    }
+
+    /**
+     * A ticket escalated to a manager shows in their queue and can be reassigned, even when the
+     * ticket belongs to another branch (escalation picks managers by department, not branch).
+     */
+    public function test_escalated_ticket_outside_the_manager_branch_is_in_their_queue_and_reassignable(): void
+    {
+        DB::table('branches')->updateOrInsert(['id' => 951], ['slug' => 'branch-951', 'name' => 'Branch 951', 'code' => 'B951', 'region' => 'East', 'is_active' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('branches')->updateOrInsert(['id' => 952], ['slug' => 'branch-952', 'name' => 'Branch 952', 'code' => 'B952', 'region' => 'East', 'is_active' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('employees')->where('emp_id', $this->manager->emp_id)->update(['branch_id' => 951]);
+        DB::table('tickets')->where('ticket_ID', $this->ticketId)->update(['branch_id' => '952']);
+
+        DB::table('employees')->whereIn('emp_id', [89502, 89503])->delete();
+        $engineer = Employee::create([
+            'emp_id' => 89502, 'first_name' => 'Eddie', 'last_name' => 'Cruz', 'email' => 'eng.escjoin@example.com',
+            'role' => 'Engineer', 'department' => 'Service', 'is_active' => 1, 'branch_id' => 952, 'password_hash' => bcrypt('password'),
+        ]);
+        $itManager = Employee::create([
+            'emp_id' => 89503, 'first_name' => 'Ivan', 'last_name' => 'Tech', 'email' => 'itmgr.escjoin@example.com',
+            'role' => 'IT Manager', 'department' => 'IT', 'position_level' => 'Manager', 'is_active' => 1, 'branch_id' => 951, 'password_hash' => bcrypt('password'),
+        ]);
+        DB::table('ticket_assignments')->insert([
+            'ticket_ID' => $this->ticketId, 'employee_ID' => $engineer->emp_id, 'assigned_by' => $this->manager->emp_id,
+            'assignment_status' => 'accepted', 'assigned_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $queue = fn ($emp) => collect(
+            app(ManagerDashboardService::class)->ticketsForManager(DB::table('employees')->where('emp_id', $emp->emp_id)->first())['tickets']
+        )->firstWhere('ticket_ID', $this->ticketId);
+
+        // No escalation record needed: Escalated + an assignee in the manager's department is enough.
+        $row = $queue($this->manager);
+        $this->assertNotNull($row, 'The escalated ticket from another branch must be in the Service manager queue.');
+        $this->assertTrue($row['can_reassign']);
+        $this->assertTrue($row['escalated_to_me']);
+
+        // Not escalated to the IT manager (no IT assignee, not named in an escalation record).
+        $this->assertNull($queue($itManager));
+
+        // Once an escalation names the IT manager explicitly, it shows for them too.
+        app(EscalationParticipants::class)->record($this->ticketId, [$itManager->emp_id], $this->manager->emp_id, 'employee', 'Needs IT');
+        $this->assertTrue($queue($itManager)['escalated_to_me']);
     }
 }
