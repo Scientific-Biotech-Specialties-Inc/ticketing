@@ -40,8 +40,9 @@ export const DEFAULT_BRANCHES = [
 export const DEFAULT_BRANCH_ID = 'main-office';
 
 /**
- * Retrieve the currently stored active branch ID from localStorage,
- * falling back to DEFAULT_BRANCH_ID if missing or invalid.
+ * Retrieve the currently stored active branch ID from localStorage, or null (All Branches) when
+ * nothing is stored. Never DEFAULT_BRANCH_ID: that is a placeholder id the server does not know,
+ * and an unknown branch made the superadmin dashboard fall back to an empty branch.
  */
 export function getStoredBranchId() {
   try {
@@ -49,13 +50,14 @@ export function getStoredBranchId() {
     if (stored === 'all' || stored === 'none' || stored === 'null') {
       return null;
     }
-    if (stored && !['main', 'luzon', 'visayas', 'mindanao'].includes(stored)) {
+    const placeholderIds = ['main', 'luzon', 'visayas', 'mindanao', ...DEFAULT_BRANCHES.map((b) => b.id)];
+    if (stored && !placeholderIds.includes(stored)) {
       return stored;
     }
   } catch {
     // Ignore localStorage access failures (SSR / private mode)
   }
-  return DEFAULT_BRANCH_ID;
+  return null;
 }
 
 /**

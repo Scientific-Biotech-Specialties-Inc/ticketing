@@ -140,8 +140,9 @@ export default function AdminReports() {
       params.priority = priorityFilter === 'Critical Only' ? 'Critical' : priorityFilter;
     }
 
-    if (isSuperAdmin && selectedBranchId) {
-      params.branch_id = selectedBranchId;
+    // 'all' when no branch is picked, so the server does not fall back to the superadmin's own branch.
+    if (isSuperAdmin) {
+      params.branch_id = selectedBranchId || 'all';
     }
 
     return params;

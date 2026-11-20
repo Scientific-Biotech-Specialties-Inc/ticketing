@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import DepartmentPerformanceView from './DepartmentPerformanceView';
 import { classifyWorkloadImbalance } from '@/services/dashboardAnalyticsService';
 import * as ticketService from '@/services/ticketService';
+import BranchContext from '@/context/BranchContext';
 
 vi.mock('@/services/ticketService', () => ({
   getAdminDepartmentPerformance: vi.fn(),
@@ -72,6 +73,54 @@ describe('DepartmentPerformanceView (spec 0029 AC-7 to AC-9)', () => {
   it('loads the real endpoint for the selected period', async () => {
     ticketService.getAdminDepartmentPerformance.mockResolvedValue(apiPayload);
     renderView();
+
+    await screen.findByText('Service');
+    expect(ticketService.getAdminDepartmentPerformance).toHaveBeenCalledWith({ preset: 'Last 7 Days' });
+  });
+
+  it('scopes a superadmin to the selected branch and refetches when it changes', async () => {
+    ticketService.getAdminDepartmentPerformance.mockResolvedValue(apiPayload);
+    const tree = (branchId) => (
+      <BranchContext.Provider value={{ isSuperAdmin: true, selectedBranchId: branchId }}>
+        <MemoryRouter>
+          <DepartmentPerformanceView branchName="Main Branch" selectedPeriod="Last 7 Days" />
+        </MemoryRouter>
+      </BranchContext.Provider>
+    );
+    const { rerender } = render(tree(7));
+
+    await screen.findByText('Service');
+    expect(ticketService.getAdminDepartmentPerformance).toHaveBeenCalledWith({ preset: 'Last 7 Days', branch_id: 7 });
+
+    rerender(tree(9));
+    await waitFor(() =>
+      expect(ticketService.getAdminDepartmentPerformance).toHaveBeenLastCalledWith({ preset: 'Last 7 Days', branch_id: 9 })
+    );
+  });
+
+  it('sends all for a superadmin on All Branches', async () => {
+    ticketService.getAdminDepartmentPerformance.mockResolvedValue(apiPayload);
+    render(
+      <BranchContext.Provider value={{ isSuperAdmin: true, selectedBranchId: null }}>
+        <MemoryRouter>
+          <DepartmentPerformanceView branchName="All Branches" selectedPeriod="Last 7 Days" />
+        </MemoryRouter>
+      </BranchContext.Provider>
+    );
+
+    await screen.findByText('Service');
+    expect(ticketService.getAdminDepartmentPerformance).toHaveBeenCalledWith({ preset: 'Last 7 Days', branch_id: 'all' });
+  });
+
+  it('never sends a branch for a branch admin, whose scope the server locks', async () => {
+    ticketService.getAdminDepartmentPerformance.mockResolvedValue(apiPayload);
+    render(
+      <BranchContext.Provider value={{ isSuperAdmin: false, selectedBranchId: 7 }}>
+        <MemoryRouter>
+          <DepartmentPerformanceView branchName="Main Branch" selectedPeriod="Last 7 Days" />
+        </MemoryRouter>
+      </BranchContext.Provider>
+    );
 
     await screen.findByText('Service');
     expect(ticketService.getAdminDepartmentPerformance).toHaveBeenCalledWith({ preset: 'Last 7 Days' });
