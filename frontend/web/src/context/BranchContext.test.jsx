@@ -175,4 +175,49 @@ describe('BranchContext and null branch support', () => {
     expect(screen.getByTestId('selected-branch-id').textContent).not.toBe('cebu-city-office');
     expect(screen.getByTestId('selected-branch-id').textContent).toBe('1');
   });
+
+  // The superadmin dashboard showed no employees: the placeholder id 'main-office' was the default selection,
+  // the server did not know it and fell back to an empty branch.
+  const renderSuperAdmin = () => {
+    vi.spyOn(authContextModule, 'useAuth').mockReturnValue({
+      user: { id: 80, email: 'admin@example.com', role: 'superadmin', branch: 'Main Branch', branch_id: 1 },
+    });
+    ticketService.getBranches.mockResolvedValue({
+      data: [{ id: 5, slug: 'sbsi-makati-branch', name: 'SBSI Makati Branch', code: 'MKT' }],
+    });
+    render(
+      <BranchProvider>
+        <TestConsumer />
+      </BranchProvider>
+    );
+  };
+
+  it('defaults a superadmin with nothing stored to All Branches, not a placeholder branch', async () => {
+    renderSuperAdmin();
+    await waitFor(() => expect(ticketService.getBranches).toHaveBeenCalled());
+    expect(screen.getByTestId('selected-branch-id').textContent).toBe('NONE');
+    expect(screen.getByTestId('is-all').textContent).toBe('true');
+  });
+
+  it('drops a stored placeholder selection so requests never name a branch the server does not know', async () => {
+    localStorage.setItem('superadmin_active_branch', 'main-office');
+    renderSuperAdmin();
+    await waitFor(() => expect(screen.getByTestId('is-all').textContent).toBe('true'));
+    expect(screen.getByTestId('selected-branch-id').textContent).toBe('NONE');
+  });
+
+  it('drops a stored branch that is no longer in the live branch list', async () => {
+    localStorage.setItem('superadmin_active_branch', 'closed-branch');
+    renderSuperAdmin();
+    await waitFor(() => expect(screen.getByTestId('is-all').textContent).toBe('true'));
+    expect(localStorage.getItem('superadmin_active_branch')).toBe('all');
+  });
+
+  it('keeps a stored selection that is a real branch', async () => {
+    localStorage.setItem('superadmin_active_branch', 'sbsi-makati-branch');
+    renderSuperAdmin();
+    await waitFor(() => expect(ticketService.getBranches).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByTestId('current-branch-name').textContent).toBe('SBSI Makati Branch'));
+    expect(screen.getByTestId('selected-branch-id').textContent).toBe('sbsi-makati-branch');
+  });
 });

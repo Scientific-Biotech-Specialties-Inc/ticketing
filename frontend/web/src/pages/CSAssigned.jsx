@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Search, Loader2, Filter, RotateCcw, X, AlertTriangle, Clock, CheckCircle2, PauseCircle, HelpCircle, ArrowUpDown, Bell } from 'lucide-react';
+import { Search, Loader2, Filter, RotateCcw, X, AlertTriangle, Clock, CheckCircle2, PauseCircle, HelpCircle, ArrowUpDown, Bell, UserCog } from 'lucide-react';
 import Pagination from '@/components/Pagination';
 import { useAuth } from '@/context/AuthContext';
 import useRealtimeRefresh from '@/hooks/useRealtimeRefresh';
@@ -25,8 +25,19 @@ import { Badge, getStatusBadgeVariant } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@/components/ui/table';
 import { DataTableSkeleton, DataTableEmptyState } from '@/components/ui/data-table';
+import { holdRequestDisplayStatus } from '@/utils/holdRequestStatus';
 
 const getDisplayStatus = (ticket) => ticket.status;
+
+/**
+ * Display only: once CS rejects a proof of completion the ticket returns to In Progress,
+ * and the status column shows "Proof Rejected" until the employee submits new proof
+ * (the server clears proof_rejected on resubmission).
+ */
+const PROOF_REJECTED_LABEL = 'Proof Rejected';
+const isProofRejectedInProgress = (t) =>
+  Boolean(t?.proofRejected || t?.proof_rejected) &&
+  String(t?.status || '').trim().toLowerCase() === 'in progress';
 
 const buildTicketSearchString = (t) => {
   if (!t) return '';
@@ -53,7 +64,8 @@ const buildTicketSearchString = (t) => {
     getDisplayStatus(t) === 'Reopen' ? 'Reopened' : (getDisplayStatus(t) || '')
   );
   const reassignmentBadge = t.reassignmentRequested ? 'pending reassignment' : '';
-  const statusStr = `${rawStatus} ${displayStatus} ${reassignmentBadge}`;
+  const proofRejectedBadge = isProofRejectedInProgress(t) ? 'proof rejected' : '';
+  const statusStr = `${rawStatus} ${displayStatus} ${reassignmentBadge} ${proofRejectedBadge}`;
   const dept = String(t.department || '');
   const equip = String(t.equipment || t.machine_name || '');
   const facility = String(t.facility || '');
@@ -97,6 +109,7 @@ const renderSlaBadge = (ticket) => <SlaStatusBadge ticket={ticket} showDueDate={
 export default function CSAssigned() {
   const { user } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const [tickets, setTickets] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -128,7 +141,7 @@ export default function CSAssigned() {
   });
   const [showFilters, setShowFilters] = useState(false);
   const [typeFilter, setTypeFilter] = useState('all');
-  const [assignedTab, setAssignedTab] = useState('all'); // 'all' | 'in_progress' | 'pending_evaluation' | 'on_hold' | 'reassigned' | 'resolved_closed'
+  const [assignedTab, setAssignedTab] = useState('all'); // 'all' | 'in_progress' | 'pending_evaluation' | 'on_hold' | 'reassigned' | 'manager_reassigned' | 'resolved_closed'
 
   // Spec 0037: the server applies the tab, filters, SLA filter, sort, and pagination,
   // and counts the tab badges and SLA cards, so the cards match the rows on every page.
@@ -149,7 +162,9 @@ export default function CSAssigned() {
     scope: 'assigned',
     page,
     limit: ITEMS_PER_PAGE,
-    tab: assignedTab,
+    // "All Assigned" asks for the active tab, so resolved/closed tickets (shown on Ticket History)
+    // are neither listed nor counted.
+    tab: assignedTab === 'all' ? 'active' : assignedTab,
     search: debouncedSearch,
     category: category !== 'All Categories' ? category : undefined,
     machine: machineFilter !== 'All Machines' ? machineFilter : undefined,
@@ -371,10 +386,11 @@ export default function CSAssigned() {
   );
 
   const counts = {
-    all: tabCounts?.all ?? 0,
+    all: tabCounts?.active ?? Math.max(0, (tabCounts?.all ?? 0) - (tabCounts?.resolvedClosed ?? 0)),
     inProgress: tabCounts?.inProgress ?? 0,
     pendingEval: tabCounts?.pendingEval ?? 0,
     reassigned: tabCounts?.reassigned ?? 0,
+    managerReassigned: tabCounts?.managerReassigned ?? 0,
     onHold: tabCounts?.onHold ?? 0,
     resolvedClosed: tabCounts?.resolvedClosed ?? 0,
   };
@@ -470,13 +486,15 @@ export default function CSAssigned() {
 
       window.dispatchEvent(new Event('notifications:updated'));
 
-      // Redirect to "All Assigned" tab and close modal
-      setAssignedTab('all');
-      setPage(1);
+      // The new assignees still have to accept, so the ticket now sits in Incoming
+      // (Pending Assignment). Go there and highlight its row.
       setModal(null);
-
-      // Reconcile with the server (the tab and page change above also trigger a reload).
-      loadLiveData({ forceRefresh: true, source: 'poll' });
+      navigate('/cs/incoming', {
+        state: {
+          highlightTicketId: Number(String(updated.ticket_ID || updated.id).replace(/\D/g, '')),
+          tab: 'pending_assignment',
+        },
+      });
       return true;
     } catch (err) {
       setError('Failed to assign ticket. Please try again.');
@@ -501,6 +519,32 @@ export default function CSAssigned() {
       {error && (
         <div className="rounded-lg bg-destructive/10 text-destructive border border-destructive/20 px-4 py-3 text-sm font-medium">
           {error}
+        </div>
+      )}
+
+      {/* Department manager reassignments CS has not acknowledged yet */}
+      {counts.managerReassigned > 0 && assignedTab !== 'manager_reassigned' && (
+        <div
+          role="status"
+          data-testid="manager-reassigned-banner"
+          className="rounded-xl border border-accent/30 bg-accent/5 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
+        >
+          <div className="flex items-center gap-2 text-sm text-foreground">
+            <UserCog className="w-4 h-4 text-accent shrink-0" aria-hidden="true" />
+            <span>
+              {counts.managerReassigned === 1
+                ? '1 ticket was reassigned by a department manager.'
+                : `${counts.managerReassigned} tickets were reassigned by a department manager.`}
+            </span>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => { setAssignedTab('manager_reassigned'); setPage(1); }}
+          >
+            View
+          </Button>
         </div>
       )}
 
@@ -568,6 +612,22 @@ export default function CSAssigned() {
             assignedTab === 'reassigned' ? 'bg-warning/15 text-warning' : 'bg-muted text-muted-foreground'
           }`}>
             {counts.reassigned}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => { setAssignedTab('manager_reassigned'); setPage(1); }}
+          className={`pb-3 px-4 text-sm font-semibold border-b-2 transition-all cursor-pointer flex items-center gap-2 shrink-0 ${
+            assignedTab === 'manager_reassigned'
+              ? 'border-accent text-accent'
+              : 'border-transparent text-muted-foreground hover:text-foreground hover:border-border'
+          }`}
+        >
+          <span>Manager Reassigned</span>
+          <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+            assignedTab === 'manager_reassigned' ? 'bg-accent/15 text-accent' : 'bg-muted text-muted-foreground'
+          }`}>
+            {counts.managerReassigned}
           </span>
         </button>
       </div>
@@ -672,11 +732,12 @@ export default function CSAssigned() {
 
       {/* Table Card */}
       <div className="overflow-x-auto rounded-xl border border-border bg-card shadow-xs w-full min-w-0 max-w-full">
-        <Table className="min-w-[960px] w-full">
+        <Table className="min-w-[1060px] w-full">
           <TableHeader>
             <TableRow>
               <TableHead className="w-[140px]">Ticket ID</TableHead>
               <TableHead>Title</TableHead>
+              <TableHead className="w-[100px]">Priority</TableHead>
               <TableHead>Category</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="w-[160px]">
@@ -703,10 +764,10 @@ export default function CSAssigned() {
           </TableHeader>
           <TableBody>
             {loading ? (
-              <DataTableSkeleton columns={7} rows={6} />
+              <DataTableSkeleton columns={8} rows={6} />
             ) : filtered.length === 0 ? (
               <DataTableEmptyState
-                colSpan={7}
+                colSpan={8}
                 message="No tickets found in this assigned queue."
               />
             ) : (
@@ -735,6 +796,15 @@ export default function CSAssigned() {
                             Reassignment Requested
                           </span>
                         )}
+                        {t.manager_reassignment && (
+                          <span
+                            className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-accent/10 text-accent border border-accent/30 w-fit flex items-center gap-1"
+                            title={`Reassigned by ${t.manager_reassignment.manager_name || 'a department manager'}${t.manager_reassignment.reassigned_at ? ` on ${formatDisplayDate(t.manager_reassignment.reassigned_at)}` : ''}`}
+                          >
+                            <UserCog className="w-2.5 h-2.5" />
+                            {`Reassigned by ${t.manager_reassignment.department || 'Department'} Manager`}
+                          </span>
+                        )}
                         {(t.last_reminder_sent_at || t.lastReminderSentAt) && (
                           <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 w-fit flex items-center gap-1" title={`Reminder dispatched: ${formatDisplayDate(t.last_reminder_sent_at || t.lastReminderSentAt)}`}>
                             <Bell className="w-2.5 h-2.5" />
@@ -753,13 +823,31 @@ export default function CSAssigned() {
                         )}
                       </div>
                     </TableCell>
+                    <TableCell>
+                      <Badge variant={getStatusBadgeVariant(t.priority || 'Medium')}>
+                        {t.priority || 'Medium'}
+                      </Badge>
+                    </TableCell>
                     <TableCell className="text-muted-foreground">
                       {t.category}
                     </TableCell>
                     <TableCell>
-                      <Badge variant={getStatusBadgeVariant(isReassignmentReq ? 'Pending Reassignment' : t.status)}>
-                        {isReassignmentReq ? 'Pending Reassignment' : (t.status === 'Reopen' ? 'Reopened' : t.status)}
-                      </Badge>
+                      {(() => {
+                        const label = isReassignmentReq
+                          ? 'Pending Reassignment'
+                          : isProofRejectedInProgress(t)
+                          ? PROOF_REJECTED_LABEL
+                          : holdRequestDisplayStatus(t, t.status === 'Reopen' ? 'Reopened' : t.status);
+                        const reason = label === PROOF_REJECTED_LABEL ? (t.rejectionReason || t.rejection_reason) : '';
+                        return (
+                          <Badge
+                            variant={getStatusBadgeVariant(label)}
+                            title={reason ? `Proof rejected: "${reason}". The ticket is still In Progress.` : undefined}
+                          >
+                            {label}
+                          </Badge>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell>
                       {renderSlaBadge(t)}
@@ -852,7 +940,9 @@ export default function CSAssigned() {
       {!modalLoading && modal?.mode === 'summary' && (
         <TicketSummary
           ticket={modal.ticket}
+          isLoadingDetails={Boolean(modal.isLoadingDetails)}
           employees={employees}
+          onManagerReassignmentSeen={() => loadLiveData({ forceRefresh: true, source: 'poll' })}
           onClose={() => setModal(null)}
           onEdit={() => setModal({ mode: 'assign', ticket: modal.ticket })}
           onStatusUpdate={async (updatedFields) => {
@@ -862,7 +952,7 @@ export default function CSAssigned() {
 
             // If the status is 'On Hold', resumed, or classification updated,
             // the dedicated endpoint (POST /hold, POST /resume, or PATCH /classification) was already executed directly in TicketSummary.
-            if (updatedFields.status === 'On Hold' || updatedFields.hold_reason !== undefined || updatedFields.category || updatedFields.priority) {
+            if (updatedFields.status === 'On Hold' || updatedFields.status === 'Escalated' || updatedFields.hold_reason !== undefined || updatedFields.category || updatedFields.priority) {
               loadLiveData({ forceRefresh: true, source: 'poll' });
               return;
             }
@@ -871,11 +961,21 @@ export default function CSAssigned() {
               const numericId = modal.ticket.ticket_ID || Number(String(updatedFields.id || modal.ticket.id).replace(/\D/g, ''));
               
               if (updatedFields.reassignmentStatus) {
-                await respondReassignment({
+                // TicketSummary's decision card already called reassign-respond.
+                if (!updatedFields.reassignmentHandled) await respondReassignment({
                   ticketId: numericId,
                   action: updatedFields.reassignmentStatus === 'Approved' ? 'approve' : 'deny',
                   reason: updatedFields.reassignmentDenyReason ?? '',
                 });
+                if (updatedFields.reassignmentStatus === 'Approved') {
+                  // The new assignees still have to accept, so the ticket now sits in Incoming
+                  // (Pending Assignment). Go there and highlight its row.
+                  setModal(null);
+                  navigate('/cs/incoming', {
+                    state: { highlightTicketId: Number(numericId), tab: 'pending_assignment' },
+                  });
+                  return;
+                }
                 setAssignedTab('all');
                 setPage(1);
               } else {
@@ -905,6 +1005,10 @@ export default function CSAssigned() {
               setModal(null);
             } catch (err) {
               console.error('Failed to update ticket status on backend:', err);
+              // Undo the optimistic row update and let the modal show why it failed
+              // (e.g. a proof file not yet viewed), instead of failing silently.
+              loadLiveData({ forceRefresh: true, source: 'poll' });
+              throw err;
             }
 
             // Reload the current page so tabs, counts, and SLA cards reflect the update.

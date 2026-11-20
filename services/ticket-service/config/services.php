@@ -41,4 +41,11 @@ return [
         'enforce' => (bool) env('TICKETING_EDGE_ENFORCE', false),
     ],
 
+    // Branch given to a new ticket when neither the request nor the selected equipment names one.
+    // SBSI Makati until equipment arrives from the equipment system with its real branch (that wins).
+    // Set TICKET_DEFAULT_BRANCH to empty to leave such tickets without a branch.
+    'tickets' => [
+        'default_branch' => env('TICKET_DEFAULT_BRANCH', 'sbsi-makati-branch'),
+    ],
+
 ];

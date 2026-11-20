@@ -113,6 +113,7 @@ class AiChatController extends Controller
             'messages' => 'required|array',
             'conversation_id' => 'nullable|string',
             'user_id' => 'nullable|numeric', // used only on a trusted internal call
+            'selected_asset_id' => 'nullable|integer', // spec 0047: an item the customer tapped
         ]);
 
         $auth = $this->getAuthenticatedUser($request);
@@ -136,8 +137,33 @@ class AiChatController extends Controller
             return $this->conversationNotFound();
         }
 
+        // Spec 0047 (AC-7): a customer's own items, read from ticket-service for the verified customer only.
+        $assets = null;
+        if (!$isInternal && $userId !== null && is_numeric($userId)) {
+            $assets = app(\App\Services\CustomerAssetClient::class)->forCustomer((int) $userId);
+        }
+
+        $selectedAssetId = isset($validated['selected_asset_id']) ? (int) $validated['selected_asset_id'] : null;
+        if ($selectedAssetId !== null && is_array($assets)
+            && !in_array($selectedAssetId, array_map(fn ($a) => (int) $a['machine_ID'], $assets), true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Choose one of your registered equipment or software.',
+                'errors' => ['selected_asset_id' => ['Choose one of your registered equipment or software.']],
+            ], 422);
+        }
+
+        // Spec 0047: the item may already be known (tapped, remembered, or named by the customer).
+        // Tell Gemini so it does not ask the customer for their equipment or software again.
+        $gate = app(\App\Services\AssetIntakeGate::class);
+        $storedAssetId = $conversation && isset($conversation->asset_machine_id) ? (int) $conversation->asset_machine_id : null;
+        $knownAsset = $gate->identify($assets, $selectedAssetId, $storedAssetId, $incomingMessages);
+
         // Call Gemini Service
-        $result = $this->geminiService->generateResponse($incomingMessages, $convId);
+        $result = $this->geminiService->generateResponse($incomingMessages, $convId, $assets ?? [], $knownAsset);
+
+        // Spec 0047 (AC-8 to AC-12): only offer a ticket once one owned item is identified.
+        $result = $gate->apply($result, $assets, $selectedAssetId, $storedAssetId, $incomingMessages);
 
         // Retrieve or initialize conversation record and persist
         try {
@@ -170,6 +196,11 @@ class AiChatController extends Controller
             $allMessages = array_merge($incomingMessages, [$aiMsgRecord]);
             $conversation->messages = $allMessages;
 
+            // Remember the identified item so later turns (and the handoff) keep it.
+            if (!empty($result['asset']['machine_ID'])) {
+                $conversation->asset_machine_id = (int) $result['asset']['machine_ID'];
+            }
+
             if ($result['escalate']) {
                 $conversation->status = 'escalated';
                 $conversation->escalation_data = $result['ticket_data'];
@@ -190,6 +221,9 @@ class AiChatController extends Controller
             'ticket_data' => $result['ticket_data'],
             'conversation_id' => $convId,
             'is_duplicate' => false,
+            'asset' => $result['asset'] ?? null,
+            'asset_options' => $result['asset_options'] ?? [],
+            'asset_status' => $result['asset_status'] ?? null,
         ]);
     }
 
@@ -508,6 +542,9 @@ class AiChatController extends Controller
                 'category_confidence' => $catConf,
                 'machine' => $machine,
                 'machine_confidence' => $machConf,
+                // Spec 0047 (AC-11): the owned item the chat identified, so the form preselects it.
+                'machine_ID' => isset($escalationData['machine_ID']) ? (int) $escalationData['machine_ID']
+                    : (isset($conversation->asset_machine_id) ? (int) $conversation->asset_machine_id : null),
                 'origin' => 'ai_chatbot',
                 'conversation_id' => $conversation->id,
             ],

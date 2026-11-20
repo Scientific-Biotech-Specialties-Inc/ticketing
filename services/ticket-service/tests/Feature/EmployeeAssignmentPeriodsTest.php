@@ -98,7 +98,7 @@ class EmployeeAssignmentPeriodsTest extends TestCase
 
     private function cleanUp(): void
     {
-        DB::table('tickets')->whereIn('branch_id', [self::BRANCH, self::OTHER_BRANCH])->delete();
+        DB::table('tickets')->whereIn('branch_id', [(string) self::BRANCH, (string) self::OTHER_BRANCH])->delete();
         DB::table('employees')->where('email', 'like', '%@spec0039.test')->delete();
         DB::table('sla_rules')->where('priority', self::RULE_PRIORITY)->delete();
     }

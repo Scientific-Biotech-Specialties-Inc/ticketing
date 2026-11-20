@@ -180,7 +180,10 @@ class EmployeeAssignmentService
     /**
      * Assign one or more employees to a ticket.
      */
-    public function assignTicket(int $ticketId, array $validated, int $assignedBy): array
+    /**
+     * @param  object|null  $actingManager  Service or IT department manager making this change; CS then gets a manager notice.
+     */
+    public function assignTicket(int $ticketId, array $validated, int $assignedBy, ?object $actingManager = null): array
     {
         $ticket = DB::table('tickets')->where('ticket_ID', $ticketId)->first();
         if (!$ticket) {
@@ -200,7 +203,7 @@ class EmployeeAssignmentService
         }
 
         $removedEmpIds = [];
-        DB::transaction(function () use ($ticketId, $validated, $assignedBy, &$removedEmpIds) {
+        DB::transaction(function () use ($ticketId, $validated, $assignedBy, $actingManager, &$removedEmpIds) {
             $pendingAssignmentId = DB::table('ticket_statuses')
                 ->whereRaw('LOWER(status_name) = ?', ['pending assignment'])
                 ->value('ticket_status_ID') ?? 10;
@@ -208,7 +211,8 @@ class EmployeeAssignmentService
             $ticket = DB::table('tickets')->where('ticket_ID', $ticketId)->first();
             $changes = [];
 
-            if ($ticket && $ticket->assigned_to != $validated['employee_ids'][0]) {
+            // A manager move gets its own manager_reassigned entry below, so the generic row is skipped.
+            if (!$actingManager && $ticket && $ticket->assigned_to != $validated['employee_ids'][0]) {
                 $changes[] = ['field' => 'assigned_to', 'old' => $ticket->assigned_to, 'new' => $validated['employee_ids'][0]];
             }
             if ($ticket && array_key_exists('priority_ID', $validated) && $validated['priority_ID'] !== null && $ticket->priority_ID != $validated['priority_ID']) {
@@ -256,6 +260,17 @@ class EmployeeAssignmentService
             }
 
             $this->recordAssignmentChange($ticketId, $toRemove->values()->all(), $toAdd->values()->all(), $assignedBy);
+
+            if ($actingManager && ($toRemove->isNotEmpty() || $toAdd->isNotEmpty())) {
+                $this->recordManagerReassignment(
+                    $ticketId,
+                    $actingManager,
+                    $existing->keys()->map(fn ($id) => (int) $id)->values()->all(),
+                    array_map('intval', $newEmpIds),
+                    $toAdd->map(fn ($id) => (int) $id)->values()->all(),
+                    $toRemove->map(fn ($id) => (int) $id)->values()->all()
+                );
+            }
 
             DB::table('reassignment_requests')
                 ->where('ticket_id', $ticketId)
@@ -410,13 +425,45 @@ class EmployeeAssignmentService
                 $priorityName
             );
 
-            $this->notificationService->notifyCS(
-                'Ticket Assigned',
-                "Ticket {$ticketRef}: \"" . $title . "\" has been assigned to " . $empNamesStr . ".",
-                $ticketId,
-                null,
-                $assignedBy
-            );
+            if ($actingManager) {
+                // Every manager move on a ticket reaches CS in app, whatever the delivery channel setting.
+                $managerName = trim("{$actingManager->first_name} {$actingManager->last_name}") ?: 'A manager';
+                $removedNames = empty($removedEmpIds) ? [] : DB::table('employees')
+                    ->whereIn('emp_id', $removedEmpIds)
+                    ->selectRaw("CONCAT(first_name, ' ', last_name) as name")
+                    ->pluck('name')
+                    ->all();
+                $csMessage = "{$actingManager->department} Manager {$managerName} reassigned Ticket {$ticketRef}: \"{$title}\" to {$empNamesStr}."
+                    . (!empty($removedNames) ? ' Removed: ' . implode(', ', $removedNames) . '.' : '');
+
+                $this->notificationService->notifyCS(
+                    'Manager Reassigned Ticket',
+                    $csMessage,
+                    $ticketId,
+                    [
+                        'ticket_id' => $ticketId,
+                        'ticket_ref' => $ticketRef,
+                        'title' => $title,
+                        'type' => 'manager_reassigned',
+                        'manager_id' => (int) $actingManager->emp_id,
+                        'manager_name' => $managerName,
+                        'manager_department' => $actingManager->department,
+                        'employee_ids' => array_map('intval', $validated['employee_ids']),
+                        'removed_employee_ids' => array_map('intval', $removedEmpIds),
+                    ],
+                    (int) $actingManager->emp_id,
+                    'reassignment',
+                    true
+                );
+            } else {
+                $this->notificationService->notifyCS(
+                    'Ticket Assigned',
+                    "Ticket {$ticketRef}: \"" . $title . "\" has been assigned to " . $empNamesStr . ".",
+                    $ticketId,
+                    null,
+                    $assignedBy
+                );
+            }
 
             if ($ticket->requested_by) {
                 $this->notificationService->notifyRecipient(
@@ -887,11 +934,23 @@ class EmployeeAssignmentService
             return ['status' => 404, 'data' => ['message' => 'Ticket not found']];
         }
 
+        // Spec 0048 (AC-2): employees no longer set Pending or On Hold; they send a hold request to CS.
+        $requestedStatus = strtolower(trim((string) ($validated['status'] ?? '')));
+        if (in_array($requestedStatus, ['pending', 'on hold'], true)) {
+            return [
+                'status' => 422,
+                'data' => [
+                    'message' => 'Employees cannot set Pending or On Hold directly. Send an On Hold request for Customer Service to review.',
+                    'code' => 'HOLD_APPROVAL_REQUIRED',
+                ],
+            ];
+        }
+
         if ((int) $ticket->ticket_status_ID === 11) {
             return [
                 'status' => 422,
                 'data' => [
-                    'message' => 'Ticket is currently on hold. Customer Service must resume it before work or updates can be logged.',
+                    'message' => 'Ticket is currently On Hold. Resume the ticket before resolving or updating it.',
                     'code' => 'TICKET_ON_HOLD',
                 ],
             ];
@@ -927,6 +986,16 @@ class EmployeeAssignmentService
 
         // Internal tickets store a placeholder in created_by, so there is no customer to notify.
         $notifyCustomer = !(bool) $ticket->is_internal;
+
+        // Spec 0048 (AC-6): while an On Hold request is pending, no status change (proof included).
+        // Work logs and internal notes carry no status and are still allowed.
+        if ($isProof || ($newStatusName && $this->isDifferentStatus($ticket, $newStatusName))) {
+            $gate = app(HoldRequestGate::class);
+            $blocked = $gate->blockedResponse($gate->hasPendingRequest($ticketId));
+            if ($blocked !== null) {
+                return $blocked;
+            }
+        }
 
         // Validate the status change before any side effects: replacing proofs and binding
         // attachments call attachment-service, which a database rollback cannot undo.
@@ -1236,6 +1305,16 @@ class EmployeeAssignmentService
      *
      * Returns a 422 response payload when the transition is not allowed, or null when it is.
      */
+    /** Spec 0048: true when the named status differs from the ticket's current one. */
+    private function isDifferentStatus(object $ticket, string $statusName): bool
+    {
+        $statusId = DB::table('ticket_statuses')
+            ->whereRaw('LOWER(status_name) = ?', [strtolower(trim($statusName))])
+            ->value('ticket_status_ID');
+
+        return !$statusId || (int) $statusId !== (int) $ticket->ticket_status_ID;
+    }
+
     private function validateEmployeeStatusChange(object $ticket, string $newStatusName): ?array
     {
         $statusId = DB::table('ticket_statuses')
@@ -1296,6 +1375,49 @@ class EmployeeAssignmentService
      * reassigned when someone new takes over, or returned_to_cs when nobody is left holding the ticket.
      * Must run inside the transaction that changes ticket_assignments (AC-21).
      */
+    /**
+     * Internal timeline entry for a Service or IT manager reassignment. CS sees it in the timeline
+     * and on the Assigned queue until a CS user acknowledges it. Never shown to customers.
+     *
+     * @param  int[]  $beforeIds
+     * @param  int[]  $afterIds
+     * @param  int[]  $addedIds
+     * @param  int[]  $removedIds
+     */
+    private function recordManagerReassignment(int $ticketId, object $manager, array $beforeIds, array $afterIds, array $addedIds, array $removedIds): void
+    {
+        $names = DB::table('employees')
+            ->whereIn('emp_id', array_unique(array_merge($beforeIds, $afterIds)))
+            ->selectRaw("emp_id, TRIM(CONCAT(COALESCE(first_name, ''), ' ', COALESCE(last_name, ''))) as name")
+            ->pluck('name', 'emp_id');
+        $people = fn (array $ids) => array_map(
+            fn ($id) => ['id' => $id, 'name' => $names[$id] ?? "Employee #{$id}"],
+            array_values($ids)
+        );
+
+        $department = (string) $manager->department;
+        DB::table('ticket_audit_logs')->insert([
+            'ticket_ID' => $ticketId,
+            'action_type' => 'manager_reassigned',
+            'event_type' => 'manager_reassigned',
+            'action_by_ID' => (int) $manager->emp_id,
+            'actor_type' => 'employee',
+            'actor_role' => strtolower($department) === 'it' ? 'it_manager' : 'service_manager',
+            'before_state' => json_encode(['assignees' => array_column($people($beforeIds), 'name')]),
+            'after_state' => json_encode(['assignees' => array_column($people($afterIds), 'name')]),
+            'details' => json_encode([
+                'manager_id' => (int) $manager->emp_id,
+                'manager_name' => trim("{$manager->first_name} {$manager->last_name}"),
+                'department' => $department,
+                'added' => $people($addedIds),
+                'removed' => $people($removedIds),
+            ]),
+            'is_system' => 0,
+            'is_internal' => 1,
+            'created_at' => now(),
+        ]);
+    }
+
     private function recordAssignmentChange(int $ticketId, array $removedEmpIds, array $addedEmpIds, int $assignedBy): void
     {
         if (!empty($removedEmpIds)) {
@@ -1623,7 +1745,10 @@ class EmployeeAssignmentService
                 });
         }
 
-        return $rows->map(function ($row) use ($pendingReassigns, $deniedReassigns, $deniedAuditReasons, $ticketTimelines) {
+        // Spec 0048: status column display state from ticket-service (display only, so it fails open).
+        $holdStates = app(HoldRequestGate::class)->statesFor($rows->pluck('ticket_ID')->all());
+
+        return $rows->map(function ($row) use ($pendingReassigns, $deniedReassigns, $deniedAuditReasons, $ticketTimelines, $holdStates) {
             $pendingReassign = $pendingReassigns->get($row->ticket_ID);
             $deniedReassign = $deniedReassigns->get($row->ticket_ID);
 
@@ -1672,6 +1797,7 @@ class EmployeeAssignmentService
                 'is_internal' => ($row->ticket_type ?? '') === 'Internal',
                 'last_reminder_sent_at' => $row->last_reminder_sent_at ? Carbon::parse($row->last_reminder_sent_at)->toIso8601String() : null,
                 'timeline' => $ticketTimelines->get($row->ticket_ID, []),
+                'hold_request_state' => $holdStates[(int) $row->ticket_ID] ?? null,
             ];
         })->values()->all();
     }
@@ -1710,6 +1836,7 @@ class EmployeeAssignmentService
                 't.last_reminder_sent_at',
                 'm.machine_name',
                 'm.serial_number',
+                't.equipment_name',
                 'c.client_name',
                 'tt.type_name as ticket_type'
             )
@@ -1728,7 +1855,9 @@ class EmployeeAssignmentService
                 'status' => $row->status_name ?? 'Open',
                 'priority' => $row->priority_name ?? 'Low',
                 'customer' => $row->client_name ?: 'Unknown Customer',
-                'equipment' => ($row->machine_name || $row->serial_number) ? ($row->machine_name . ($row->serial_number ? ' - ' . $row->serial_number : '')) : 'Unspecified Equipment',
+                // Staff type the equipment / software name on internal tickets (tickets.equipment_name).
+                'equipment' => ($row->machine_name || $row->serial_number) ? ($row->machine_name . ($row->serial_number ? ' - ' . $row->serial_number : '')) : ($row->equipment_name ?: 'Unspecified Equipment'),
+                'equipment_name' => $row->equipment_name,
                 'date' => $createdAtObj ? $createdAtObj->format('Y-m-d') : now()->format('Y-m-d'),
                 'lastUpdate' => ($updatedAtObj ?: $createdAtObj ?: now())->toIso8601String(),
                 'slaStatus' => $slaMetrics['status'],

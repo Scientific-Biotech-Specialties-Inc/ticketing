@@ -37,4 +37,10 @@ return [
         'enforce' => (bool) env('TICKETING_EDGE_ENFORCE', false),
     ],
 
+    'ticket_service' => [
+        'url' => env('TICKET_SERVICE_URL', 'http://ticket-service:8000'),
+    ],
+
+    'internal_token' => env('INTERNAL_TOKEN', ''),
+
 ];

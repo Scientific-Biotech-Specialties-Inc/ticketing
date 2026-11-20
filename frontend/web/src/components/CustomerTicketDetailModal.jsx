@@ -17,6 +17,7 @@ import FilePreviewModal from './FilePreviewModal';
 import FeedbackModal from './feedback/FeedbackModal';
 import TicketFeedbackSection from './feedback/TicketFeedbackSection';
 import TicketActivityTimeline from './TicketActivityTimeline';
+import SkeletonLoader from './SkeletonLoader';
 import {
   TicketDetailModalShell,
   ModalHeader,
@@ -37,7 +38,7 @@ import {
 } from './ticket-modal';
 import { isFeedbackFormEnabled } from '@/data/mockFeedbackData';
 import { getWindowConfiguration, getCachedWindowConfiguration } from '@/services/configurationService';
-import { getTicketTimeline } from '@/services/ticketService';
+import { getTicketTimeline, getNotifications } from '@/services/ticketService';
 import { getTicketMessages } from '@/services/messagingService';
 import { useAuth } from '@/context/AuthContext';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
@@ -72,6 +73,7 @@ export default function CustomerTicketDetailModal({
   onViewTicket,
   onFeedbackSubmitted,
   readOnly = false,
+  onDone,
 }) {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -136,7 +138,7 @@ export default function CustomerTicketDetailModal({
   // Updates / Timeline Data for Tab and Mini-Timeline
   const [timelineEvents, setTimelineEvents] = useState([]);
   const [timelineTotal, setTimelineTotal] = useState(0);
-  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineLoading, setTimelineLoading] = useState(true);
 
   // Reopen Modal State
   const [showReopenModal, setShowReopenModal] = useState(false);
@@ -187,6 +189,9 @@ export default function CustomerTicketDetailModal({
 
   const isAssignedToMe = useMemo(() => {
     if (!user || !effectiveTicket) return false;
+    // Customers are never assignees. Their client id can equal an employee id, which would
+    // otherwise show them the employee-only "Update ticket" action.
+    if (!isCSSide) return false;
     const myId = Number(user.id || user.emp_id || user.employee_id);
     const myEmail = String(user.email || '').toLowerCase().trim();
     const myName = String(user.name || `${user.first_name || ''} ${user.last_name || ''}`).toLowerCase().trim();
@@ -230,7 +235,7 @@ export default function CustomerTicketDetailModal({
       return true;
     }
     return false;
-  }, [user, effectiveTicket]);
+  }, [user, effectiveTicket, isCSSide]);
 
   const handleUpdateTicket = useCallback(() => {
     onClose?.();
@@ -277,6 +282,35 @@ export default function CustomerTicketDetailModal({
     return isNaN(n) ? null : n;
   }, [effectiveTicket?.ticket_ID, effectiveTicket?.id]);
 
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  useEffect(() => {
+    if (!ticketNumericId) return undefined;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const data = await getNotifications();
+        const list = Array.isArray(data?.notifications) ? data.notifications : [];
+        const count = list.filter((n) => {
+          if (n.is_read || n.read_at) return false;
+          let parsed = {};
+          try { parsed = typeof n.data === 'string' ? JSON.parse(n.data) : (n.data || {}); } catch { parsed = {}; }
+          const isMessage = parsed.type === 'new_message' || /new\s+message/i.test(n.title || '');
+          const tId = Number(String(n.ticket_id || parsed.ticket_id || parsed.ticketId || '').replace(/\D/g, ''));
+          return isMessage && tId === ticketNumericId;
+        }).length;
+        if (!cancelled) setUnreadMessageCount(count);
+      } catch {
+        if (!cancelled) setUnreadMessageCount(0);
+      }
+    };
+    load();
+    window.addEventListener('notifications:updated', load);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('notifications:updated', load);
+    };
+  }, [ticketNumericId]);
+
   // Fetch normalized attachments & proof files
   const normalizedAttachments = useMemo(() => {
     let list = effectiveTicket?.attachments || effectiveTicket?.ticket_attachments || [];
@@ -304,10 +338,12 @@ export default function CustomerTicketDetailModal({
 
   // Message chat attachments
   const [messageFiles, setMessageFiles] = useState([]);
+  const [messageFilesLoading, setMessageFilesLoading] = useState(Boolean(ticketNumericId));
 
   useEffect(() => {
     let isMounted = true;
     if (ticketNumericId) {
+      setMessageFilesLoading(true);
       getTicketMessages(ticketNumericId)
         .then((res) => {
           if (!isMounted) return;
@@ -330,7 +366,12 @@ export default function CustomerTicketDetailModal({
           });
           setMessageFiles(files);
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(() => {
+          if (isMounted) setMessageFilesLoading(false);
+        });
+    } else {
+      setMessageFilesLoading(false);
     }
     return () => { isMounted = false; };
   }, [ticketNumericId]);
@@ -340,7 +381,10 @@ export default function CustomerTicketDetailModal({
   }, [normalizedAttachments, messageFiles, proofFiles]);
 
   const loadTimeline = useCallback(async () => {
-    if (!ticketNumericId) return;
+    if (!ticketNumericId) {
+      setTimelineLoading(false);
+      return;
+    }
     setTimelineLoading(true);
     try {
       const res = await getTicketTimeline(ticketNumericId, { page: 1, per_page: 20, order: 'desc' });
@@ -481,8 +525,9 @@ export default function CustomerTicketDetailModal({
   const tabsConfig = [
     { id: 'details', label: 'Details' },
     ...((isCSSide || allAssignees.length >= 1) ? [{ id: 'assignees', label: 'Assignees', count: allAssignees.length }] : []),
-    { id: 'updates', label: 'Updates', count: updatesCount },
-    { id: 'files', label: 'Files', count: filesCount },
+    // A null count hides the number while that tab is still loading, so it never flashes a wrong total.
+    { id: 'updates', label: 'Updates', count: timelineLoading ? null : updatesCount },
+    { id: 'files', label: 'Files', count: messageFilesLoading ? null : filesCount },
   ];
 
   return (
@@ -508,6 +553,14 @@ export default function CustomerTicketDetailModal({
                 >
                   <MessageSquare className="w-3.5 h-3.5 text-[#1E2A78]" />
                   <span>Message customer</span>
+                  {unreadMessageCount > 0 && (
+                    <span
+                      className="ml-1 inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full bg-accent text-white text-[11px] font-bold leading-none"
+                      aria-label={`${unreadMessageCount} unread message${unreadMessageCount === 1 ? '' : 's'}`}
+                    >
+                      {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
+                    </span>
+                  )}
                 </button>
               ) : (
                 <button
@@ -518,11 +571,29 @@ export default function CustomerTicketDetailModal({
                 >
                   <MessageSquare className="w-3.5 h-3.5 text-[#1E2A78]" />
                   <span>Message Customer Support</span>
+                  {unreadMessageCount > 0 && (
+                    <span
+                      className="ml-1 inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full bg-accent text-white text-[11px] font-bold leading-none"
+                      aria-label={`${unreadMessageCount} unread message${unreadMessageCount === 1 ? '' : 's'}`}
+                    >
+                      {unreadMessageCount > 99 ? '99+' : unreadMessageCount}
+                    </span>
+                  )}
                 </button>
               )
             }
             primaryAction={
-              typeof onAssign === 'function' && effectiveTicket.status !== 'Closed' && effectiveTicket.status !== 'Discarded' ? (
+              typeof onDone === 'function' ? (
+                <button
+                  type="button"
+                  onClick={onDone}
+                  className="h-9 px-4 rounded-lg bg-[#252578] hover:bg-[#1a1a5c] text-white text-xs font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5 shadow-xs"
+                  data-testid="ticket-modal-done"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Done</span>
+                </button>
+              ) : typeof onAssign === 'function' && effectiveTicket.status !== 'Closed' && effectiveTicket.status !== 'Discarded' ? (
                 <button
                   type="button"
                   onClick={() => onAssign(effectiveTicket)}
@@ -697,17 +768,9 @@ export default function CustomerTicketDetailModal({
                       <h4 className="text-xs font-bold uppercase tracking-wider text-[#1B2033]">
                         Assigned Personnel ({allAssignees.length})
                       </h4>
-                      {allAssignees.length >= 2 && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          <MessageSquare className="w-3 h-3 text-indigo-600" />
-                          <span>Group Chat Active</span>
-                        </span>
-                      )}
                     </div>
                     <p className="text-xs text-[#5A6178] mt-0.5">
-                      {allAssignees.length >= 2
-                        ? '2 or more staff assigned. Team communication is organized in a unified group chat.'
-                        : 'Technicians and staff currently assigned to work on and resolve this ticket.'}
+                      Technicians and staff currently assigned to work on and resolve this ticket.
                     </p>
                   </div>
 
@@ -723,27 +786,6 @@ export default function CustomerTicketDetailModal({
                         <span>Manage Assignees</span>
                       </button>
                     )}
-                    {allAssignees.length >= 2 ? (
-                      <button
-                        type="button"
-                        onClick={handleRedirectToMessages}
-                        className="h-8 px-3 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-xs"
-                        title="Open group discussion with all assigned staff"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" />
-                        <span>Message Group Chat</span>
-                      </button>
-                    ) : allAssignees.length === 1 ? (
-                      <button
-                        type="button"
-                        onClick={handleRedirectToMessages}
-                        className="h-8 px-3 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-xs"
-                        title="Message assigned employee"
-                      >
-                        <MessageSquare className="w-3.5 h-3.5" />
-                        <span>Message Employee</span>
-                      </button>
-                    ) : null}
                   </div>
                 </div>
 
@@ -786,19 +828,6 @@ export default function CustomerTicketDetailModal({
                         </div>
                       </div>
 
-                      {allAssignees.length <= 2 && (
-                        <div className="shrink-0 self-end sm:self-center">
-                          <button
-                            type="button"
-                            onClick={handleRedirectToMessages}
-                            className="h-8 px-3 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer"
-                            title={`Message ${emp.firstName}`}
-                          >
-                            <MessageSquare className="w-3.5 h-3.5" />
-                            <span>Message</span>
-                          </button>
-                        </div>
-                      )}
                     </div>
                   ))}
                 </div>
@@ -814,13 +843,29 @@ export default function CustomerTicketDetailModal({
               ticketId={ticketNumericId}
               pageSize={8}
               collapsible={false}
+              showFilter={isCSSide}
             />
           </div>
         )}
 
         {activeTab === 'files' && (
           <div id="panel-files" role="tabpanel" aria-labelledby="tab-files" className="space-y-3 pt-1 animate-in fade-in duration-150">
-            {allFiles.length === 0 ? (
+            {messageFilesLoading ? (
+              <div aria-busy="true" aria-label="Loading attachments" data-testid="files-skeleton">
+                <SkeletonLoader className="h-3 w-32 mb-2" />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[0, 1].map((i) => (
+                    <div key={i} className="flex items-center gap-3 rounded-xl border border-[#D5D9E4] bg-white p-3">
+                      <SkeletonLoader className="h-10 w-10 shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <SkeletonLoader className="h-3 w-3/4" />
+                        <SkeletonLoader className="h-3 w-1/2" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : allFiles.length === 0 ? (
               <div className="p-8 text-center text-xs text-[#5A6178] rounded-xl border border-dashed border-[#D5D9E4] bg-[#F5F6FA]">
                 No files or attachments currently attached to this ticket.
               </div>

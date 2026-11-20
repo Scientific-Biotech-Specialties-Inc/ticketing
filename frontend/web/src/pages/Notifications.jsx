@@ -74,6 +74,14 @@ export const isNotificationRead = (n) => {
   return !Boolean(n.unread);
 };
 
+/** A CS reminder sent to an employee about one of their assigned tickets. */
+const isEmployeeReminder = (n, parsed) => {
+  let role = '';
+  try { role = String(JSON.parse(localStorage.getItem('user') || 'null')?.role || '').toLowerCase(); } catch { role = ''; }
+  if (role !== 'employee') return false;
+  return parsed?.type === 'ticket_reminder' || /reminder/i.test(n?.title || '');
+};
+
 export default function Notifications() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -288,6 +296,13 @@ export default function Notifications() {
     }
 
     const ticketId = n.ticket_id || parsedData?.ticket_id;
+
+    // CS reminders take the employee straight to the ticket update page for that ticket.
+    if (ticketId && isEmployeeReminder(n, parsedData)) {
+      const numericId = Number(String(ticketId).replace(/\D/g, ''));
+      navigate(`/employee/ticket-update?ticketId=${numericId}`, { state: { ticketId: numericId } });
+      return;
+    }
 
     const isNewMessage = Boolean(
       parsedData.type === 'new_message' ||
@@ -723,7 +738,7 @@ export default function Notifications() {
               }}
               onStatusUpdate={async (upd) => {
                 try {
-                  if (upd.reassignmentStatus) {
+                  if (upd.reassignmentStatus && !upd.reassignmentHandled) {
                     const nid = Number(String(activeTicket.ticket_ID || activeTicket.id).replace(/\D/g, ''));
                     const act = upd.reassignmentStatus === 'Approved' ? 'approve' : 'deny';
                     await respondReassignment({ ticketId: nid, action: act });

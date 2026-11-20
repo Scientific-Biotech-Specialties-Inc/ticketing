@@ -7,6 +7,7 @@ import { Badge, getStatusBadgeVariant } from '@/components/ui/badge';
 import { PageHeader } from '@/components/ui/page-header';
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@/components/ui/table';
 import { DataTableSkeleton, DataTableEmptyState } from '@/components/ui/data-table';
+import { Skeleton } from '@/components/ui/skeleton';
 import Pagination from '@/components/Pagination';
 import {
   DropdownMenu,
@@ -78,7 +79,7 @@ export default function MyTickets({ mode = 'all' }) {
   const location = useLocation();
   const navigate = useNavigate();
   const params = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const urlTicketId = params?.ticketId || searchParams.get('ticketId');
 
   const isLoggedOut =
@@ -117,6 +118,9 @@ export default function MyTickets({ mode = 'all' }) {
   const [feedbackVersion, setFeedbackVersion] = useState(0);
   const [drafts, setDrafts] = useState([]);
   const [loadingDrafts, setLoadingDrafts] = useState(false);
+  // Form options resolve a draft's stored machine_ID / problem_category_ID into readable names.
+  const [draftLookupOptions, setDraftLookupOptions] = useState(() => getCachedTicketFormOptions());
+  const [loadingDraftLookups, setLoadingDraftLookups] = useState(() => !getCachedTicketFormOptions());
   const [filterOptions, setFilterOptions] = useState({
     categories: [],
     statuses: [],
@@ -147,6 +151,42 @@ export default function MyTickets({ mode = 'all' }) {
       setLoadingDrafts(false);
     }
   }, [customerId, isAuthenticated]);
+
+  // Load the customer's equipment/software and problem categories so drafts show real names.
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    let cancelled = false;
+    if (!getCachedTicketFormOptions()) setLoadingDraftLookups(true);
+    getTicketFormOptions()
+      .then((opts) => { if (!cancelled) setDraftLookupOptions(opts || null); })
+      .catch((err) => {
+        if (err?.response?.status !== 401) console.warn('Failed to load ticket form options:', err);
+      })
+      .finally(() => { if (!cancelled) setLoadingDraftLookups(false); });
+    return () => { cancelled = true; };
+  }, [isAuthenticated]);
+
+  const draftEquipmentNames = useMemo(() => {
+    const map = new Map();
+    (draftLookupOptions?.assets || []).forEach((a) => {
+      map.set(String(a.machine_ID), a.label || a.name);
+    });
+    (draftLookupOptions?.machines || []).forEach((m) => {
+      const key = String(m.machine_ID);
+      if (!map.has(key) && m.machine_name) {
+        map.set(key, m.serial_number ? `${m.machine_name} - ${m.serial_number}` : m.machine_name);
+      }
+    });
+    return map;
+  }, [draftLookupOptions]);
+
+  const draftCategoryNames = useMemo(() => {
+    const map = new Map();
+    (draftLookupOptions?.problem_categories || []).forEach((c) => {
+      map.set(String(c.problem_category_ID), c.category_name || c.name);
+    });
+    return map;
+  }, [draftLookupOptions]);
 
   useEffect(() => {
     const targetTab = location.state?.tab || searchParams.get('tab');
@@ -961,7 +1001,7 @@ export default function MyTickets({ mode = 'all' }) {
         title: finalTitle,
         description: editDescription,
       };
-      if (editCategory) payload.problem_category_ID = editCategory;
+      // The server sets the category from the item (spec 0047 AC-6), so only the item is sent.
       if (editEquipment) payload.machine_ID = editEquipment;
       await updateTicket(payload);
       const timestamp = new Date().toISOString();
@@ -1449,11 +1489,21 @@ export default function MyTickets({ mode = 'all' }) {
                       </div>
                     )}
                   </TableCell>
-                  <TableCell className="text-muted-slate">
-                    {draft.machine_ID ? `Equipment #${draft.machine_ID}` : '—'}
+                  <TableCell className="text-muted-slate max-w-[200px]">
+                    {!draft.machine_ID ? '—' : loadingDraftLookups ? (
+                      <Skeleton className="h-4 w-32" data-testid="draft-equipment-skeleton" />
+                    ) : (
+                      <span className="block truncate" title={draftEquipmentNames.get(String(draft.machine_ID)) || ''}>
+                        {draftEquipmentNames.get(String(draft.machine_ID)) || 'Unavailable equipment'}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="text-muted-slate">
-                    {draft.problem_category_ID ? `Category #${draft.problem_category_ID}` : '—'}
+                    {!draft.problem_category_ID ? '—' : loadingDraftLookups ? (
+                      <Skeleton className="h-4 w-24" data-testid="draft-category-skeleton" />
+                    ) : (
+                      draftCategoryNames.get(String(draft.problem_category_ID)) || '—'
+                    )}
                   </TableCell>
                   <TableCell className="text-muted-slate text-xs whitespace-nowrap">
                     {formatDisplayDate(draft.last_saved_at || draft.updated_at)}
@@ -1543,23 +1593,10 @@ export default function MyTickets({ mode = 'all' }) {
               <div className="grid gap-4 md:grid-cols-3">
                 <div className="min-w-0 md:col-span-2">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Category</p>
-                  {editOptions ? (
-                    <select
-                      value={editCategory}
-                      onChange={(e) => setEditCategory(e.target.value)}
-                      title={editingTicket.category || ''}
-                      className="mt-1 w-full rounded-xl border border-gray-200 bg-surface px-3 py-2 text-sm text-dark-slate outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-brand-accent"
-                    >
-                      <option value="">{editingTicket.category ? `Current: ${editingTicket.category}` : 'Select category'}</option>
-                      {(editOptions.problem_categories || editOptions.category_options || []).map((cat) => (
-                        <option key={cat.problem_category_ID || cat.value} value={cat.problem_category_ID || cat.value} title={cat.category_name || cat.label || cat.name}>
-                          {cat.category_name || cat.label || cat.name}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <p className="mt-1 text-sm text-dark-slate break-words">{editingTicket.category}</p>
-                  )}
+                  {/* Spec 0047 (AC-6): read only; it follows the chosen equipment or software. */}
+                  <p className="mt-1 text-sm text-dark-slate break-words" data-testid="edit-derived-category">
+                    {(editOptions?.problem_categories || []).find(c => String(c.problem_category_ID) === String(editCategory))?.category_name || editingTicket.category || '—'}
+                  </p>
                 </div>
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Status</p>
@@ -1568,11 +1605,21 @@ export default function MyTickets({ mode = 'all' }) {
                   </p>
                 </div>
                 <div className="min-w-0 md:col-span-2">
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Equipment</p>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-slate">Equipment / Software</p>
                   {editOptions ? (
                     <select
                       value={editEquipment}
-                      onChange={(e) => setEditEquipment(e.target.value)}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setEditEquipment(value);
+                        // The category follows the item: equipment is Service, software is Software.
+                        const asset = (editOptions.assets || []).find(a => String(a.machine_ID) === String(value));
+                        if (asset) {
+                          const name = asset.asset_type === 'software' ? 'software' : 'service';
+                          const cat = (editOptions.problem_categories || []).find(c => String(c.category_name || '').trim().toLowerCase() === name);
+                          if (cat) setEditCategory(String(cat.problem_category_ID));
+                        }
+                      }}
                       title={editingTicket.equipment || ''}
                       className="mt-1 w-full rounded-xl border border-gray-200 bg-surface px-3 py-2 text-sm text-dark-slate outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-brand-accent"
                     >

@@ -379,8 +379,10 @@ export default function AdminDashboard({ initialTab = 'overview' }) {
       if (fromDate) params.date_from = fromDate;
       if (toDate) params.date_to = toDate;
       if (selectedPreset && selectedPreset !== 'Custom Range') params.preset = selectedPreset;
-      if (isSuperAdmin && selectedBranchId !== null && selectedBranchId !== undefined) {
-        params.branch_id = selectedBranchId;
+      // A superadmin always names the scope ('all' when no branch is picked); otherwise the server falls
+      // back to the superadmin's own branch and "All Branches" shows a single branch.
+      if (isSuperAdmin) {
+        params.branch_id = selectedBranchId ?? 'all';
       }
 
       const dashRes = await getAdminDashboard(params).catch((err) => {
@@ -423,7 +425,7 @@ export default function AdminDashboard({ initialTab = 'overview' }) {
   const fetchPredictiveInsights = async () => {
     try {
       const predRes = await getAdminPredictiveInsights(
-        isSuperAdmin && selectedBranchId ? { branch_id: selectedBranchId } : {}
+        isSuperAdmin ? { branch_id: selectedBranchId || 'all' } : {}
       ).catch((err) => {
         console.warn('Admin predictive insights live fetch error:', err);
         return null;

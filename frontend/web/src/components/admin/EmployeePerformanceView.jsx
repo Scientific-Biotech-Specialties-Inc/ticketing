@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { ArrowUpDown, ArrowUp, ArrowDown, AlertCircle, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getAdminEmployeePerformance } from '@/services/ticketService';
+import BranchContext from '@/context/BranchContext';
 
 // Columns the server can sort by (spec 0029 AC-6). Sorting is done by the API so ordering matches exports.
 const COLUMNS = [
@@ -22,6 +23,10 @@ export default function EmployeePerformanceView({
   dateFrom = null,
   dateTo = null,
 }) {
+  const branchCtx = useContext(BranchContext);
+  // A superadmin always names the scope ('all' when no branch is picked); otherwise the server falls back to
+  // the superadmin's own branch. Every other admin sends nothing and the server locks them to their branch.
+  const branchScope = branchCtx?.isSuperAdmin ? (branchCtx.selectedBranchId ?? 'all') : null;
   const [sortBy, setSortBy] = useState('resolution_rate');
   const [sortDir, setSortDir] = useState('desc');
   const [rows, setRows] = useState([]);
@@ -38,6 +43,7 @@ export default function EmployeePerformanceView({
         if (dateFrom) params.date_from = dateFrom;
         if (dateTo) params.date_to = dateTo;
       }
+      if (branchScope !== null) params.branch_id = branchScope;
       const api = await getAdminEmployeePerformance(params);
       setRows(Array.isArray(api?.employees) ? api.employees : []);
     } catch (err) {
@@ -45,7 +51,7 @@ export default function EmployeePerformanceView({
     } finally {
       setLoading(false);
     }
-  }, [selectedPeriod, dateFrom, dateTo, sortBy, sortDir]);
+  }, [selectedPeriod, dateFrom, dateTo, sortBy, sortDir, branchScope]);
 
   useEffect(() => {
     load();

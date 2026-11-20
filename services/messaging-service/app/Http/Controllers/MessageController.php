@@ -6,11 +6,20 @@ use App\Events\MessageSent;
 use App\Events\MessageUpdated;
 use App\Events\MessageDeleted;
 use App\Models\Message;
+use App\Services\EscalationAccess;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 class MessageController extends Controller
 {
+    protected ?EscalationAccess $escalationAccess = null;
+
+    /** One lookup helper per request, so the ticket-service answer is reused. */
+    protected function escalation(): EscalationAccess
+    {
+        return $this->escalationAccess ??= app(EscalationAccess::class);
+    }
+
     /**
      * Get parsed messaging configuration from MySQL ticket_configurations.
      */
@@ -134,12 +143,15 @@ class MessageController extends Controller
                         }
 
                         if (!$isAssigned) {
-                            return response()->json(['message' => 'You are not authorized to view this internal ticket thread.'], 403);
-                        }
-
-                        $internalMode = $messagingConfig['internal']['mode'] ?? 'requestor_cs_delegated';
-                        if ($internalMode === 'requestor_cs_only') {
-                            return response()->json(['message' => 'Assigned employee messaging on internal tickets is disabled by system policy.'], 403);
+                            // Managers the ticket was escalated to may read the thread (and join to post).
+                            if (!$this->escalation()->isEscalationManager((int) $ticket_id, $empId)) {
+                                return response()->json(['message' => 'You are not authorized to view this internal ticket thread.'], 403);
+                            }
+                        } else {
+                            $internalMode = $messagingConfig['internal']['mode'] ?? 'requestor_cs_delegated';
+                            if ($internalMode === 'requestor_cs_only') {
+                                return response()->json(['message' => 'Assigned employee messaging on internal tickets is disabled by system policy.'], 403);
+                            }
                         }
                     }
                 } else {
@@ -154,12 +166,15 @@ class MessageController extends Controller
                         }
 
                         if (!$isAssigned) {
-                            return response()->json(['message' => 'You are not assigned to this ticket.'], 403);
-                        }
-
-                        $allowDelegated = (bool)($messagingConfig['allow_delegated_employee'] ?? true);
-                        if (!$allowDelegated) {
-                            return response()->json(['message' => 'Delegated employee messaging is disabled by system policy.'], 403);
+                            // Managers the ticket was escalated to may read the thread (and join to post).
+                            if (!$this->escalation()->isEscalationManager((int) $ticket_id, $empId)) {
+                                return response()->json(['message' => 'You are not assigned to this ticket.'], 403);
+                            }
+                        } else {
+                            $allowDelegated = (bool)($messagingConfig['allow_delegated_employee'] ?? true);
+                            if (!$allowDelegated) {
+                                return response()->json(['message' => 'Delegated employee messaging is disabled by system policy.'], 403);
+                            }
                         }
                     }
                 }
@@ -227,6 +242,57 @@ class MessageController extends Controller
         return response()->json([
             'messages' => $messages
         ]);
+    }
+
+    /**
+     * POST /tickets/{ticket_id}/join: a manager the ticket was escalated to joins its conversation.
+     * Posts one "joined the conversation" system message; joining again changes nothing.
+     */
+    public function join($ticket_id)
+    {
+        $user = Auth::user();
+        if (!$user) {
+            return response()->json(['message' => 'Unauthorized'], 401);
+        }
+        if (!($user instanceof \App\Models\Employee)) {
+            return response()->json(['message' => 'Only staff can join a ticket conversation.'], 403);
+        }
+
+        $ticketId = (int) $ticket_id;
+        $ticketRecord = \Illuminate\Support\Facades\DB::connection('mysql')->table('tickets')->where('ticket_ID', $ticketId)->first();
+        if (!$ticketRecord) {
+            return response()->json(['message' => 'Ticket not found.'], 404);
+        }
+        if ((int) $ticketRecord->ticket_status_ID === 4) {
+            return response()->json(['message' => 'This conversation is archived because the ticket has been closed.'], 403);
+        }
+
+        $empId = (int) $user->emp_id;
+        if (!$this->escalation()->isEscalationManager($ticketId, $empId)) {
+            return response()->json(['message' => 'Only a manager this ticket was escalated to can join its conversation.', 'code' => 'NOT_ESCALATION_MANAGER'], 403);
+        }
+        if ($this->escalation()->hasJoined($ticketId, $empId)) {
+            return response()->json(['joined' => true, 'already_joined' => true]);
+        }
+
+        $name = trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? '')) ?: 'A manager';
+        $message = Message::create([
+            'ticket_id' => $ticketId,
+            'sender_id' => null,
+            'sender_name' => 'System',
+            'sender_type' => 'system',
+            'sender_role' => 'System',
+            'message' => "{$name} (" . EscalationAccess::roleLabel($user) . ') joined the conversation.',
+            'attachments' => [],
+            'is_internal' => !empty($ticketRecord->is_internal),
+            'exclude_ai' => true,
+            'event' => EscalationAccess::JOIN_EVENT,
+            'joined_emp_id' => $empId,
+        ]);
+
+        broadcast(new MessageSent($message));
+
+        return response()->json(['joined' => true, 'already_joined' => false, 'message_obj' => $message], 201);
     }
 
     /**
@@ -394,6 +460,12 @@ class MessageController extends Controller
                     }
                     $senderType = 'employee';
                     $senderRole = 'Assigned Employee';
+                } elseif ($this->escalation()->isEscalationManager((int) $ticket_id, (int) $senderId)) {
+                    if (!$this->escalation()->hasJoined((int) $ticket_id, (int) $senderId)) {
+                        return response()->json(['message' => 'Join the conversation before sending a message.', 'code' => 'NOT_JOINED'], 403);
+                    }
+                    $senderType = 'employee';
+                    $senderRole = EscalationAccess::roleLabel($user);
                 } else {
                     return response()->json(['message' => 'You are not authorized to post to this internal ticket thread.'], 403);
                 }
@@ -418,7 +490,13 @@ class MessageController extends Controller
                         $senderRole = 'Staff / Engineer';
                     }
 
-                    if (!$isRequester && !$isAdmin) {
+                    if (!$isRequester && !$isAdmin && !$isAssigned && $this->escalation()->isEscalationManager((int) $ticket_id, (int) $senderId)) {
+                        // A manager the ticket was escalated to posts after joining the conversation.
+                        if (!$this->escalation()->hasJoined((int) $ticket_id, (int) $senderId)) {
+                            return response()->json(['message' => 'Join the conversation before sending a message.', 'code' => 'NOT_JOINED'], 403);
+                        }
+                        $senderRole = EscalationAccess::roleLabel($user);
+                    } elseif (!$isRequester && !$isAdmin) {
                         if (!$isAssigned) {
                             return response()->json(['message' => 'You are not assigned to this ticket.'], 403);
                         }

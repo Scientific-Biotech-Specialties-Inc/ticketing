@@ -73,6 +73,19 @@ export function BranchProvider({ children }) {
         const data = Array.isArray(res) ? res : (res?.branches || res?.data || []);
         if (isMounted && Array.isArray(data) && data.length > 0) {
           setBranches(data);
+          // A stored selection that is not a real branch (an old placeholder, or a branch since removed)
+          // would make the server fall back to some other branch. Reset it to All Branches instead.
+          if (isSuperAdmin) {
+            setSelectedBranchIdState((current) => {
+              if (current === null || current === 'all') return current;
+              const known = data.some(
+                (b) => String(b.id) === String(current) || String(b.slug) === String(current)
+              );
+              if (known) return current;
+              setStoredBranchId(null);
+              return null;
+            });
+          }
           return;
         }
       } catch {

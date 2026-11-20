@@ -768,6 +768,8 @@ class AuthController extends Controller
                     'name' => trim($user->first_name . ' ' . $user->last_name),
                     'role' => $user->role,
                     'department' => $user->department,
+                    'branch' => $user->branch,
+                    'branch_id' => $user->branch_id,
                     'is_readonly_cms' => true,
                     'created_at' => $user->created_at,
                     'updated_at' => $user->updated_at,
@@ -778,6 +780,15 @@ class AuthController extends Controller
 
         // Staff signed in through the central auth module arrive as a verified JWT DTO, not an Employee model.
         if ($user instanceof \Ticketing\Auth\Dto\AuthenticatedUserDto) {
+            // The token may not carry branch or join date; the synced employee record does.
+            $local = null;
+            if ($user->emp_id ?? $user->id) {
+                $local = Employee::where('emp_id', $user->emp_id ?? $user->id)->first();
+            }
+            if (!$local && $user->email) {
+                $local = Employee::where('email', $user->email)->first();
+            }
+
             return response()->json([
                 'user' => [
                     'id' => $user->emp_id ?? $user->id,
@@ -788,10 +799,12 @@ class AuthController extends Controller
                     'name' => $user->name ?: trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? '')),
                     'role' => $user->role,
                     'department' => $user->department,
-                    'branch' => $user->branch,
-                    'branch_id' => $user->branch_id,
+                    'branch' => $user->branch ?: $local?->branch,
+                    'branch_id' => $user->branch_id ?? $local?->branch_id,
                     'phone' => $user->phone_number,
                     'is_readonly_cms' => true,
+                    // Null when the record has no join date; the page then hides "Member since".
+                    'created_at' => $local?->created_at,
                 ],
                 'is_first_login' => false,
             ]);

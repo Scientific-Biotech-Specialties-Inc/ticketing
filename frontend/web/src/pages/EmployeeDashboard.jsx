@@ -45,6 +45,7 @@ import { DataTableSkeleton } from '@/components/ui/data-table';
 import { Button } from '@/components/ui/button';
 import { formatDisplayDate } from '@/utils/dateUtils';
 import { cn } from '@/lib/utils';
+import { holdRequestDisplayStatus } from '@/utils/holdRequestStatus';
 
 export default function EmployeeDashboard() {
   const { user } = useAuth();
@@ -674,7 +675,7 @@ export default function EmployeeDashboard() {
                               {t.customer || 'Hospital Facility'}
                             </TableCell>
                             <TableCell>
-                              <Badge variant={getStatusBadgeVariant(t.status)}>{t.status}</Badge>
+                              <Badge variant={getStatusBadgeVariant(holdRequestDisplayStatus(t))}>{holdRequestDisplayStatus(t)}</Badge>
                             </TableCell>
                             <TableCell>
                               <Badge variant={t.priority === 'Critical' ? 'destructive' : t.priority === 'High' ? 'warning' : 'secondary'}>
@@ -774,7 +775,7 @@ export default function EmployeeDashboard() {
                         <div className="min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="font-bold text-xs text-primary">{t.id}</span>
-                            <Badge variant={getStatusBadgeVariant(t.status)}>{t.status}</Badge>
+                            <Badge variant={getStatusBadgeVariant(holdRequestDisplayStatus(t))}>{holdRequestDisplayStatus(t)}</Badge>
                           </div>
                           <p className="text-xs font-medium text-foreground truncate mt-1">{t.title}</p>
                           <p className="text-[11px] text-muted-foreground">
@@ -851,7 +852,7 @@ export default function EmployeeDashboard() {
                               {t.equipment || 'General System'}
                             </TableCell>
                             <TableCell>
-                              <Badge variant={getStatusBadgeVariant(t.status)}>{t.status}</Badge>
+                              <Badge variant={getStatusBadgeVariant(holdRequestDisplayStatus(t))}>{holdRequestDisplayStatus(t)}</Badge>
                             </TableCell>
                           </TableRow>
                         ))

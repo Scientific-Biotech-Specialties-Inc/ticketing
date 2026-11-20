@@ -16,6 +16,17 @@ trait CreatesApplication
 
         $app->make(Kernel::class)->bootstrap();
 
+        // Safety net: a test run must never reach a real database (RefreshDatabase would wipe it).
+        // If config ever loads from somewhere other than phpunit.xml, stop before any test runs.
+        $connection = $app['config']->get('database.default');
+        $database = $app['config']->get("database.connections.{$connection}.database");
+        if ($connection !== 'sqlite' || $database !== ':memory:') {
+            throw new \RuntimeException(
+                "Refusing to run tests against database [{$connection}:{$database}]. "
+                . 'Expected in-memory SQLite. Run `php artisan config:clear` and check phpunit.xml.'
+            );
+        }
+
         return $app;
     }
 }

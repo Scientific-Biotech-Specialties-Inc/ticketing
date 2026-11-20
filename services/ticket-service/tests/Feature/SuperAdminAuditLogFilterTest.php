@@ -182,7 +182,9 @@ class SuperAdminAuditLogFilterTest extends TestCase
             'actor_type' => 'system', 'details' => json_encode(['sla_status' => 'Breached']), 'created_at' => '2026-10-11 10:00:00',
         ]);
 
-        $rows = $this->mine($this->fetch('?per_page=200')->assertOk());
+        // Limited to this test's own dates so newer entries in the shared test database cannot push
+        // these rows off the page.
+        $rows = $this->mine($this->fetch('?per_page=200&date_from=2026-09-30&date_to=2026-10-12')->assertOk());
         $targets = array_values(array_unique(array_column($rows, 'target')));
         sort($targets);
 

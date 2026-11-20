@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
-import { Filter, Plus, Search, Inbox, AlertTriangle, FileText, Edit3, Trash2, AlertCircle } from 'lucide-react';
+import { Filter, Plus, Search, Inbox, AlertTriangle } from 'lucide-react';
 import TicketModal from '@/components/TicketModal';
 import CustomerTicketDetailModal from '@/components/CustomerTicketDetailModal';
 import { AssignModal } from '@/components/CSModals';
@@ -18,8 +18,6 @@ import {
   getDepartments,
   acceptTicket,
   assignTicketToEmployees,
-  getTicketDrafts,
-  deleteTicketDraft,
   reopenTicket,
 } from '@/services/ticketService';
 import { statusColors } from '@/constants/employeeTickets';
@@ -62,13 +60,7 @@ export default function EmployeeMyTickets({ roleContext }) {
   const [loadingText, setLoadingText] = useState('Loading...');
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingDraft, setEditingDraft] = useState(null);
-  const [activeTab, setActiveTab] = useState(
-    location.state?.tab === 'drafts' || searchParams.get('tab') === 'drafts' ? 'drafts' : 'tickets'
-  );
-  const [drafts, setDrafts] = useState([]);
-  const [loadingDrafts, setLoadingDrafts] = useState(false);
-  const [formOptions, setFormOptions] = useState(() => getCachedTicketFormOptions() || {});
+  // Internal tickets have no drafts: staff submit them directly (customers keep drafts).
   const isHistory = false;
 
   const isCsRole = useMemo(() => {
@@ -82,88 +74,6 @@ export default function EmployeeMyTickets({ roleContext }) {
   const [csDepartments, setCsDepartments] = useState([]);
   const [csPriorityOptions] = useState(['Low', 'Medium', 'High', 'Critical']);
   const storageKey = roleContext === 'cs' ? 'cs_created_tickets' : 'employee_created_tickets';
-
-  const currentUserId = useMemo(() => {
-    const uid = user?.client_ID ?? user?.client_id ?? user?.id ?? user?.emp_id;
-    if (uid) return Number(uid);
-    for (const key of ['user', 'auth_user']) {
-      for (const store of [sessionStorage, localStorage]) {
-        try {
-          const parsed = JSON.parse(store.getItem(key) || 'null');
-          const id = parsed?.client_ID ?? parsed?.client_id ?? parsed?.id ?? parsed?.emp_id;
-          if (id) return Number(id);
-        } catch { /* ignore */ }
-      }
-    }
-    return 1;
-  }, [user]);
-
-  const loadDrafts = useCallback(async () => {
-    setLoadingDrafts(true);
-    try {
-      const list = await getTicketDrafts({ client_id: currentUserId });
-      setDrafts(list || []);
-    } catch (err) {
-      console.warn('Failed to load ticket drafts:', err);
-    } finally {
-      setLoadingDrafts(false);
-    }
-  }, [currentUserId]);
-
-  useEffect(() => {
-    loadDrafts();
-    getTicketFormOptions({ forceRefresh: false })
-      .then((opts) => {
-        if (opts) setFormOptions(opts);
-      })
-      .catch(() => {});
-  }, [loadDrafts]);
-
-  useEffect(() => {
-    const targetTab = location.state?.tab || searchParams.get('tab');
-    if (targetTab) {
-      setActiveTab(targetTab);
-      if (targetTab === 'drafts') {
-        loadDrafts();
-      }
-    }
-  }, [location.state?.tab, location.state?.draftSavedAt, searchParams, loadDrafts]);
-
-  const handleEditDraft = (draft) => {
-    setEditingDraft(draft);
-    setIsModalOpen(true);
-  };
-
-  const handleDeleteDraft = async (draft) => {
-    if (!draft?.id) return;
-    try {
-      await deleteTicketDraft(draft.id, { client_id: currentUserId });
-      setDrafts((prev) => prev.filter((d) => d.id !== draft.id));
-    } catch (err) {
-      console.error('Failed to delete draft:', err);
-      window.alert(err?.response?.data?.message || 'Failed to delete draft.');
-    }
-  };
-
-  const getEquipmentName = (machineId) => {
-    if (!machineId) return '—';
-    const eqOpts = formOptions?.equipment_options || [];
-    const found = eqOpts.find((o) => String(o.value) === String(machineId));
-    if (found) return found.label;
-    const mach = (formOptions?.machines || []).find((m) => String(m.machine_ID) === String(machineId));
-    if (mach) return `${mach.machine_name} - ${mach.serial_number}`;
-    return `Equipment #${machineId}`;
-  };
-
-  const getCategoryName = (catId) => {
-    if (!catId) return '—';
-    const catOpts = formOptions?.category_options || [];
-    const found = catOpts.find((o) => String(o.value) === String(catId));
-    if (found) return found.label;
-    const cat = (formOptions?.problem_categories || []).find((c) => String(c.problem_category_ID) === String(catId));
-    if (cat) return cat.category_name;
-    return `Category #${catId}`;
-  };
 
   const [filters, setFilters] = useState({
     status: '',
@@ -300,7 +210,7 @@ export default function EmployeeMyTickets({ roleContext }) {
 
   useEffect(() => {
     setPage(1);
-  }, [filters, isHistory, activeTab]);
+  }, [filters, isHistory]);
 
   const paginatedTickets = useMemo(() => {
     const start = (page - 1) * itemsPerPage;
@@ -337,7 +247,9 @@ export default function EmployeeMyTickets({ roleContext }) {
     try {
       const options = getCachedTicketFormOptions() || await getTicketFormOptions();
       const category = options.category_options?.find((item) => String(item.value) === String(payload.problem_category_ID))?.label || 'General';
-      const equipment = options.equipment_options?.find((item) => String(item.value) === String(payload.machine_ID))?.label || 'Unspecified equipment';
+      const equipment = payload.equipment_name
+        || options.equipment_options?.find((item) => String(item.value) === String(payload.machine_ID))?.label
+        || 'Unspecified equipment';
       const response = await createInternalTicket(payload);
       const createdTicket = response.ticket || {};
       const numericTicketId = createdTicket.ticket_ID || Number(String(response.id || '').replace(/\D/g, ''));
@@ -595,10 +507,7 @@ export default function EmployeeMyTickets({ roleContext }) {
         subtitle="Track and manage your submitted support tickets."
         actions={
           <Button
-            onClick={() => {
-              setEditingDraft(null);
-              setIsModalOpen(true);
-            }}
+            onClick={() => setIsModalOpen(true)}
             icon={<Plus className="h-4 w-4" />}
           >
             Create Ticket
@@ -609,46 +518,16 @@ export default function EmployeeMyTickets({ roleContext }) {
       <div className="flex border-b border-gray-200 gap-2">
         <button
           type="button"
-          onClick={() => {
-            setActiveTab('tickets');
-            setSearchParams({});
-          }}
-          className={`pb-3 px-4 text-sm font-bold transition-all border-b-2 -mb-px flex items-center gap-2 cursor-pointer ${
-            activeTab === 'tickets'
-              ? 'border-brand-primary text-brand-primary'
-              : 'border-transparent text-muted-slate hover:text-dark-slate'
-          }`}
+          onClick={() => setSearchParams({})}
+          className="pb-3 px-4 text-sm font-bold transition-all border-b-2 -mb-px flex items-center gap-2 cursor-pointer border-brand-primary text-brand-primary"
         >
           All Tickets
-          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-            activeTab === 'tickets' ? 'bg-brand-primary/10 text-brand-primary' : 'bg-page text-muted-slate'
-          }`}>
+          <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-brand-primary/10 text-brand-primary">
             {visibleTickets.length}
-          </span>
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setActiveTab('drafts');
-            setSearchParams({ tab: 'drafts' });
-            loadDrafts();
-          }}
-          className={`pb-3 px-4 text-sm font-bold transition-all border-b-2 -mb-px flex items-center gap-2 cursor-pointer ${
-            activeTab === 'drafts'
-              ? 'border-brand-primary text-brand-primary'
-              : 'border-transparent text-muted-slate hover:text-dark-slate'
-          }`}
-        >
-          My Drafts
-          <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
-            activeTab === 'drafts' ? 'bg-amber-100 text-amber-800' : 'bg-page text-muted-slate'
-          }`}>
-            {drafts.length}
           </span>
         </button>
       </div>
 
-      {activeTab !== 'drafts' ? (
         <>
           {/* Filter toolbar: Search bar in the same row as dropdown filters */}
           <div className="flex flex-col lg:flex-row items-center gap-2.5 w-full shrink-0">
@@ -805,143 +684,18 @@ export default function EmployeeMyTickets({ roleContext }) {
             )}
           </div>
         </>
-      ) : (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-gray-150 shadow-xs">
-            <div>
-              <h2 className="text-sm font-bold text-gray-800">Your Saved Drafts</h2>
-              <p className="text-xs text-gray-500">Finish and submit in-progress tickets at your convenience.</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className={`px-3 py-1 rounded-full text-xs font-bold border ${
-                drafts.length >= 10
-                  ? 'bg-rose-50 text-rose-700 border-rose-200'
-                  : drafts.length >= 7
-                  ? 'bg-amber-50 text-amber-700 border-amber-200'
-                  : 'bg-blue-50 text-[#252578] border-blue-200'
-              }`}>
-                {drafts.length} / 10 Drafts
-              </span>
-            </div>
-          </div>
-
-          {drafts.length >= 10 && (
-            <div className="rounded-xl bg-amber-50 border border-amber-200 p-3.5 text-xs font-semibold text-amber-800 flex items-center gap-2.5">
-              <AlertCircle size={16} className="text-amber-600 shrink-0" />
-              <span>You have reached the maximum allowed limit of 10 drafts. Please submit or delete an existing draft to create new ones.</span>
-            </div>
-          )}
-
-          <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-surface shadow-xs">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Draft Title / Summary</TableHead>
-                  <TableHead>Equipment</TableHead>
-                  <TableHead>Category</TableHead>
-                  <TableHead>Last Saved</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {drafts.length === 0 && loadingDrafts && (
-                  <DataTableSkeleton columns={5} rows={3} />
-                )}
-                {drafts.length === 0 && !loadingDrafts && (
-                  <DataTableEmptyState
-                    colSpan={5}
-                    icon={FileText}
-                    title="No saved drafts"
-                    description="When creating a ticket, you can click 'Save as Draft' to continue anytime."
-                    action={
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          setEditingDraft(null);
-                          setIsModalOpen(true);
-                        }}
-                        icon={<Plus className="h-3.5 w-3.5" />}
-                      >
-                        Create New Ticket
-                      </Button>
-                    }
-                  />
-                )}
-                {drafts.map((draft) => (
-                  <TableRow
-                    key={draft.id}
-                    onClick={() => handleEditDraft(draft)}
-                    className="cursor-pointer hover:bg-muted/50 transition-colors"
-                  >
-                    <TableCell className="max-w-[280px]">
-                      <div className="truncate font-semibold text-dark-slate" title={draft.title}>
-                        {draft.title || 'Untitled Draft'}
-                      </div>
-                      {draft.description && (
-                        <div className="text-xs text-muted-slate truncate mt-0.5">
-                          {draft.description}
-                        </div>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-muted-slate max-w-[220px] truncate">
-                      {getEquipmentName(draft.machine_ID)}
-                    </TableCell>
-                    <TableCell className="text-muted-slate">
-                      {getCategoryName(draft.problem_category_ID)}
-                    </TableCell>
-                    <TableCell className="text-muted-slate text-xs whitespace-nowrap">
-                      {formatDate(draft.last_saved_at || draft.updated_at)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleEditDraft(draft)}
-                          icon={<Edit3 className="h-3.5 w-3.5" />}
-                        >
-                          Continue
-                        </Button>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => handleDeleteDraft(draft)}
-                          icon={<Trash2 className="h-3.5 w-3.5" />}
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        </div>
-      )}
 
       <TicketModal
-        showDepartmentSelector
+        departmentFromCategory
+        freeTextEquipment
         isOpen={isModalOpen}
-        onClose={() => {
-          setIsModalOpen(false);
-          setEditingDraft(null);
-        }}
+        allowDrafts={false}
+        onClose={() => setIsModalOpen(false)}
         onSubmit={async (payload) => {
           await handleCreateTicket(payload);
-          setEditingDraft(null);
-          setActiveTab('tickets');
           setSearchParams({});
-          loadDrafts();
         }}
         openTicketsCount={openInternalTicketsCount}
-        initialDraft={editingDraft}
-        onDraftSaved={() => {
-          setEditingDraft(null);
-          setActiveTab('drafts');
-          setSearchParams({ tab: 'drafts' });
-          loadDrafts();
-        }}
       />
 
       {/* Ticket Detail Summary Modal */}
@@ -957,8 +711,8 @@ export default function EmployeeMyTickets({ roleContext }) {
 
       {confirmDiscard && (
         <ConfirmationModal
-          open={!!confirmDiscard}
-          onOpenChange={(open) => !open && setConfirmDiscard(null)}
+          isOpen={!!confirmDiscard}
+          onClose={() => setConfirmDiscard(null)}
           title="Discard this ticket?"
           description={`This will mark ${confirmDiscard.id} as Discarded.`}
           confirmLabel="Discard"

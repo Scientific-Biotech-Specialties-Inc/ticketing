@@ -57,6 +57,10 @@ class TicketsSprint6BackendTest extends TestCase
 
         $this->setUpDatabaseSchema();
         $this->seedTestData();
+
+        // The draft tests count this customer's drafts, so drafts earlier runs left in the shared test
+        // database must not count. Removed inside this test's transaction only.
+        DB::table('ticket_drafts')->whereIn('client_id', [$this->testClientId, $this->otherClientId])->delete();
     }
 
     protected function setUpDatabaseSchema(): void

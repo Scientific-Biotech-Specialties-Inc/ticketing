@@ -9,14 +9,14 @@ use App\Models\KbChunk;
 use App\Models\KbEmbedding;
 use App\Services\RagService;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class KbArticleHardDeleteTest extends TestCase
 {
-    use DatabaseTransactions;
+    use RefreshDatabase;
 
     protected RagService $ragService;
 

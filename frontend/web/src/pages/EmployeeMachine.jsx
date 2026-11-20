@@ -16,6 +16,7 @@ import { Badge, getStatusBadgeVariant } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@/components/ui/table';
 import { DataTableSkeleton, DataTableEmptyState } from '@/components/ui/data-table';
 import Pagination from '@/components/Pagination';
+import { holdRequestDisplayStatus } from '@/utils/holdRequestStatus';
 
 const CLOSED_STATUSES = ['Closed', 'Resolved', 'Discarded', 'Discarded by Customer'];
 
@@ -35,7 +36,7 @@ const isPendingEvaluationTicket = (ticket) => {
 const getDisplayStatus = (ticket) => (
   ticket.proofRejected
     ? 'Proof Rejected'
-    : ticket.status
+    : holdRequestDisplayStatus(ticket) // Spec 0048
 );
 
 const isInternalTicket = (ticket) => (
@@ -215,6 +216,14 @@ export default function EmployeeMachine() {
   useEffect(() => {
     loadTickets({ forceRefresh: true });
   }, [loadTickets]);
+
+  // Open the tab requested by navigation (e.g. Pending Evaluation after a proof upload).
+  useEffect(() => {
+    const requested = location.state?.tab || new URLSearchParams(location.search).get('tab');
+    if (['in_progress', 'pending_evaluation', 'all'].includes(requested)) {
+      setAssignedTab(requested);
+    }
+  }, [location.state, location.search]);
 
   useEffect(() => {
     const focusId = location.state?.focusTicketId;

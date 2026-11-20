@@ -36,6 +36,13 @@ class EmployeeReassignmentService
             return ['status' => 403, 'data' => ['message' => 'You are not assigned to this ticket.']];
         }
 
+        // Spec 0048 (AC-5): no reassignment request while an On Hold request is pending.
+        $gate = app(HoldRequestGate::class);
+        $blocked = $gate->blockedResponse($gate->hasPendingRequest($ticketId));
+        if ($blocked !== null) {
+            return $blocked;
+        }
+
         DB::transaction(function () use ($ticketId, $empId, $reason) {
             DB::table('reassignment_requests')
                 ->where('ticket_id', $ticketId)
@@ -113,7 +120,9 @@ class EmployeeReassignmentService
                     $csTitle,
                     $csMessage,
                     $ticketId,
-                    $csData
+                    $csData,
+                    'reassignment',
+                    true
                 );
             } else {
                 // Delegator is unknown or no longer a CSR: fall back to CSRs in the engineer's branch.
@@ -126,10 +135,10 @@ class EmployeeReassignmentService
 
                 if ($branchCsIds->isNotEmpty()) {
                     foreach ($branchCsIds as $csEmpId) {
-                        $this->notificationService->notifyRecipient((int) $csEmpId, 'employee', $csTitle, $csMessage, $ticketId, $csData);
+                        $this->notificationService->notifyRecipient((int) $csEmpId, 'employee', $csTitle, $csMessage, $ticketId, $csData, 'reassignment', true);
                     }
                 } else {
-                    $this->notificationService->notifyCS($csTitle, $csMessage, $ticketId, $csData);
+                    $this->notificationService->notifyCS($csTitle, $csMessage, $ticketId, $csData, null, 'reassignment', true);
                 }
             }
 
@@ -181,29 +190,43 @@ class EmployeeReassignmentService
         }
 
         $targetEmpId = $pendingRequest->employee_id;
-        $newEmpId = $validated['new_employee_id'] ?? null;
+        // One or more replacement employees; `new_employee_id` stays accepted for older clients.
+        $newEmpIds = collect($validated['new_employee_ids'] ?? [])
+            ->push($validated['new_employee_id'] ?? null)
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->reject(fn ($id) => $id === (int) $targetEmpId)
+            ->unique()
+            ->values()
+            ->all();
+        $newEmpId = $newEmpIds[0] ?? null;
         $rawDenyReason = trim($validated['reason'] ?? '');
         $denyReason = $rawDenyReason !== '' ? mb_strtoupper(mb_substr($rawDenyReason, 0, 1)) . mb_substr($rawDenyReason, 1) : '';
 
-        if ($validated['action'] === 'approve' && $newEmpId) {
-            $newEmp = DB::table('employees')->where('emp_id', $newEmpId)->first();
-            if ($newEmp) {
-                $track = \App\Http\Controllers\EmployeeDirectoryController::resolveCategoryTrack($ticket);
+        if ($validated['action'] === 'approve' && !empty($newEmpIds)) {
+            $track = \App\Http\Controllers\EmployeeDirectoryController::resolveCategoryTrack($ticket);
+            foreach ($newEmpIds as $candidateId) {
+                $newEmp = DB::table('employees')->where('emp_id', $candidateId)->first();
+                if (!$newEmp) {
+                    continue;
+                }
                 $eligibility = \App\Http\Controllers\EmployeeDirectoryController::checkEligibility($newEmp, $ticket, $track);
                 if (!$eligibility['eligible']) {
+                    $name = trim(($newEmp->first_name ?? '') . ' ' . ($newEmp->last_name ?? ''));
                     return [
                         'status' => 422,
                         'data' => [
-                            'message' => 'The selected employee is not eligible for this ticket category.',
+                            'message' => ($name !== '' ? $name : 'The selected employee') . ' is not eligible for this ticket category.',
                             'code' => 'INELIGIBLE_EMPLOYEE',
                             'reason' => $eligibility['reason'],
+                            'employee_id' => (int) $candidateId,
                         ],
                     ];
                 }
             }
         }
 
-        DB::transaction(function () use ($ticketId, $pendingRequest, $validated, $csEmpId, $targetEmpId, $newEmpId, $denyReason) {
+        DB::transaction(function () use ($ticketId, $pendingRequest, $validated, $csEmpId, $targetEmpId, $newEmpId, $newEmpIds, $denyReason) {
             if ($validated['action'] === 'approve') {
                 DB::table('reassignment_requests')
                     ->where('request_id', $pendingRequest->request_id)
@@ -239,10 +262,21 @@ class EmployeeReassignmentService
                     ->where('ticket_ID', $ticketId)
                     ->update($updateData);
 
-                if ($newEmpId) {
+                // Skip anyone already on the ticket (co-assignees keep their existing row).
+                $alreadyAssigned = DB::table('ticket_assignments')
+                    ->where('ticket_ID', $ticketId)
+                    ->whereIn('employee_ID', $newEmpIds ?: [0])
+                    ->pluck('employee_ID')
+                    ->map(fn ($id) => (int) $id)
+                    ->all();
+
+                foreach ($newEmpIds as $assigneeId) {
+                    if (in_array($assigneeId, $alreadyAssigned, true)) {
+                        continue;
+                    }
                     DB::table('ticket_assignments')->insert([
                         'ticket_ID' => $ticketId,
-                        'employee_ID' => $newEmpId,
+                        'employee_ID' => $assigneeId,
                         'assigned_by' => $csEmpId,
                         'assignment_status' => 'assigned',
                         'assigned_at' => now(),
@@ -259,8 +293,8 @@ class EmployeeReassignmentService
                     $newEmpId ? AssignmentPeriodRecorder::REASON_REASSIGNED : AssignmentPeriodRecorder::REASON_RETURNED_TO_CS,
                     [(int) $targetEmpId]
                 );
-                if ($newEmpId) {
-                    $periods->open($ticketId, (int) $newEmpId, (int) $csEmpId);
+                foreach ($newEmpIds as $assigneeId) {
+                    $periods->open($ticketId, (int) $assigneeId, (int) $csEmpId);
                 }
 
                 DB::table('ticket_audit_logs')->insert([
@@ -271,6 +305,7 @@ class EmployeeReassignmentService
                     'details' => json_encode([
                         'message' => 'Reassignment request approved.',
                         'new_employee_id' => $newEmpId,
+                        'new_employee_ids' => $newEmpIds,
                     ]),
                     'created_at' => now(),
                 ]);
@@ -326,7 +361,7 @@ class EmployeeReassignmentService
             'action' => $validated['action'],
             'employee_id' => $targetEmpId,
             'assigned_to' => $validated['action'] === 'approve' ? $newEmpId : $targetEmpId,
-            'employee_ids' => $validated['action'] === 'approve' ? ($newEmpId ? [$newEmpId] : []) : [$targetEmpId],
+            'employee_ids' => $validated['action'] === 'approve' ? $newEmpIds : [$targetEmpId],
             'removed_employee_ids' => $validated['action'] === 'approve' ? [$targetEmpId] : [],
             'previous_employee_ids' => $validated['action'] === 'approve' ? [$targetEmpId] : [],
             'disapproval_reason' => $validated['action'] === 'deny' ? $denyReason : null,
@@ -356,9 +391,11 @@ class EmployeeReassignmentService
                     'reassignment'
                 );
 
-                if ($newEmpId) {
-                    $newEmpData = DB::table('employees')->where('emp_id', $newEmpId)->first();
+                $newEmpNames = [];
+                foreach ($newEmpIds as $assigneeId) {
+                    $newEmpData = DB::table('employees')->where('emp_id', $assigneeId)->first();
                     $newEmpName = $newEmpData ? ($newEmpData->first_name . ' ' . $newEmpData->last_name) : 'Engineer';
+                    $newEmpNames[] = $newEmpName;
 
                     $assignData = [
                         'ticket_id' => $ticketId,
@@ -370,7 +407,7 @@ class EmployeeReassignmentService
                     ];
 
                     $this->notificationService->notifyRecipient(
-                        $newEmpId,
+                        $assigneeId,
                         'employee',
                         'Ticket Reassigned',
                         "Ticket {$ticketRef}: \"" . $title . "\" has been reassigned to you.",
@@ -379,7 +416,7 @@ class EmployeeReassignmentService
                     );
 
                     $this->notificationService->sendTicketEmail(
-                        $newEmpId,
+                        $assigneeId,
                         'Ticket Reassigned',
                         "Ticket {$ticketRef}: \"{$title}\" has been reassigned to you.",
                         $ticketId,
@@ -416,7 +453,7 @@ class EmployeeReassignmentService
                         ];
 
                         $this->notificationService->notifyRecipient(
-                            $newEmpId,
+                            $assigneeId,
                             'employee',
                             "SLA Alert: Reassigned Ticket {$ticketRef} Already Breached",
                             "Urgent: You have been assigned Ticket {$ticketRef}: \"{$title}\" which has already breached its resolution SLA deadline ({$overdueDuration}). Immediate action required.",
@@ -426,7 +463,7 @@ class EmployeeReassignmentService
                         );
 
                         $this->notificationService->sendTicketEmail(
-                            $newEmpId,
+                            $assigneeId,
                             "SLA Alert: Reassigned Ticket {$ticketRef} Already Breached",
                             "Urgent: You have been assigned Ticket {$ticketRef}: \"{$title}\" which has already breached its resolution SLA deadline ({$overdueDuration}). Immediate action required.",
                             $ticketId,
@@ -451,7 +488,7 @@ class EmployeeReassignmentService
                                     'sla_status' => 'Breached',
                                     'due_at' => $ticket->resolution_due_at,
                                     'overdue_duration' => $overdueDuration,
-                                    'new_employee_id' => $newEmpId,
+                                    'new_employee_id' => $assigneeId,
                                 ]),
                                 'created_at' => now(),
                             ]);
@@ -461,7 +498,7 @@ class EmployeeReassignmentService
 
                 $this->notificationService->notifyCS(
                     'Reassignment Approved',
-                    "Reassignment request for Ticket {$ticketRef}: \"" . $title . "\" was approved." . ($newEmpId ? " Ticket reassigned to {$newEmpName}." : ""),
+                    "Reassignment request for Ticket {$ticketRef}: \"" . $title . "\" was approved." . (!empty($newEmpNames) ? " Ticket reassigned to " . implode(', ', $newEmpNames) . "." : ""),
                     $ticketId,
                     null,
                     $csEmpId

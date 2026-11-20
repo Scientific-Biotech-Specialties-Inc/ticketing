@@ -41,6 +41,18 @@ class CentralAuthBranchPayloadTest extends TestCase
 
         $this->setUpDatabaseSchema();
 
+        // These tests decide "new" vs "existing" staff by email, so rows other tests left behind in
+        // the shared test database must not count. Removed inside this test's transaction only.
+        Employee::whereIn('email', [
+            'admin@example.com',
+            'branchadmin@example.com',
+            'foreign_branch_agent@example.com',
+            'legacy_agent@example.com',
+            'new_agent_no_branch@example.com',
+            'new_agent_with_branch@example.com',
+            'superadmin@example.com',
+        ])->delete();
+
         Http::fake([
             '*/api/internal/branches' => Http::response([
                 'branches' => [
@@ -111,6 +123,12 @@ class CentralAuthBranchPayloadTest extends TestCase
                 $table->text('address')->nullable();
                 $table->boolean('is_active')->default(true);
                 $table->timestamps();
+            });
+        } elseif (!Schema::hasColumn('branches', 'address')) {
+            // The app treats branches.address as optional (it checks hasColumn); this test covers the
+            // payload that includes it, so make sure the optional column exists here.
+            Schema::table('branches', function ($table) {
+                $table->text('address')->nullable();
             });
         }
 
@@ -217,6 +235,7 @@ class CentralAuthBranchPayloadTest extends TestCase
         $this->assertNull($employee->branch);
     }
 
+    /** A branch admin is branch scoped: with no branch anywhere they get the default active branch (89e4989). */
     public function test_verify_employee_jwt_allows_admin_with_null_branch(): void
     {
         $middleware = new VerifyEmployeeJwt();
@@ -239,7 +258,8 @@ class CentralAuthBranchPayloadTest extends TestCase
         $this->assertEquals(200, $response->getStatusCode());
         $employee = Employee::where('email', 'admin@example.com')->first();
         $this->assertNotNull($employee);
-        $this->assertNull($employee->branch);
+        $defaultBranch = Branch::where('is_active', true)->orderBy('id')->first();
+        $this->assertSame($defaultBranch->name, $employee->branch);
     }
 
     public function test_verify_employee_jwt_allows_existing_operational_staff_with_null_branch(): void
@@ -278,6 +298,10 @@ class CentralAuthBranchPayloadTest extends TestCase
         $this->assertEquals(200, $response->getStatusCode());
     }
 
+    /**
+     * Since 89e4989, new operational staff with no branch anywhere are no longer rejected; they get the
+     * default active branch so they can work. (The method name is kept for history.)
+     */
     public function test_verify_employee_jwt_rejects_new_operational_staff_with_null_branch(): void
     {
         // New email not existing in database
@@ -298,9 +322,11 @@ class CentralAuthBranchPayloadTest extends TestCase
             return new Response('OK', 200);
         });
 
-        $this->assertEquals(422, $response->getStatusCode());
-        $content = json_decode($response->getContent(), true);
-        $this->assertEquals('BRANCH_REQUIRED_FOR_NEW_ACCOUNT', $content['error_code']);
+        $this->assertEquals(200, $response->getStatusCode());
+        $employee = Employee::where('email', 'new_agent_no_branch@example.com')->first();
+        $this->assertNotNull($employee);
+        $defaultBranch = Branch::where('is_active', true)->orderBy('id')->first();
+        $this->assertSame($defaultBranch->name, $employee->branch);
     }
 
     public function test_verify_employee_jwt_accepts_new_operational_staff_with_valid_branch(): void

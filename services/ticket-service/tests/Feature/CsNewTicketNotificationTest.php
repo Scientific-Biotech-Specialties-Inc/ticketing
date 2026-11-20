@@ -56,8 +56,12 @@ class CsNewTicketNotificationTest extends TestCase
             ['email' => $this->customer->email, 'name' => 'CS Notify Client', 'password' => 'secret', 'created_at' => now(), 'updated_at' => now()]
         );
 
+        // machines.category_ID has an FK to machine_categories; use a real row, never a guessed id.
+        $machineCategoryId = DB::table('machine_categories')->value('category_ID')
+            ?? DB::table('machine_categories')->insertGetId(['category_name' => 'Imaging Equipment', 'created_at' => now(), 'updated_at' => now()]);
+
         $this->machineId = (int) DB::table('machines')->insertGetId([
-            'category_ID' => 1,
+            'category_ID' => $machineCategoryId,
             'client_ID' => $this->customer->id,
             'machine_name' => 'Notify Scanner',
             'serial_number' => 'SN-' . uniqid(),

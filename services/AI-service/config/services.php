@@ -38,6 +38,17 @@ return [
         'timeout' => min((int) env('GEMINI_TIMEOUT_SECONDS', 15), 15),
     ],
 
+    // Shared secret for service to service calls (X-Internal-Token). Read through config so it still
+    // works when `php artisan config:cache` is on (env() returns null outside config files then).
+    'internal' => [
+        'token' => env('INTERNAL_TOKEN', ''),
+    ],
+
+    // Spec 0047 (AC-7): the AI chat reads a customer's equipment and software from ticket-service.
+    'ticket_service' => [
+        'url' => env('TICKET_SERVICE_URL', 'http://ticket-service:8000/api'),
+    ],
+
     // Spec 0036: Knowledge Base embedding and retrieval settings.
     'kb' => [
         'embedding_model' => env('KB_EMBEDDING_MODEL', 'gemini-embedding-001'),

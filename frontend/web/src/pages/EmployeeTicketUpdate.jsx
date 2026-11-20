@@ -21,15 +21,18 @@ import {
   UserCheck,
   Download,
   ReceiptText,
+  PauseCircle,
+  PlayCircle,
 } from 'lucide-react';
 import { formatDisplayDate } from '@/utils/dateUtils';
-import { getTicketDetails, updateEmployeeTicket, saveWorkLog, getAssignableEmployees, acceptTicket, getInternalNotes } from '@/services/ticketService';
+import { getTicketDetails, updateEmployeeTicket, saveWorkLog, getAssignableEmployees, acceptTicket, getInternalNotes, cancelHoldRequest, resumeTicket } from '@/services/ticketService';
 import { getTicketMessages } from '@/services/messagingService';
 import ProofCompletionModal from '@/components/employee/ProofCompletionModal';
 import SermsReimbursementModal from '@/components/employee/SermsReimbursementModal';
 import { getTicketReimbursement } from '@/data/sermsReimbursementData';
 import ActionErrorModal, { getActionError } from '@/components/employee/ActionErrorModal';
 import ReassignmentModal from '@/components/employee/ReassignmentModal';
+import HoldRequestModal from '@/components/employee/HoldRequestModal';
 import DelegateTicketModal from '@/components/employee/DelegateTicketModal';
 import ReassignmentDisapprovalBanner from '@/components/employee/ReassignmentDisapprovalBanner';
 import { isReassignmentDenied, hasPendingReassignment } from '@/utils/reassignmentUtils';
@@ -47,7 +50,9 @@ import { ConfirmationModal } from '@/components/ui/confirmation-modal';
 import { Skeleton } from '@/components/ui/skeleton';
 import CustomerInfoPanel from '@/components/employee/CustomerInfoPanel';
 
-const STATUS_OPTIONS = ['In Progress', 'Pending', 'Resolved', 'On Hold'];
+// Spec 0048 (AC-1): Pending and On Hold need CS approval, so employees use "Request On Hold" instead.
+const STATUS_OPTIONS = ['In Progress', 'Resolved'];
+const HOLD_PENDING_MESSAGE = 'On Hold request pending CS review';
 
 export default function EmployeeTicketUpdate() {
   const navigate = useNavigate();
@@ -74,6 +79,10 @@ export default function EmployeeTicketUpdate() {
   const [showProofModal, setShowProofModal] = useState(false);
   const [showSermsModal, setShowSermsModal] = useState(false);
   const [showReassignModal, setShowReassignModal] = useState(false);
+  const [showHoldRequestModal, setShowHoldRequestModal] = useState(false);
+  const [isCancellingHold, setIsCancellingHold] = useState(false);
+  const [isResuming, setIsResuming] = useState(false);
+  const [showResumeConfirm, setShowResumeConfirm] = useState(false);
   const [showDelegateModal, setShowDelegateModal] = useState(false);
   const [assignableEmployees, setAssignableEmployees] = useState([]);
   const [isDelegating, setIsDelegating] = useState(false);
@@ -137,12 +146,12 @@ export default function EmployeeTicketUpdate() {
     }
   }, [location.pathname, location.search, location.state]);
 
-  const loadTicketData = useCallback(async () => {
+  const loadTicketData = useCallback(async ({ forceRefresh = false } = {}) => {
     if (!numericId) return;
     setLoading(true);
     setErrorMessage('');
     try {
-      const details = await getTicketDetails(numericId);
+      const details = await getTicketDetails(numericId, { forceRefresh });
       let notes = [];
       try {
         if (typeof getInternalNotes === 'function') {
@@ -205,7 +214,8 @@ export default function EmployeeTicketUpdate() {
   }, [ticket?.status]);
 
   useRealtimeRefresh({
-    refresh: loadTicketData,
+    // A ticket.changed event means the cached details are stale (e.g. CS decided a hold request).
+    refresh: () => loadTicketData({ forceRefresh: true }),
     channels: [{ name: 'ticket-updates', event: 'ticket.changed' }],
     intervalMs: 30000,
     shouldRefresh: ({ payload }) => {
@@ -483,6 +493,61 @@ export default function EmployeeTicketUpdate() {
     }
   };
 
+  // Spec 0048: hold request state comes from staff ticket details.
+  const pendingHold = ticket?.pending_hold_request || null;
+  const rejectedHold = !pendingHold ? (ticket?.latest_rejected_hold_request || null) : null;
+  const myEmpId = Number(user?.emp_id ?? user?.id ?? 0);
+  const isMyHoldRequest = Boolean(pendingHold && Number(pendingHold.requested_by?.id) === myEmpId);
+  const canRequestHold =
+    !pendingHold &&
+    !hasPendingReassignment(ticket || {}) &&
+    !['On Hold', 'Pending', 'Resolved', 'Closed', 'Pending Evaluation', 'Cancelled', 'Discarded'].includes(ticket?.status);
+
+  // Display only: "Pending On Hold" (amber) while CS reviews, "On Hold Rejected" (red) after a rejection.
+  const displayStatus = pendingHold ? 'Pending On Hold' : rejectedHold ? 'On Hold Rejected' : ticket?.status;
+
+  // An On Hold ticket must be resumed before it can be resolved.
+  const isOnHold = ['On Hold', 'Pending'].includes(ticket?.status);
+
+  // SERMS expense reimbursement opens only once the work is done (Resolved, or Closed after it).
+  // A claim already filed stays viewable even if the ticket is later reopened.
+  const existingReimbursement = ticket ? getTicketReimbursement(ticket.ticket_ID || ticket.id) : null;
+  const canUseReimbursement = ['Resolved', 'Closed'].includes(ticket?.status) || Boolean(existingReimbursement);
+
+  const handleResumeTicket = async () => {
+    setIsResuming(true);
+    setErrorMessage('');
+    setSuccessMessage('');
+    try {
+      await resumeTicket(numericId);
+      setShowResumeConfirm(false);
+      setSuccessMessage('Ticket resumed. It is back In Progress and the SLA clock is running again.');
+      setTimeout(() => setSuccessMessage(''), 4000);
+      await loadTicketData({ forceRefresh: true });
+    } catch (err) {
+      setErrorMessage(err?.response?.data?.message || 'Failed to resume the ticket.');
+    } finally {
+      setIsResuming(false);
+    }
+  };
+
+  const handleCancelHoldRequest = async () => {
+    if (!pendingHold) return;
+    setIsCancellingHold(true);
+    setErrorMessage('');
+    setSuccessMessage('');
+    try {
+      await cancelHoldRequest(pendingHold.id, numericId);
+      setSuccessMessage('Your On Hold request was cancelled.');
+      setTimeout(() => setSuccessMessage(''), 4000);
+      await loadTicketData();
+    } catch (err) {
+      setErrorMessage(err?.response?.data?.message || 'Failed to cancel the On Hold request.');
+    } finally {
+      setIsCancellingHold(false);
+    }
+  };
+
   if (!ticket) return null;
 
   const backDestination = () => {
@@ -533,8 +598,8 @@ export default function EmployeeTicketUpdate() {
               <span className="text-xs font-bold text-primary bg-primary/10 px-2.5 py-1 rounded-md">
                 {ticket.id}
               </span>
-              <Badge variant={getStatusBadgeVariant(ticket.status)}>
-                {ticket.status}
+              <Badge variant={getStatusBadgeVariant(displayStatus)}>
+                {displayStatus}
               </Badge>
               <Badge
                 variant={
@@ -574,19 +639,19 @@ export default function EmployeeTicketUpdate() {
                 </Button>
               )}
 
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowSermsModal(true)}
-                className={`border-[#252578]/30 bg-[#252578]/5 hover:bg-[#252578]/10 text-[#252578] text-xs font-semibold gap-1.5 cursor-pointer ${
-                  !isEscalated && !isReassignmentDenied(ticket) ? 'ml-auto' : 'ml-2'
-                }`}
-              >
-                <ReceiptText className="h-3.5 w-3.5 text-[#252578]" />
-                {getTicketReimbursement(ticket.ticket_ID || ticket.id)
-                  ? 'View Reimbursement'
-                  : 'Request Reimbursement'}
-              </Button>
+              {canUseReimbursement && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowSermsModal(true)}
+                  className={`border-[#252578]/30 bg-[#252578]/5 hover:bg-[#252578]/10 text-[#252578] text-xs font-semibold gap-1.5 cursor-pointer ${
+                    !isEscalated && !isReassignmentDenied(ticket) ? 'ml-auto' : 'ml-2'
+                  }`}
+                >
+                  <ReceiptText className="h-3.5 w-3.5 text-[#252578]" />
+                  {existingReimbursement ? 'View Reimbursement' : 'Request Reimbursement'}
+                </Button>
+              )}
             </div>
 
             <h1 className="text-2xl font-bold text-foreground mb-1">{ticket.title}</h1>
@@ -683,7 +748,82 @@ export default function EmployeeTicketUpdate() {
               </div>
             )}
 
-            {/* Dedicated SERMS Expense Reimbursement Section */}
+            {/* Spec 0048 (AC-6, AC-7): On Hold request pending CS review */}
+            {pendingHold && (
+              <div
+                role="status"
+                className="bg-warning/10 rounded-xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-warning/30 text-warning-foreground"
+              >
+                <div className="flex items-start gap-4">
+                  <PauseCircle className="h-5 w-5 text-warning shrink-0 mt-1" aria-hidden="true" />
+                  <div className="text-sm">
+                    <span className="font-bold">{HOLD_PENDING_MESSAGE}</span>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Requested by {pendingHold.requested_by?.name || 'the assigned employee'}
+                      {pendingHold.requested_at ? ` on ${formatDisplayDate(pendingHold.requested_at)}` : ''}. The SLA keeps running until CS approves.
+                    </p>
+                    <p className="text-xs mt-2 italic break-words">&quot;{pendingHold.remarks}&quot;</p>
+                  </div>
+                </div>
+                {isMyHoldRequest && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCancelHoldRequest}
+                    loading={isCancellingHold}
+                    className="shrink-0 self-start sm:self-center"
+                  >
+                    Cancel Request
+                  </Button>
+                )}
+              </div>
+            )}
+
+            {/* On Hold: the employee must resume the ticket before resolving it */}
+            {isOnHold && !ticket.reassignmentRequested && (
+              <div
+                role="status"
+                className="bg-warning/10 rounded-xl p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-warning/30 text-warning-foreground"
+              >
+                <div className="flex items-start gap-4">
+                  <PauseCircle className="h-5 w-5 text-warning shrink-0 mt-1" aria-hidden="true" />
+                  <div className="text-sm">
+                    <span className="font-bold">This ticket is On Hold</span>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      {ticket.hold_reason ? `Reason: "${ticket.hold_reason}". ` : ''}
+                      Resume the ticket before resolving it. Resuming restarts the SLA clock.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => setShowResumeConfirm(true)}
+                  disabled={isResuming}
+                  className="shrink-0 self-start sm:self-center gap-2"
+                >
+                  <PlayCircle className="w-4 h-4" aria-hidden="true" />
+                  Resume Ticket
+                </Button>
+              </div>
+            )}
+
+            {/* Spec 0048 (AC-12): the latest rejected request, until a new request or a status change */}
+            {rejectedHold && (
+              <div role="status" className="bg-destructive/10 rounded-xl p-6 flex items-start gap-4 border border-destructive/20 text-destructive">
+                <AlertCircle className="h-5 w-5 shrink-0 mt-1" aria-hidden="true" />
+                <div className="text-sm">
+                  <span className="font-bold">On Hold request rejected</span>
+                  {rejectedHold.reviewed_by?.name ? ` by ${rejectedHold.reviewed_by.name}` : ''}
+                  <p className="text-xs mt-1 break-words">Reason: &quot;{rejectedHold.review_note}&quot;</p>
+                  <p className="text-xs text-muted-foreground mt-1">You can send a new request with more detail if work still cannot continue.</p>
+                </div>
+              </div>
+            )}
+
+            {/* Dedicated SERMS Expense Reimbursement Section (only once the ticket is resolved) */}
+            {canUseReimbursement && (
             <div className="rounded-xl border border-border bg-card p-6 shadow-xs">
               {(() => {
                 const existingClaim = getTicketReimbursement(ticket.ticket_ID || ticket.id);
@@ -730,9 +870,10 @@ export default function EmployeeTicketUpdate() {
                 );
               })()}
             </div>
+            )}
 
-            {/* Proof of Completion Card */}
-            {(statusDraft === 'Resolved' ||
+            {/* Proof of Completion Card (hidden while On Hold: resume first) */}
+            {!isOnHold && (statusDraft === 'Resolved' ||
               ticket.status === 'Resolved' ||
               ticket.status === 'Pending Evaluation' ||
               isProofRejected) && (
@@ -757,9 +898,11 @@ export default function EmployeeTicketUpdate() {
                       : 'Supporting documentation (PDF, PNG, Word up to 15MB each, 45MB total) must be verified before the ticket can be resolved.'}
                   </p>
                 </div>
-                {ticket.reassignmentRequested ? (
+                {ticket.reassignmentRequested || pendingHold ? (
                   <span className="text-xs text-warning bg-warning/10 border border-warning/20 px-3 py-2 rounded-lg font-medium">
-                    Proof upload disabled while reassignment is pending
+                    {pendingHold
+                      ? `Proof upload disabled: ${HOLD_PENDING_MESSAGE}`
+                      : 'Proof upload disabled while reassignment is pending'}
                   </span>
                 ) : (
                   <Button
@@ -823,7 +966,8 @@ export default function EmployeeTicketUpdate() {
                   </div>
                 )}
 
-                {/* SERMS Reimbursement Integration Banner */}
+                {/* SERMS Reimbursement Integration Banner (only once the ticket is resolved) */}
+                {canUseReimbursement && (
                 <div className="w-full mt-4 pt-4 border-t border-border">
                   {(() => {
                     const existingClaim = getTicketReimbursement(ticket.ticket_ID || ticket.id);
@@ -870,11 +1014,13 @@ export default function EmployeeTicketUpdate() {
                     );
                   })()}
                 </div>
+                )}
               </div>
             )}
 
             {/* Status Update Form */}
             {!ticket.reassignmentRequested &&
+              !isOnHold &&
               ticket.status !== 'Pending Evaluation' &&
               ticket.status !== 'Resolved' && (
                 <div className="rounded-xl border border-border bg-card p-6 shadow-xs">
@@ -883,13 +1029,19 @@ export default function EmployeeTicketUpdate() {
                   </h3>
 
                   <div className="space-y-4">
+                    {pendingHold && (
+                      <p className="text-xs font-semibold text-warning bg-warning/10 border border-warning/20 rounded-lg px-4 py-2">
+                        {HOLD_PENDING_MESSAGE}
+                      </p>
+                    )}
                     <div>
-                      <label className="block text-xs font-semibold text-muted-foreground mb-1.5">
+                      <label htmlFor="employee-status-select" className="block text-xs font-semibold text-muted-foreground mb-1.5">
                         Select new status
                       </label>
                       <select
+                        id="employee-status-select"
                         value={statusDraft}
-                        disabled={isSaving}
+                        disabled={isSaving || Boolean(pendingHold)}
                         onChange={(e) => setStatusDraft(e.target.value)}
                         className="w-full text-sm border border-border rounded-lg px-3 py-2.5 bg-background text-foreground outline-none focus:border-accent focus:ring-1 focus:ring-accent font-semibold cursor-pointer disabled:opacity-50"
                       >
@@ -901,7 +1053,7 @@ export default function EmployeeTicketUpdate() {
                       </select>
                     </div>
 
-                    {statusDraft !== ticket.status && (
+                    {statusDraft !== ticket.status && !pendingHold && (
                       <div className="space-y-4">
                         {(statusDraft !== 'Resolved' || isInternal) && (
                           <>
@@ -1002,19 +1154,44 @@ export default function EmployeeTicketUpdate() {
                 </div>
               )}
 
-            {/* Request Reassignment Card */}
-            {!hasPendingReassignment(ticket) ? (
+            {/* Spec 0048 (AC-3): Request On Hold card, next to Request Reassignment */}
+            {canRequestHold && (
               <div className="rounded-xl border border-border bg-card p-6 shadow-xs flex items-center justify-between flex-wrap gap-4">
                 <div>
-                  <h3 className="text-sm font-bold text-foreground">Request Reassignment</h3>
+                  <h3 className="text-sm font-bold text-foreground">Request On Hold</h3>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Cannot complete this ticket? Request to have it reassigned to another technician.
+                    Work cannot continue for now? Ask Customer Service to put this ticket On Hold. The SLA pauses only once they approve.
                   </p>
                 </div>
                 <Button
                   type="button"
                   variant="outline"
                   disabled={isSaving}
+                  onClick={() => setShowHoldRequestModal(true)}
+                  className="gap-2"
+                >
+                  <PauseCircle className="h-4 w-4 text-warning" aria-hidden="true" />
+                  Request On Hold
+                </Button>
+              </div>
+            )}
+
+            {/* Request Reassignment Card */}
+            {!hasPendingReassignment(ticket) ? (
+              <div className="rounded-xl border border-border bg-card p-6 shadow-xs flex items-center justify-between flex-wrap gap-4">
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">Request Reassignment</h3>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {pendingHold
+                      ? HOLD_PENDING_MESSAGE
+                      : 'Cannot complete this ticket? Request to have it reassigned to another technician.'}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isSaving || Boolean(pendingHold)}
+                  title={pendingHold ? HOLD_PENDING_MESSAGE : undefined}
                   onClick={() => setShowReassignModal(true)}
                   className="text-destructive border-destructive/30 hover:bg-destructive/10"
                 >
@@ -1196,13 +1373,19 @@ export default function EmployeeTicketUpdate() {
                         hours_spent: parseFloat(workLogHours),
                         log_date: workLogDate,
                       };
-                      await saveWorkLog(payload);
+                      const res = await saveWorkLog(payload);
+                      // Show the saved log in place instead of reloading the page
+                      // (loadTicketData swaps the whole view for the skeleton).
+                      const savedLog = res?.work_log || { ...payload, created_at: new Date().toISOString() };
+                      setSavedWorkLogs((prev) => [savedLog, ...prev].sort((a, b) => (
+                        String(b.log_date || '').localeCompare(String(a.log_date || ''))
+                        || String(b.created_at || '').localeCompare(String(a.created_at || ''))
+                      )));
                       setWorkLogTask('');
                       setWorkLogHours('');
                       setWorkLogDate(new Date().toISOString().split('T')[0]);
                       setWorkLogSuccess('Work log saved successfully.');
                       setTimeout(() => setWorkLogSuccess(''), 3000);
-                      await loadTicketData();
                     } catch (err) {
                       setWorkLogError(err?.response?.data?.message || 'Failed to save work log.');
                     } finally {
@@ -1326,10 +1509,25 @@ export default function EmployeeTicketUpdate() {
         </>
       )}
 
+      {/* Confirmation before resuming an On Hold ticket */}
+      <ConfirmationModal
+        isOpen={showResumeConfirm}
+        onClose={() => !isResuming && setShowResumeConfirm(false)}
+        loading={isResuming}
+        variant="primary"
+        icon={<PlayCircle className="h-6 w-6" />}
+        title="Resume Ticket?"
+        description={`Resume ${ticket.id || `ticket #${numericId}`} from On Hold? The ticket goes back In Progress and the SLA clock starts running again.`}
+        confirmLabel="Yes, Resume Ticket"
+        cancelLabel="Cancel"
+        onConfirm={handleResumeTicket}
+      />
+
       {/* Confirmation Modal for status change */}
       <ConfirmationModal
-        open={showStatusConfirm}
-        onOpenChange={setShowStatusConfirm}
+        isOpen={showStatusConfirm}
+        onClose={() => setShowStatusConfirm(false)}
+        loading={isSaving}
         title="Confirm Status Change"
         description={`Are you sure you want to change the status from "${ticket.status}" to "${statusDraft}"?`}
         confirmLabel={isSaving ? 'Saving...' : 'Yes, Save Changes'}
@@ -1358,6 +1556,18 @@ export default function EmployeeTicketUpdate() {
       )}
 
       <ActionErrorModal error={actionError} onClose={() => setActionError(null)} />
+
+      <HoldRequestModal
+        isOpen={showHoldRequestModal}
+        ticket={ticket}
+        onClose={() => setShowHoldRequestModal(false)}
+        onSubmitted={async () => {
+          setShowHoldRequestModal(false);
+          setSuccessMessage('On Hold request sent. Customer Service will review your remark.');
+          setTimeout(() => setSuccessMessage(''), 6000);
+          await loadTicketData({ forceRefresh: true });
+        }}
+      />
 
       {showReassignModal && (
         <ReassignmentModal

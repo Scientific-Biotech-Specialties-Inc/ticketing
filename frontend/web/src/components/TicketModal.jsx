@@ -140,10 +140,13 @@ const initialFormData = {
   title: '',
   department_id: 1,
   machine_ID: '',
+  equipment_name: '',
   problem_category_ID: '',
   description: '',
   created_by: 1,
 };
+
+const MAX_EQUIPMENT_NAME_CHARS = 150;
 
 const allowedFileTypes = [
   'application/pdf',
@@ -166,6 +169,14 @@ export default function TicketModal({
   initialDraft = null,
   onDraftSaved = null,
   showDepartmentSelector = false,
+  // Internal tickets: no department picker; the department follows the chosen category
+  // (the server derives it too). IT categories make equipment optional.
+  departmentFromCategory = false,
+  // Staff (CS, employees, managers) type the equipment / software name as text.
+  // Customers pick one of their registered machines from a dropdown.
+  freeTextEquipment = false,
+  // Customers can save drafts; internal (staff) tickets are submitted directly.
+  allowDrafts = true,
 }) {
   useLockBodyScroll(isOpen);
   const { user } = useAuth();
@@ -239,8 +250,21 @@ export default function TicketModal({
     : '';
   const categoryError = !formData.problem_category_ID ? 'Category is required.' : '';
   // Equipment is required for Service (1) and optional for IT (2).
-  const isItDepartment = showDepartmentSelector && Number(formData.department_id) === 2;
-  const equipmentError = !isItDepartment && !formData.machine_ID ? 'Equipment is required.' : '';
+  const selectedCategoryTrack = String(
+    options.category_options?.find((o) => String(o.value) === String(formData.problem_category_ID))?.track || ''
+  ).toLowerCase();
+  const isItDepartment = showDepartmentSelector
+    ? Number(formData.department_id) === 2
+    : departmentFromCategory && selectedCategoryTrack === 'it';
+  const equipmentNameTrimmed = (formData.equipment_name || '').trim();
+  const hasEquipment = freeTextEquipment ? Boolean(equipmentNameTrimmed) : Boolean(formData.machine_ID);
+  const equipmentError = freeTextEquipment
+    ? (!isItDepartment && !equipmentNameTrimmed
+      ? 'Equipment / software name is required.'
+      : equipmentNameTrimmed.length > MAX_EQUIPMENT_NAME_CHARS
+      ? `Equipment / software name exceeds ${MAX_EQUIPMENT_NAME_CHARS} characters.`
+      : '')
+    : (!isItDepartment && !formData.machine_ID ? 'Equipment is required.' : '');
   const descriptionError = !descTrimmed
     ? 'Description is required.'
     : descTrimmed.length < MIN_DESCRIPTION_CHARS
@@ -270,6 +294,7 @@ export default function TicketModal({
       setFormData({
         title: initialDraft.title || '',
         machine_ID: initialDraft.machine_ID ? String(initialDraft.machine_ID) : '',
+        equipment_name: initialDraft.equipment_name || '',
         problem_category_ID: initialDraft.problem_category_ID ? String(initialDraft.problem_category_ID) : '',
         description: initialDraft.description || '',
         created_by: resolveCurrentUserId(),
@@ -357,8 +382,11 @@ export default function TicketModal({
   };
 
   const buildSubmitData = () => {
-    const { department_id, ...rest } = formData;
-    return showDepartmentSelector ? { ...rest, department_id } : rest;
+    const { department_id, machine_ID, equipment_name, ...rest } = formData;
+    const equipment = freeTextEquipment
+      ? { equipment_name: (equipment_name || '').trim() }
+      : { machine_ID };
+    return showDepartmentSelector ? { ...rest, ...equipment, department_id } : { ...rest, ...equipment };
   };
 
   const handleSubmit = async (event) => {
@@ -387,7 +415,7 @@ export default function TicketModal({
       setTouched((p) => ({ ...p, description: true }));
       return;
     }
-    if (!formData.problem_category_ID || (!isItDepartment && !formData.machine_ID)) {
+    if (!formData.problem_category_ID || (!isItDepartment && !hasEquipment) || equipmentError) {
       setSubmitError('Please complete all required fields.');
       return;
     }
@@ -473,7 +501,8 @@ export default function TicketModal({
       const draftPayload = {
         client_id: clientId,
         title: (formData.title || '').trim() || 'Untitled Draft',
-        machine_ID: formData.machine_ID ? Number(formData.machine_ID) : null,
+        machine_ID: !freeTextEquipment && formData.machine_ID ? Number(formData.machine_ID) : null,
+        ...(freeTextEquipment ? { equipment_name: (formData.equipment_name || '').trim() || null } : {}),
         problem_category_ID: formData.problem_category_ID ? Number(formData.problem_category_ID) : null,
         description: formData.description || '',
         priority_ID: 1,
@@ -523,7 +552,8 @@ export default function TicketModal({
     titleTrimmed.length >= MIN_TITLE_CHARS &&
     titleChars <= MAX_TITLE_CHARS &&
     formData.problem_category_ID &&
-    (isItDepartment || formData.machine_ID) &&
+    (isItDepartment || hasEquipment) &&
+    !equipmentError &&
     descTrimmed.length >= MIN_DESCRIPTION_CHARS &&
     descriptionChars <= MAX_DESCRIPTION_CHARS
   );
@@ -604,12 +634,32 @@ export default function TicketModal({
                 hasError={Boolean(touched.category && categoryError)}
               />
               {touched.category && categoryError && <p className="mt-1.5 text-xs text-red-500">{categoryError}</p>}
+              {departmentFromCategory && formData.problem_category_ID && selectedCategoryTrack && (
+                <p className="mt-1.5 text-xs text-muted-slate" data-testid="derived-department">
+                  Routed to the {selectedCategoryTrack === 'it' ? 'IT' : 'Service'} department based on this category.
+                </p>
+              )}
             </div>
 
             <div className="min-w-0">
-              <label className="mb-2 block text-sm font-medium text-gray-700">
-                Equipment Name / ID{isItDepartment && <span className="ml-1 text-xs font-normal text-muted-slate">(Optional for IT)</span>}
+              <label htmlFor={freeTextEquipment ? 'ticket-modal-equipment-name' : undefined} className="mb-2 block text-sm font-medium text-gray-700">
+                {freeTextEquipment ? 'Equipment / Software Name' : 'Equipment Name / ID'}
+                {isItDepartment && <span className="ml-1 text-xs font-normal text-muted-slate">(Optional for IT)</span>}
               </label>
+              {freeTextEquipment ? (
+              <input
+                id="ticket-modal-equipment-name"
+                name="equipment_name"
+                type="text"
+                maxLength={MAX_EQUIPMENT_NAME_CHARS}
+                placeholder="e.g. Office printer, Microsoft Outlook"
+                value={formData.equipment_name}
+                onChange={handleChange}
+                onBlur={() => touch('equipment')}
+                disabled={isSubmitting}
+                className={`w-full rounded-xl border bg-white px-4 py-3 text-sm outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-[#252578] ${touched.equipment && equipmentError ? 'border-red-400 bg-red-50' : 'border-gray-200'}`}
+              />
+              ) : (
               <BoundedSelect
                 value={formData.machine_ID}
                 onChange={(val) => setFormData((prev) => ({ ...prev, machine_ID: val }))}
@@ -620,6 +670,7 @@ export default function TicketModal({
                 hasError={Boolean(touched.equipment && equipmentError)}
                 searchable
               />
+              )}
               {touched.equipment && equipmentError && <p className="mt-1.5 text-xs text-red-500">{equipmentError}</p>}
             </div>
           </div>
@@ -707,6 +758,7 @@ export default function TicketModal({
             >
               Cancel
             </button>
+            {allowDrafts && (
             <button
               type="button"
               onClick={handleSaveAsDraft}
@@ -715,6 +767,7 @@ export default function TicketModal({
             >
               {isSavingDraft ? 'Saving Draft...' : 'Save as Draft'}
             </button>
+            )}
             <button
               type="submit"
               disabled={loadingOptions || isSubmitting || isSavingDraft || !isFormValid}

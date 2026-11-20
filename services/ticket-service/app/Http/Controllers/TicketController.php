@@ -40,18 +40,23 @@ class TicketController extends Controller
     {
         $options = $this->ticketService->getFormOptions();
 
-        // Spec 0043 (AC-1, AC-15): a customer only ever sees and picks their own registered machines.
+        // Spec 0047 (AC-2, AC-3, AC-14): a customer only ever sees their own pickable equipment and
+        // software (seeding the starter software the first time none exists).
         $user = request()->user();
         if ($user instanceof \App\Models\Client) {
-            $machines = \Illuminate\Support\Facades\DB::table('machines')
-                ->where('client_ID', (int) $user->id)
-                ->orderBy('machine_name')
-                ->get(['machine_ID', 'machine_name', 'serial_number']);
-            $options['machines'] = $machines;
-            $options['equipment_options'] = $machines->map(fn ($row) => [
-                'value' => $row->machine_ID,
-                'label' => $row->machine_name . ' - ' . $row->serial_number,
-            ])->values()->all();
+            $assets = app(\App\Services\CustomerAssetService::class)->listFor((int) $user->id);
+            $options['assets'] = $assets;
+            $options['machines'] = array_map(fn ($a) => [
+                'machine_ID' => $a['machine_ID'],
+                'machine_name' => $a['name'],
+                'serial_number' => $a['serial_number'],
+                'asset_type' => $a['asset_type'],
+            ], $assets);
+            $options['equipment_options'] = array_map(fn ($a) => [
+                'value' => $a['machine_ID'],
+                'label' => $a['label'],
+                'asset_type' => $a['asset_type'],
+            ], $assets);
         }
 
         return response()->json($options);
@@ -120,37 +125,30 @@ class TicketController extends Controller
             $request->merge(['attachments' => []]);
         }
 
-        // The department is always derived on the server from the category; the customer may choose
-        // the category itself (validated below), but never the department.
+        // The category and department are always derived on the server from the chosen equipment or
+        // software (spec 0047 AC-5); whatever the browser sends for them is ignored.
         $request->request->remove('department_id');
         $request->query->remove('department_id');
-        if ($request->input('problem_category_ID') === '' || $request->input('problem_category_ID') === 'null') {
-            $request->merge(['problem_category_ID' => null]);
-        }
+        $request->request->remove('problem_category_ID');
+        $request->query->remove('problem_category_ID');
 
         if ($request->has('machine_ID') && ($request->input('machine_ID') === '' || $request->input('machine_ID') === 'null' || $request->input('machine_ID') === null)) {
             $request->merge(['machine_ID' => null]);
         }
 
-        // Spec 0038 AC-5: an external ticket may only link a machine registered to the
-        // creating customer (machines.client_ID). Internal tickets use storeInternalTicket().
-        $machineOwnedByCustomer = function (string $attribute, $value, \Closure $fail) use ($user) {
-            if ($value === null || $value === '') {
-                return;
-            }
-            $owned = \Illuminate\Support\Facades\DB::table('machines')
-                ->where('machine_ID', (int) $value)
-                ->where('client_ID', (int) $user->id)
-                ->exists();
-            if (!$owned) {
-                $fail('The selected machine is not registered to this customer.');
+        // Spec 0047 (AC-5, AC-14): every customer ticket names one of the customer's own pickable
+        // equipment or software items. Internal tickets use storeInternalTicket().
+        $assets = app(\App\Services\CustomerAssetService::class);
+        $pickedAsset = null;
+        $machinePickable = function (string $attribute, $value, \Closure $fail) use ($user, $assets, &$pickedAsset) {
+            $pickedAsset = $assets->findPickable((int) $user->id, (int) $value);
+            if (!$pickedAsset) {
+                $fail('Choose one of your registered equipment or software.');
             }
         };
 
         $validated = $request->validate([
-            'machine_ID' => ['nullable', 'integer', 'exists:machines,machine_ID', $machineOwnedByCustomer],
-            // The customer may pick the category (the form prefills the AI suggestion).
-            'problem_category_ID' => ['nullable', 'integer', \Illuminate\Validation\Rule::exists('problem_categories', 'problem_category_ID')->where('is_active', true)],
+            'machine_ID' => ['required', 'integer', $machinePickable],
             'priority_ID' => ['nullable', 'integer', 'exists:ticket_priorities,priority_ID'],
             'branch_id' => ['nullable', 'string', 'max:64', 'exists:branches,slug'],
             'title' => ['required', 'string', 'max:255', $this->ticketService->rejectMarkup(), $this->ticketService->validateProperCasing()],
@@ -161,17 +159,13 @@ class TicketController extends Controller
             'conversation_id' => ['nullable', 'string', 'max:64'],
         ]);
 
-        $callerToken = $request->bearerToken() ?: $request->cookie('access_token');
-        $intake = app(\App\Services\TicketIntakeClassificationService::class);
-        // A category the customer chose wins; only when none was sent does the server ask the AI.
-        $classification = !empty($validated['problem_category_ID'])
-            ? $intake->apply((int) $validated['problem_category_ID'], !empty($validated['machine_ID']) ? (int) $validated['machine_ID'] : null)
-            : $intake->classifyForCreate($validated, $callerToken ? (string) $callerToken : null);
-        $validated['problem_category_ID'] = $classification['problem_category_ID'];
-        $validated['machine_ID'] = $classification['machine_ID'];
+        // Equipment means Service, software means Software; the department follows the category.
+        $validated['machine_ID'] = (int) $pickedAsset->machine_ID;
+        $validated['problem_category_ID'] = $assets->categoryIdFor((string) $pickedAsset->asset_type);
+        $department = app(\App\Services\CategoryDepartmentResolver::class)->resolve($validated['problem_category_ID']);
 
         try {
-            $result = app(\App\Actions\Tickets\CreateTicketAction::class)->execute($validated, $user, $classification['department_id']);
+            $result = app(\App\Actions\Tickets\CreateTicketAction::class)->execute($validated, $user, $department['id'] ?? null);
         } catch (TicketLimitExceededException $e) {
             return response()->json([
                 'message' => $e->getMessage(),
@@ -250,16 +244,25 @@ class TicketController extends Controller
             $request->merge(['attachments' => []]);
         }
 
-        // Equipment is required for Service (department 1) and optional for IT (department 2).
-        $internalDeptId = $request->input('department_id') ? (int) $request->input('department_id') : null;
+        // The department follows the category the employee picked (employees no longer choose it).
+        // Staff type the equipment / software name as text (equipment_name). It is required for
+        // Service (department 1) and optional for IT (department 2). A machine_ID is still accepted
+        // in its place, for older clients and drafts.
+        $categoryId = (int) $request->input('problem_category_ID', 0);
+        $internalDeptId = $categoryId > 0
+            ? app(\App\Services\CategoryTrack::class)->departmentIdFor($categoryId)
+            : \App\Services\CategoryTrack::SERVICE_DEPARTMENT_ID;
         if ($request->has('machine_ID') && in_array($request->input('machine_ID'), ['', 'null'], true)) {
             $request->merge(['machine_ID' => null]);
         }
 
+        $request->merge(['equipment_name' => trim((string) $request->input('equipment_name', '')) ?: null]);
+
         $validated = $request->validate([
-            'machine_ID' => $internalDeptId === 2
-                ? ['nullable', 'integer', 'exists:machines,machine_ID']
-                : ['required', 'integer', 'exists:machines,machine_ID'],
+            'machine_ID' => ['nullable', 'integer', 'exists:machines,machine_ID'],
+            'equipment_name' => $internalDeptId === 2
+                ? ['nullable', 'string', 'max:150', $this->ticketService->rejectMarkup()]
+                : ['required_without:machine_ID', 'nullable', 'string', 'max:150', $this->ticketService->rejectMarkup()],
             'problem_category_ID' => ['required', 'integer', 'exists:problem_categories,problem_category_ID'],
             'priority_ID' => ['nullable', 'integer', 'exists:ticket_priorities,priority_ID'],
             'branch_id' => ['nullable', 'string', 'max:64', 'exists:branches,slug'],
@@ -267,6 +270,8 @@ class TicketController extends Controller
             'description' => ['required', 'string', $this->ticketService->rejectMarkup()],
             'attachments' => ['nullable', 'array', 'max:' . \App\Services\TicketConfigurationService::getMaxFileCount()],
             'attachments.*' => ['integer'],
+        ], [
+            'equipment_name.required_without' => 'Enter the equipment or software name.',
         ]);
 
         $deptId = $internalDeptId;
@@ -399,7 +404,10 @@ class TicketController extends Controller
         if (!$user) {
             return response()->json(['message' => 'Unauthorized'], 401);
         }
-        $result = $this->ticketService->closeTicket($ticketId, $user);
+        $validated = $request->validate([
+            'remarks' => ['nullable', 'string', 'max:1000', new \App\Rules\NoMarkup()],
+        ]);
+        $result = $this->ticketService->closeTicket($ticketId, $user, $validated['remarks'] ?? null);
         return response()->json($result['data'], $result['status']);
     }
 

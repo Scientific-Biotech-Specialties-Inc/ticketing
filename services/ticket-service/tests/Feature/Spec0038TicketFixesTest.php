@@ -138,7 +138,8 @@ class Spec0038TicketFixesTest extends TestCase
         ]);
 
         $response->assertStatus(422)
-            ->assertJsonPath('errors.machine_ID.0', 'The selected machine is not registered to this customer.');
+            // Spec 0047 reworded the ownership error to cover equipment and software.
+            ->assertJsonPath('errors.machine_ID.0', 'Choose one of your registered equipment or software.');
     }
 
     /** AC-8 / AC-9 */

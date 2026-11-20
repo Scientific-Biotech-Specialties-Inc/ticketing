@@ -1,5 +1,5 @@
 import React from 'react';
-import { CalendarDays, Mail, Briefcase, RefreshCw } from 'lucide-react';
+import { CalendarDays, Mail, Briefcase, RefreshCw, MapPin } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
 export default function ProfileHero({ profile }) {
@@ -22,18 +22,31 @@ export default function ProfileHero({ profile }) {
         <h2 className="text-lg font-bold text-dark-slate">{fullName}</h2>
 
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 mt-2">
-          <span className="flex items-center gap-1.5 text-xs text-muted-slate">
-            <Briefcase size={14} className="text-muted-slate" />
-            {profile.role} · {profile.department}
-          </span>
-          <span className="flex items-center gap-1.5 text-xs text-muted-slate">
-            <Mail size={14} className="text-muted-slate" />
-            {profile.email}
-          </span>
-          <span className="flex items-center gap-1.5 text-xs text-muted-slate">
-            <CalendarDays size={14} className="text-muted-slate" />
-            Member since {profile.dateJoined}
-          </span>
+          {(profile.role || profile.department) && (
+            <span className="flex items-center gap-1.5 text-xs text-muted-slate">
+              <Briefcase size={14} className="text-muted-slate" />
+              {[profile.role, profile.department].filter(Boolean).join(' · ')}
+            </span>
+          )}
+          {profile.branch && (
+            <span className="flex items-center gap-1.5 text-xs text-muted-slate">
+              <MapPin size={14} className="text-muted-slate" />
+              {profile.branch}
+            </span>
+          )}
+          {profile.email && (
+            <span className="flex items-center gap-1.5 text-xs text-muted-slate">
+              <Mail size={14} className="text-muted-slate" />
+              {profile.email}
+            </span>
+          )}
+          {/* Hidden when the account has no real join date, rather than showing an invented one. */}
+          {profile.dateJoined && (
+            <span className="flex items-center gap-1.5 text-xs text-muted-slate">
+              <CalendarDays size={14} className="text-muted-slate" />
+              Member since {profile.dateJoined}
+            </span>
+          )}
           {profile.lastSynced && (
             <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-0.5 rounded-full bg-accent/10 text-primary border border-accent/20">
               <RefreshCw size={11} className="text-accent" />
