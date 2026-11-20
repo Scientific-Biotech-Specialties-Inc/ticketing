@@ -509,6 +509,11 @@ export default function EmployeeTicketUpdate() {
   // An On Hold ticket must be resumed before it can be resolved.
   const isOnHold = ['On Hold', 'Pending'].includes(ticket?.status);
 
+  // SERMS expense reimbursement opens only once the work is done (Resolved, or Closed after it).
+  // A claim already filed stays viewable even if the ticket is later reopened.
+  const existingReimbursement = ticket ? getTicketReimbursement(ticket.ticket_ID || ticket.id) : null;
+  const canUseReimbursement = ['Resolved', 'Closed'].includes(ticket?.status) || Boolean(existingReimbursement);
+
   const handleResumeTicket = async () => {
     setIsResuming(true);
     setErrorMessage('');
@@ -634,19 +639,19 @@ export default function EmployeeTicketUpdate() {
                 </Button>
               )}
 
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowSermsModal(true)}
-                className={`border-[#252578]/30 bg-[#252578]/5 hover:bg-[#252578]/10 text-[#252578] text-xs font-semibold gap-1.5 cursor-pointer ${
-                  !isEscalated && !isReassignmentDenied(ticket) ? 'ml-auto' : 'ml-2'
-                }`}
-              >
-                <ReceiptText className="h-3.5 w-3.5 text-[#252578]" />
-                {getTicketReimbursement(ticket.ticket_ID || ticket.id)
-                  ? 'View Reimbursement'
-                  : 'Request Reimbursement'}
-              </Button>
+              {canUseReimbursement && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowSermsModal(true)}
+                  className={`border-[#252578]/30 bg-[#252578]/5 hover:bg-[#252578]/10 text-[#252578] text-xs font-semibold gap-1.5 cursor-pointer ${
+                    !isEscalated && !isReassignmentDenied(ticket) ? 'ml-auto' : 'ml-2'
+                  }`}
+                >
+                  <ReceiptText className="h-3.5 w-3.5 text-[#252578]" />
+                  {existingReimbursement ? 'View Reimbursement' : 'Request Reimbursement'}
+                </Button>
+              )}
             </div>
 
             <h1 className="text-2xl font-bold text-foreground mb-1">{ticket.title}</h1>
@@ -817,7 +822,8 @@ export default function EmployeeTicketUpdate() {
               </div>
             )}
 
-            {/* Dedicated SERMS Expense Reimbursement Section */}
+            {/* Dedicated SERMS Expense Reimbursement Section (only once the ticket is resolved) */}
+            {canUseReimbursement && (
             <div className="rounded-xl border border-border bg-card p-6 shadow-xs">
               {(() => {
                 const existingClaim = getTicketReimbursement(ticket.ticket_ID || ticket.id);
@@ -864,6 +870,7 @@ export default function EmployeeTicketUpdate() {
                 );
               })()}
             </div>
+            )}
 
             {/* Proof of Completion Card (hidden while On Hold: resume first) */}
             {!isOnHold && (statusDraft === 'Resolved' ||
@@ -959,7 +966,8 @@ export default function EmployeeTicketUpdate() {
                   </div>
                 )}
 
-                {/* SERMS Reimbursement Integration Banner */}
+                {/* SERMS Reimbursement Integration Banner (only once the ticket is resolved) */}
+                {canUseReimbursement && (
                 <div className="w-full mt-4 pt-4 border-t border-border">
                   {(() => {
                     const existingClaim = getTicketReimbursement(ticket.ticket_ID || ticket.id);
@@ -1006,6 +1014,7 @@ export default function EmployeeTicketUpdate() {
                     );
                   })()}
                 </div>
+                )}
               </div>
             )}
 

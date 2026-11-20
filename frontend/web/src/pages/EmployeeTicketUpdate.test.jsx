@@ -4,6 +4,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import EmployeeTicketUpdate from './EmployeeTicketUpdate';
 import * as ticketService from '@/services/ticketService';
+import { getTicketReimbursement } from '@/data/sermsReimbursementData';
 
 vi.mock('@/context/AuthContext', () => ({
   useAuth: vi.fn(() => ({
@@ -20,6 +21,11 @@ vi.mock('@/services/ticketService', () => ({
   updateEmployeeTicket: vi.fn(),
   saveWorkLog: vi.fn(),
   getCustomerTicketContext: vi.fn(() => Promise.resolve({ customer: {}, machine: {} })),
+}));
+
+vi.mock('@/data/sermsReimbursementData', async (importOriginal) => ({
+  ...(await importOriginal()),
+  getTicketReimbursement: vi.fn(() => null),
 }));
 
 describe('EmployeeTicketUpdate Component Tests', () => {
@@ -180,5 +186,39 @@ describe('EmployeeTicketUpdate Component Tests', () => {
     expect(screen.getByRole('button', { name: 'Cancel Request' })).toBeInTheDocument();
     expect(screen.getAllByText('On Hold request pending CS review').length).toBeGreaterThan(0);
     expect(screen.getByText('Pending On Hold')).toBeInTheDocument();
+  });
+
+  // SERMS expense reimbursement is offered only once the ticket is resolved.
+  const renderWithStatus = (status, title) => {
+    ticketService.getTicketDetails.mockResolvedValue({
+      id: 'TKTS-00017', ticket_ID: 8, title, status, priority: 'Medium', timeline: [],
+    });
+    render(
+      <MemoryRouter initialEntries={[{ pathname: '/employee/ticket-update', state: { ticket: { ticket_ID: 8, status } } }]}>
+        <Routes>
+          <Route path="/employee/ticket-update" element={<EmployeeTicketUpdate />} />
+        </Routes>
+      </MemoryRouter>
+    );
+    return screen.findByText(title);
+  };
+
+  it.each(['In Progress', 'Pending Evaluation', 'On Hold'])('hides SERMS reimbursement while the ticket is %s', async (status) => {
+    await renderWithStatus(status, `Ticket ${status}`);
+    expect(screen.queryByText('Expense Reimbursement (SERMS)')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Reimbursement/i })).not.toBeInTheDocument();
+  });
+
+  it.each(['Resolved', 'Closed'])('offers SERMS reimbursement once the ticket is %s', async (status) => {
+    await renderWithStatus(status, `Ticket ${status}`);
+    expect(screen.getAllByText('Expense Reimbursement (SERMS)').length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Request Reimbursement' }).length).toBeGreaterThan(0);
+  });
+
+  it('keeps an already filed claim viewable after the ticket is reopened', async () => {
+    getTicketReimbursement.mockReturnValue({ id: 'R-1', status: 'Submitted' });
+    await renderWithStatus('In Progress', 'Reopened Ticket');
+    expect(screen.getAllByRole('button', { name: 'View Reimbursement' }).length).toBeGreaterThan(0);
+    getTicketReimbursement.mockReturnValue(null);
   });
 });
