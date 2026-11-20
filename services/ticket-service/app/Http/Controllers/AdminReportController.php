@@ -28,7 +28,7 @@ class AdminReportController extends Controller
         }
 
         $role = strtolower(trim((string) ($user->role ?? '')));
-        $allowedRoles = ['superadmin', 'super admin', 'admin', 'systemadministrator', 'itadmin'];
+        $allowedRoles = ['superadmin', 'super admin', 'admin', 'branch admin', 'branchadmin', 'branch_admin', 'systemadministrator', 'itadmin', 'it admin'];
 
         if (!in_array($role, $allowedRoles, true)) {
             return response()->json([

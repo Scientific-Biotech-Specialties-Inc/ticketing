@@ -1042,11 +1042,9 @@ class TicketDashboardService
                     ->orWhere('id', is_numeric($target) ? (int)$target : -1)
                     ->orWhereRaw('LOWER(code) = ?', [strtolower($target)])
                     ->first();
-            } elseif ($user && !empty($user->branch_id)) {
-                $branch = is_numeric($user->branch_id)
-                    ? DB::table('branches')->where('id', (int) $user->branch_id)->first()
-                    : DB::table('branches')->where('slug', (string) $user->branch_id)->first();
             } else {
+                // No branch picked means All Branches. The superadmin is global, so a branch that happens to sit
+                // on their employee row (admin@example.com carries Main Branch) must not narrow their view.
                 return (object) [
                     'id' => 'all',
                     'slug' => 'all',
