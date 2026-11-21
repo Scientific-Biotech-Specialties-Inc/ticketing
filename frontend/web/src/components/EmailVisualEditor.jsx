@@ -470,7 +470,11 @@ export default function EmailVisualEditor({
             {/* Rendered Email Content */}
             <div
               className="p-5 sm:p-6 text-sm text-gray-800 leading-relaxed prose max-w-none"
-              dangerouslySetInnerHTML={{ __html: previewHtml || '<p className="text-gray-400 italic">No template content to preview.</p>' }}
+              dangerouslySetInnerHTML={{
+                __html: DOMPurify.sanitize(
+                  previewHtml || '<p class="text-gray-400 italic">No template content to preview.</p>'
+                ),
+              }}
             />
 
             {/* Email Footer Notice */}

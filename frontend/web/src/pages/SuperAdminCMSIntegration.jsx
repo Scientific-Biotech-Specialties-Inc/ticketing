@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Building2,
   FileText,
@@ -13,6 +13,8 @@ import {
   ExternalLink,
   Settings,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   Eye,
   Sliders,
   ShieldCheck,
@@ -36,6 +38,7 @@ import {
   HelpCircle,
   Link as LinkIcon,
   Loader2,
+  UserPlus,
 } from 'lucide-react';
 
 import { PageHeader } from '@/components/ui/page-header';
@@ -59,6 +62,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog';
+import { FormModal } from '@/components/ui/form-modal';
 import Pagination from '@/components/Pagination';
 import { useToast } from '@/context/ToastContext';
 import {
@@ -70,6 +74,7 @@ import {
   resetCmsCustomerStore,
   getStoredIntegrationSettings,
   saveStoredIntegrationSettings,
+  createCmsCustomerRecord,
 } from '@/data/cmsCustomerData';
 
 export default function SuperAdminCMSIntegration() {
@@ -87,8 +92,17 @@ export default function SuperAdminCMSIntegration() {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [settingsForm, setSettingsForm] = useState(settings);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
-  const [detailTab, setDetailTab] = useState('profile'); // 'profile' | 'contract' | 'equipment' | 'ticketing' | 'json'
-  const [copiedJson, setCopiedJson] = useState(false);
+  const [equipmentExpanded, setEquipmentExpanded] = useState(true);
+  const [showCreateUserModal, setShowCreateUserModal] = useState(false);
+  const createUserFormRef = useRef(null);
+  const [createUserForm, setCreateUserForm] = useState({
+    equipmentName: '',
+    brandAndModel: '',
+    serialNumber: '',
+    customerName: '',
+    customerEmail: '',
+    sbsiBranch: 'NCR - Main',
+  });
 
   // Filters & Search
   const [searchTerm, setSearchTerm] = useState('');
@@ -294,12 +308,23 @@ export default function SuperAdminCMSIntegration() {
     toast.success('Exported CMS customer dataset to JSON file.', 'EXPORT COMPLETE');
   };
 
-  // Copy JSON in modal
-  const handleCopyJson = (data) => {
-    navigator.clipboard.writeText(JSON.stringify(data, null, 2));
-    setCopiedJson(true);
-    setTimeout(() => setCopiedJson(false), 2000);
-    toast.info('Raw CMS JSON payload copied to clipboard.');
+  // Action: Create User & Equipment Record
+  const handleCreateUser = (e) => {
+    e.preventDefault();
+    const res = createCmsCustomerRecord(createUserForm);
+    if (res.success) {
+      setCustomers(res.records);
+      setShowCreateUserModal(false);
+      setCreateUserForm({
+        equipmentName: '',
+        brandAndModel: '',
+        serialNumber: '',
+        customerName: '',
+        customerEmail: '',
+        sbsiBranch: 'NCR - Main',
+      });
+      toast.success(`Created customer record for "${res.record.companyName}".`, 'USER CREATED');
+    }
   };
 
   // Helpers for badge variants
@@ -334,7 +359,7 @@ export default function SuperAdminCMSIntegration() {
     <div className="w-full space-y-6 pb-12 font-sans">
       {/* 1. Page Header with Actions */}
       <PageHeader
-        title="CMS Customer Integration"
+        title="Customer & Contract"
         subtitle="Sync and manage customer profiles and service contracts from CMS."
         showClock={false}
         actions={
@@ -443,9 +468,9 @@ export default function SuperAdminCMSIntegration() {
               >
                 {settings.cmsApiEndpoint}
               </span>
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 shrink-0">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                Connected
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
+                Local Sandbox (Mock Data)
               </span>
             </div>
             <p className="text-xs text-muted-slate">
@@ -592,27 +617,38 @@ export default function SuperAdminCMSIntegration() {
 
       {/* 5. Customer & Contract Records Table */}
       <div className="bg-surface rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+        <div className="px-4 sm:px-6 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-base font-bold text-dark-slate">Fetched Customer & Contract Records</h2>
             <p className="text-xs text-muted-slate mt-0.5">
               Showing {paginatedCustomers.length} of {filteredCustomers.length} records
             </p>
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-slate">
-            <span>Rows per page:</span>
-            <select
-              value={pageSize}
-              onChange={(e) => {
-                setPageSize(Number(e.target.value));
-                setCurrentPage(1);
-              }}
-              className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-dark-slate focus:outline-none"
+          <div className="flex items-center gap-3 text-xs text-muted-slate flex-wrap">
+            <div className="flex items-center gap-2">
+              <span>Rows per page:</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-dark-slate focus:outline-none"
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </select>
+            </div>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setShowCreateUserModal(true)}
+              className="bg-primary text-white shadow-sm hover:bg-[#2F2F8E] h-8 px-3"
             >
-              <option value={10}>10</option>
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-            </select>
+              <UserPlus className="w-3.5 h-3.5 mr-1.5" />
+              Create User
+            </Button>
           </div>
         </div>
 
@@ -663,7 +699,7 @@ export default function SuperAdminCMSIntegration() {
                         className="text-left font-semibold text-sm text-dark-slate hover:text-accent cursor-pointer block"
                         onClick={() => {
                           setSelectedCustomer(cust);
-                          setDetailTab('profile');
+                          setEquipmentExpanded(true);
                         }}
                       >
                         {cust.companyName}
@@ -730,7 +766,7 @@ export default function SuperAdminCMSIntegration() {
                           size="sm"
                           onClick={() => {
                             setSelectedCustomer(cust);
-                            setDetailTab('profile');
+                            setEquipmentExpanded(true);
                           }}
                           className="h-8 w-8 p-0 text-slate-500 hover:text-accent hover:bg-blue-50"
                           title="View details"
@@ -765,421 +801,257 @@ export default function SuperAdminCMSIntegration() {
         )}
       </div>
 
-      {/* 6. Comprehensive Detail Modal */}
+      {/* 6. ONE UI Customer & Equipment Detail Modal */}
       {selectedCustomer && (
         <Dialog open={!!selectedCustomer} onOpenChange={(open) => !open && setSelectedCustomer(null)}>
-          <DialogContent
-            className="max-w-4xl w-[95vw] md:w-full p-0 overflow-hidden rounded-2xl bg-white border border-slate-200/80 shadow-2xl flex flex-col gap-0"
-            showClose={false}
-          >
-            {/* Modal Header */}
-            <div className="p-6 bg-gradient-to-r from-[#252578] to-[#2E85D8] text-white relative w-full max-w-full">
-              <div className="flex items-center justify-between gap-3 pb-2 w-full">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[10px] font-bold tracking-wider uppercase px-2.5 py-0.5 rounded-full bg-white/20 text-white shrink-0">
-                    CMS CLIENT
-                  </span>
-                  <span className="text-xs font-mono text-white/90 truncate">{selectedCustomer.cmsClientId}</span>
-                </div>
-
-                <div className="flex items-center gap-2.5 shrink-0">
-                  <Badge
-                    variant={getTierBadgeVariant(selectedCustomer.contract?.tier)}
-                    size="default"
-                    className="bg-white text-[#252578] font-bold border-0 shadow-sm shrink-0"
-                  >
-                    {selectedCustomer.contract?.tier}
-                  </Badge>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCustomer(null)}
-                    className="p-1.5 rounded-lg text-white hover:bg-white/20 bg-white/10 transition-colors cursor-pointer shrink-0 flex items-center justify-center"
-                    aria-label="Close modal"
-                  >
-                    <X className="w-4 h-4 text-white" />
-                  </button>
-                </div>
+          <DialogContent className="max-w-2xl w-[95vw] p-6 font-sans rounded-2xl bg-white border border-slate-200/80 shadow-2xl">
+            {/* ONE UI Left-Aligned Header */}
+            <div className="flex items-start gap-4 pb-4 border-b border-slate-100">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-50 text-accent">
+                <Building2 className="w-5 h-5" />
               </div>
-
-              <DialogHeader className="text-left mt-1 w-full">
-                <DialogTitle className="text-xl font-bold tracking-tight text-white">
+              <div className="flex-1 min-w-0 pr-6">
+                <DialogTitle className="text-xl font-bold text-dark-slate">
                   {selectedCustomer.companyName}
                 </DialogTitle>
-                <DialogDescription className="text-xs text-white/80 mt-0.5">
-                  {selectedCustomer.category} • {selectedCustomer.assignedBranch}
+                <DialogDescription className="text-xs text-muted-slate mt-0.5 font-mono">
+                  {selectedCustomer.cmsClientId} • {selectedCustomer.assignedBranch}
                 </DialogDescription>
-              </DialogHeader>
-
-              {/* Modal Tabs - Concise, clean labels */}
-              <div className="flex items-center gap-1.5 mt-5 border-b border-white/20 pb-0 overflow-x-auto text-xs w-full max-w-full">
-                {[
-                  { id: 'profile', label: 'Profile', icon: Building2 },
-                  { id: 'contract', label: 'Contract & SLA', icon: FileText },
-                  { id: 'equipment', label: `Equipment (${selectedCustomer.coveredEquipment?.length || 0})`, icon: Cpu },
-                  { id: 'ticketing', label: 'Ticketing DB', icon: Database },
-                  { id: 'json', label: 'Raw JSON', icon: Hash },
-                ].map((tab) => {
-                  const Icon = tab.icon;
-                  const isActive = detailTab === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      onClick={() => setDetailTab(tab.id)}
-                      className={`flex items-center gap-1.5 px-3 py-2 font-semibold transition-all border-b-2 whitespace-nowrap ${
-                        isActive
-                          ? 'border-white text-white bg-white/15 rounded-t-lg'
-                          : 'border-transparent text-white/70 hover:text-white hover:bg-white/5 rounded-t-lg'
-                      }`}
-                    >
-                      <Icon className="w-3.5 h-3.5" />
-                      {tab.label}
-                    </button>
-                  );
-                })}
               </div>
             </div>
 
-            {/* Modal Body Content */}
-            <div className="p-6 max-h-[60vh] overflow-y-auto space-y-4">
-              {/* Tab 1: Customer Profile */}
-              {detailTab === 'profile' && (
-                <div className="space-y-4 text-xs">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-2.5">
-                      <h4 className="font-bold text-dark-slate text-sm flex items-center gap-1.5">
-                        <Building2 className="w-4 h-4 text-accent" />
-                        Organization Details
-                      </h4>
-                      <div className="space-y-1.5 pt-1">
-                        <div>
-                          <span className="text-muted-slate block">Company / Entity:</span>
-                          <span className="font-semibold text-dark-slate">{selectedCustomer.companyName}</span>
-                        </div>
-                        <div>
-                          <span className="text-muted-slate block">Trade / Facility Name:</span>
-                          <span className="font-medium text-dark-slate">{selectedCustomer.tradeName || 'N/A'}</span>
-                        </div>
-                        <div>
-                          <span className="text-muted-slate block">Tax ID (TIN):</span>
-                          <span className="font-mono text-dark-slate">{selectedCustomer.taxIdentificationNumber}</span>
-                        </div>
-                        <div>
-                          <span className="text-muted-slate block">Client Category:</span>
-                          <span className="font-medium text-dark-slate">{selectedCustomer.category}</span>
-                        </div>
-                        <div>
-                          <span className="text-muted-slate block">Assigned Support Branch:</span>
-                          <span className="font-medium text-dark-slate">{selectedCustomer.assignedBranch}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-2.5">
-                      <h4 className="font-bold text-dark-slate text-sm flex items-center gap-1.5">
-                        <MapPin className="w-4 h-4 text-accent" />
-                        Service Location
-                      </h4>
-                      <div className="space-y-1.5 pt-1">
-                        <div>
-                          <span className="text-muted-slate block">Street Address:</span>
-                          <span className="font-medium text-dark-slate">{selectedCustomer.address?.street}</span>
-                        </div>
-                        <div>
-                          <span className="text-muted-slate block">City & Province:</span>
-                          <span className="font-medium text-dark-slate">
-                            {selectedCustomer.address?.city}, {selectedCustomer.address?.province}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-muted-slate block">Postal Code:</span>
-                          <span className="font-mono text-dark-slate">{selectedCustomer.address?.postalCode}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Contacts Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-2">
-                      <h4 className="font-bold text-dark-slate text-sm flex items-center gap-1.5">
-                        <Mail className="w-4 h-4 text-accent" />
-                        Primary Point of Contact
-                      </h4>
-                      <div className="pt-1 space-y-1">
-                        <div className="font-semibold text-dark-slate text-sm">{selectedCustomer.primaryContact?.name}</div>
-                        <div className="text-muted-slate">{selectedCustomer.primaryContact?.title}</div>
-                        <div className="pt-1 space-y-0.5 text-slate-700">
-                          <div>Email: <a href={`mailto:${selectedCustomer.primaryContact?.email}`} className="text-accent hover:underline">{selectedCustomer.primaryContact?.email}</a></div>
-                          <div>Landline: {selectedCustomer.primaryContact?.phone}</div>
-                          <div>Mobile: {selectedCustomer.primaryContact?.mobile}</div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-2">
-                      <h4 className="font-bold text-dark-slate text-sm flex items-center gap-1.5">
-                        <Phone className="w-4 h-4 text-accent" />
-                        Secondary / Procurement Contact
-                      </h4>
-                      <div className="pt-1 space-y-1">
-                        <div className="font-semibold text-dark-slate text-sm">{selectedCustomer.secondaryContact?.name || 'None listed'}</div>
-                        <div className="text-muted-slate">{selectedCustomer.secondaryContact?.title}</div>
-                        <div className="pt-1 space-y-0.5 text-slate-700">
-                          <div>Email: {selectedCustomer.secondaryContact?.email}</div>
-                          <div>Phone: {selectedCustomer.secondaryContact?.phone}</div>
-                          <div>Mobile: {selectedCustomer.secondaryContact?.mobile}</div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Tab 2: Contract & SLA */}
-              {detailTab === 'contract' && (
-                <div className="space-y-4 text-xs">
-                  <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-3">
-                    <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                      <div>
-                        <span className="text-muted-slate block">Contract Reference Number:</span>
-                        <span className="font-mono font-bold text-sm text-dark-slate">{selectedCustomer.contract?.contractNumber}</span>
-                      </div>
-                      <Badge variant={getContractStatusBadgeVariant(selectedCustomer.contract?.status)} size="default">
-                        {selectedCustomer.contract?.status}
-                      </Badge>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
-                      <div>
-                        <span className="text-muted-slate block">Contract Title:</span>
-                        <span className="font-semibold text-dark-slate">{selectedCustomer.contract?.contractTitle}</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-slate block">Contract Agreement Type:</span>
-                        <span className="font-medium text-dark-slate">{selectedCustomer.contract?.contractType}</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-slate block">Contract Value / Total:</span>
-                        <span className="font-bold text-dark-slate">{selectedCustomer.contract?.contractValue}</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-slate block">Billing Arrangement:</span>
-                        <span className="font-medium text-dark-slate">{selectedCustomer.contract?.billingTerm}</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-slate block">Effective Start Date:</span>
-                        <span className="font-medium text-dark-slate">{selectedCustomer.contract?.startDate}</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-slate block">Contract Expiry Date:</span>
-                        <span className="font-medium text-dark-slate">{selectedCustomer.contract?.endDate}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* SLA Guarantees */}
-                  <div className="bg-blue-50/60 rounded-xl p-4 border border-blue-100 space-y-2">
-                    <h4 className="font-bold text-primary text-sm flex items-center gap-1.5">
-                      <ShieldCheck className="w-4 h-4 text-accent" />
-                      Service Level Agreement (SLA) Entitlements
-                    </h4>
-                    <p className="text-xs text-slate-700 leading-relaxed">
-                      {selectedCustomer.contract?.slaDescription}
-                    </p>
-                    <div className="grid grid-cols-2 gap-3 pt-2">
-                      <div className="bg-white rounded-lg p-2.5 border border-blue-100">
-                        <span className="text-[11px] text-muted-slate block font-semibold">Maximum Response Time:</span>
-                        <span className="text-base font-bold text-primary">{selectedCustomer.contract?.slaResponseHours} Hours</span>
-                      </div>
-                      <div className="bg-white rounded-lg p-2.5 border border-blue-100">
-                        <span className="text-[11px] text-muted-slate block font-semibold">Target MTTR (Resolution):</span>
-                        <span className="text-base font-bold text-accent">{selectedCustomer.contract?.slaResolutionHours} Hours</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Tab 3: Covered Equipment */}
-              {detailTab === 'equipment' && (
-                <div className="space-y-3 text-xs">
-                  <div className="flex items-center justify-between">
-                    <h4 className="font-bold text-dark-slate text-sm">Covered Machines & Laboratory Analyzers</h4>
-                    <span className="text-muted-slate">
-                      {selectedCustomer.coveredEquipment?.length || 0} units registered under contract
+            {/* Modal Body: Single Page (Profile + Collapsible Equipment Chevron) */}
+            <div className="py-2 max-h-[65vh] overflow-y-auto space-y-4 pr-1 text-xs">
+              {/* Customer Profile Details */}
+              <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-3">
+                <h4 className="font-bold text-dark-slate text-sm flex items-center gap-1.5">
+                  <Building2 className="w-4 h-4 text-accent" />
+                  Customer Details
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+                  <div>
+                    <span className="text-muted-slate block">Customer Name:</span>
+                    <span className="font-semibold text-dark-slate">
+                      {selectedCustomer.primaryContact?.name || selectedCustomer.companyName}
                     </span>
                   </div>
+                  <div>
+                    <span className="text-muted-slate block">Customer Email:</span>
+                    <a
+                      href={`mailto:${selectedCustomer.primaryContact?.email}`}
+                      className="font-medium text-accent hover:underline break-all"
+                    >
+                      {selectedCustomer.primaryContact?.email || 'N/A'}
+                    </a>
+                  </div>
+                  <div>
+                    <span className="text-muted-slate block">SBSI Branch:</span>
+                    <span className="font-medium text-dark-slate">{selectedCustomer.assignedBranch || 'N/A'}</span>
+                  </div>
+                </div>
+              </div>
 
-                  <div className="border border-slate-200 rounded-xl overflow-hidden">
+              {/* Collapsible Equipment Section (Chevron) */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                <button
+                  type="button"
+                  onClick={() => setEquipmentExpanded((prev) => !prev)}
+                  aria-expanded={equipmentExpanded}
+                  className="w-full px-4 py-3 bg-slate-50 hover:bg-slate-100/80 transition-colors flex items-center justify-between text-left"
+                >
+                  <div className="flex items-center gap-2">
+                    <Cpu className="w-4 h-4 text-accent" />
+                    <span className="font-bold text-dark-slate text-sm">
+                      Equipment ({selectedCustomer.coveredEquipment?.length || 0})
+                    </span>
+                  </div>
+                  {equipmentExpanded ? (
+                    <ChevronUp className="w-4 h-4 text-muted-slate" />
+                  ) : (
+                    <ChevronDown className="w-4 h-4 text-muted-slate" />
+                  )}
+                </button>
+
+                {equipmentExpanded && (
+                  <div className="border-t border-slate-200">
                     <Table>
                       <TableHeader>
                         <TableRow>
-                          <TableHead>Asset Tag / Serial</TableHead>
-                          <TableHead>Analyzer Model</TableHead>
-                          <TableHead>Lab Department</TableHead>
-                          <TableHead>Warranty Status</TableHead>
-                          <TableHead>PMS Schedule</TableHead>
+                          <TableHead>EQUIPMENT / SOFTWARE MACHINE</TableHead>
+                          <TableHead>Brand and Model</TableHead>
+                          <TableHead>Serial Number</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {selectedCustomer.coveredEquipment?.map((eq) => (
-                          <TableRow key={eq.assetTag}>
-                            <TableCell>
-                              <div className="font-mono font-bold text-dark-slate">{eq.assetTag}</div>
-                              <div className="font-mono text-[11px] text-slate-500">{eq.serialNumber}</div>
+                        {selectedCustomer.coveredEquipment?.map((eq, idx) => (
+                          <TableRow key={eq.serialNumber || eq.assetTag || idx}>
+                            <TableCell className="font-medium text-dark-slate">
+                              {eq.equipmentName || eq.model}
                             </TableCell>
-                            <TableCell className="font-medium text-dark-slate">{eq.model}</TableCell>
-                            <TableCell className="text-slate-600">{eq.department}</TableCell>
-                            <TableCell>
-                              <Badge variant="medium-success" size="sm">
-                                {eq.warrantyStatus}
-                              </Badge>
+                            <TableCell className="text-slate-700">
+                              {eq.brandAndModel || eq.model}
                             </TableCell>
-                            <TableCell>
-                              <div className="text-[11px] text-slate-600">Last: {eq.lastPmsDate}</div>
-                              <div className="text-[11px] font-semibold text-accent">Next: {eq.nextPmsDate}</div>
+                            <TableCell className="font-mono text-slate-600">
+                              {eq.serialNumber}
                             </TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
                     </Table>
                   </div>
-                </div>
-              )}
-
-              {/* Tab 4: Ticketing Store */}
-              {detailTab === 'ticketing' && (
-                <div className="space-y-4 text-xs">
-                  <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-3">
-                    <h4 className="font-bold text-dark-slate text-sm flex items-center gap-1.5">
-                      <Database className="w-4 h-4 text-accent" />
-                      Ticketing Database Storage Status
-                    </h4>
-                    <div className="grid grid-cols-2 gap-3 pt-1">
-                      <div>
-                        <span className="text-muted-slate block">Current Store State:</span>
-                        <Badge
-                          variant={
-                            selectedCustomer.ticketingIntegration?.storeStatus === 'Stored'
-                              ? 'medium-success'
-                              : 'medium-warning'
-                          }
-                          size="default"
-                          className="mt-1"
-                        >
-                          {selectedCustomer.ticketingIntegration?.storeStatus}
-                        </Badge>
-                      </div>
-                      <div>
-                        <span className="text-muted-slate block">Linked Customer Account ID:</span>
-                        <span className="font-mono font-bold text-dark-slate text-sm">
-                          {selectedCustomer.ticketingIntegration?.linkedTicketCustomerId || 'Not Linked Yet'}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-slate block">Last Synced From CMS:</span>
-                        <span className="text-slate-700 font-mono">
-                          {new Date(selectedCustomer.ticketingIntegration?.syncTimestamp).toLocaleString()}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-muted-slate block">Auto-Triage Priority Ticket Routing:</span>
-                        <span className="font-semibold text-emerald-700">
-                          {selectedCustomer.ticketingIntegration?.autoTriageEnabled ? 'Active' : 'Inactive'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {selectedCustomer.ticketingIntegration?.storeStatus !== 'Stored' && (
-                    <div className="bg-amber-50 rounded-xl p-4 border border-amber-200 flex items-center justify-between">
-                      <div>
-                        <h5 className="font-bold text-amber-900">Record Pending Ticketing Storage</h5>
-                        <p className="text-xs text-amber-800 mt-0.5">
-                          This customer record was retrieved from CMS but has not yet been persisted to the Ticketing
-                          System database.
-                        </p>
-                      </div>
-                      <Button
-                        variant="default"
-                        size="sm"
-                        onClick={() => handleStoreRecord(selectedCustomer)}
-                        loading={storingRecordId === selectedCustomer.id}
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white shrink-0 ml-4"
-                      >
-                        <Database className="w-4 h-4 mr-1.5" />
-                        Store Now
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Tab 5: Raw CMS JSON Payload */}
-              {detailTab === 'json' && (
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-slate-600">Payload received from CMS API:</span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleCopyJson(selectedCustomer)}
-                      className="text-xs h-7 px-2.5"
-                    >
-                      {copiedJson ? (
-                        <>
-                          <Check className="w-3.5 h-3.5 mr-1 text-emerald-600" />
-                          Copied
-                        </>
-                      ) : (
-                        <>
-                          <Copy className="w-3.5 h-3.5 mr-1 text-slate-500" />
-                          Copy JSON
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                  <pre className="bg-slate-900 text-emerald-400 p-4 rounded-xl text-xs font-mono overflow-x-auto max-h-[300px] border border-slate-800">
-                    {JSON.stringify(selectedCustomer, null, 2)}
-                  </pre>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
-            {/* Modal Footer */}
-            <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-3 w-full shrink-0">
-              <div className="text-xs text-muted-slate truncate">
-                Client ID: <span className="font-mono text-slate-700">{selectedCustomer.cmsClientId}</span>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {selectedCustomer.ticketingIntegration?.storeStatus !== 'Stored' && (
-                  <Button
-                    variant="default"
-                    size="sm"
-                    onClick={() => handleStoreRecord(selectedCustomer)}
-                    loading={storingRecordId === selectedCustomer.id}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs"
-                  >
-                    <Database className="w-3.5 h-3.5 mr-1.5" />
-                    Store in Ticketing DB
-                  </Button>
-                )}
+            {/* Footer (only Store action if pending; no Close button) */}
+            {selectedCustomer.ticketingIntegration?.storeStatus !== 'Stored' && (
+              <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
                 <Button
-                  variant="outline"
+                  variant="default"
                   size="sm"
-                  onClick={() => setSelectedCustomer(null)}
-                  className="h-8 text-xs font-semibold px-4 border-slate-300 text-dark-slate hover:bg-slate-100 shrink-0"
+                  onClick={() => handleStoreRecord(selectedCustomer)}
+                  loading={storingRecordId === selectedCustomer.id}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs"
                 >
-                  Close
+                  <Database className="w-3.5 h-3.5 mr-1.5" />
+                  Store in Ticketing DB
                 </Button>
               </div>
-            </div>
+            )}
           </DialogContent>
         </Dialog>
       )}
 
-      {/* 7. Integration Settings Modal */}
+      {/* 7. Create User Modal (ONE UI FormModal) */}
+      <FormModal
+        isOpen={showCreateUserModal}
+        onClose={() => setShowCreateUserModal(false)}
+        onSubmit={() => createUserFormRef.current?.requestSubmit()}
+        title="Create User"
+        subtitle="Add a new customer profile and covered equipment record."
+        icon={UserPlus}
+        confirmLabel="Create User"
+        cancelLabel="Cancel"
+        maxWidth="max-w-xl"
+      >
+        <form ref={createUserFormRef} onSubmit={handleCreateUser} className="space-y-4 text-xs">
+          <div>
+            <label htmlFor="create-equipment-name" className="font-semibold text-slate-700 block mb-1">
+              Equipment Name / Machine Name
+            </label>
+            <Input
+              id="create-equipment-name"
+              type="text"
+              value={createUserForm.equipmentName}
+              onChange={(e) => setCreateUserForm({ ...createUserForm, equipmentName: e.target.value })}
+              placeholder="e.g. Automated Hematology Analyzer"
+              className="text-xs"
+              required
+            />
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="create-brand-model" className="font-semibold text-slate-700 block mb-1">
+                Brand and Model
+              </label>
+              <Input
+                id="create-brand-model"
+                type="text"
+                value={createUserForm.brandAndModel}
+                onChange={(e) => setCreateUserForm({ ...createUserForm, brandAndModel: e.target.value })}
+                placeholder="e.g. Sysmex XN-1000"
+                className="text-xs"
+                required
+              />
+            </div>
+
+            <div>
+              <label htmlFor="create-serial-number" className="font-semibold text-slate-700 block mb-1">
+                Serial Number
+              </label>
+              <Input
+                id="create-serial-number"
+                type="text"
+                value={createUserForm.serialNumber}
+                onChange={(e) => setCreateUserForm({ ...createUserForm, serialNumber: e.target.value })}
+                placeholder="e.g. SN-XN1K-44921"
+                className="text-xs font-mono"
+                required
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="create-customer-name" className="font-semibold text-slate-700 block mb-1">
+                Customer Name
+              </label>
+              <Input
+                id="create-customer-name"
+                type="text"
+                value={createUserForm.customerName}
+                onChange={(e) => setCreateUserForm({ ...createUserForm, customerName: e.target.value })}
+                placeholder="e.g. St. Luke's Medical Center"
+                className="text-xs"
+                required
+              />
+            </div>
+
+            <div>
+              <label htmlFor="create-customer-email" className="font-semibold text-slate-700 block mb-1">
+                Customer Email
+              </label>
+              <Input
+                id="create-customer-email"
+                type="email"
+                value={createUserForm.customerEmail}
+                onChange={(e) => setCreateUserForm({ ...createUserForm, customerEmail: e.target.value })}
+                placeholder="e.g. contact@hospital.com.ph"
+                className="text-xs"
+                required
+              />
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="create-sbsi-branch" className="font-semibold text-slate-700 block mb-1">
+              SBSI Branch
+            </label>
+            <select
+              id="create-sbsi-branch"
+              value={createUserForm.sbsiBranch}
+              onChange={(e) => setCreateUserForm({ ...createUserForm, sbsiBranch: e.target.value })}
+              className="w-full h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs text-dark-slate focus:outline-none focus:ring-1 focus:ring-accent"
+              required
+            >
+              {[
+                'NCR - Main',
+                'Cebu Regional Branch',
+                'Davao Branch',
+                'North Luzon Branch',
+                'Western Visayas Branch',
+                ...availableBranches.filter(
+                  (b) =>
+                    ![
+                      'NCR - Main',
+                      'Cebu Regional Branch',
+                      'Davao Branch',
+                      'North Luzon Branch',
+                      'Western Visayas Branch',
+                    ].includes(b)
+                ),
+              ].map((branch) => (
+                <option key={branch} value={branch}>
+                  {branch}
+                </option>
+              ))}
+            </select>
+          </div>
+        </form>
+      </FormModal>
+
+      {/* 8. Integration Settings Modal */}
       {showSettingsModal && (
         <Dialog open={showSettingsModal} onOpenChange={setShowSettingsModal}>
           <DialogContent className="max-w-xl w-full p-6 rounded-2xl bg-white border border-slate-200/80 shadow-2xl">

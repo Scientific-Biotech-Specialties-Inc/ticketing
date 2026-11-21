@@ -51,7 +51,7 @@ describe('Customer portal isolation', () => {
     await renderWrongPortal('customer', { portalType: 'customer' });
 
     expect(screen.queryByText(/Go to Employee Portal/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/can't be used here/i)).toBeInTheDocument();
+    expect(screen.getByText(/customers only/i)).toBeInTheDocument();
     for (const link of screen.queryAllByRole('link')) {
       expect(link.getAttribute('href')).not.toMatch(/ticketing|5005/);
     }

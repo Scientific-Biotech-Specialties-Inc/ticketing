@@ -562,7 +562,8 @@ export function AuthProvider({ children }) {
 
   // Login with email and password
   const login = useCallback(async (email, password, mode = 'customer') => {
-    if (mode === 'employee') {
+    const effectiveMode = IS_CUSTOMER_SITE ? 'customer' : mode;
+    if (effectiveMode === 'employee') {
       if (typeof window !== 'undefined') {
         window.location.href = '/';
       }
@@ -572,7 +573,7 @@ export function AuthProvider({ children }) {
       setError(null);
 
       if (MOCK_AUTH_ENABLED) {
-        const userData = getMockUser(email, mode);
+        const userData = getMockUser(email, effectiveMode);
 
         try {
           sessionStorage.removeItem('logged_out');
@@ -597,7 +598,7 @@ export function AuthProvider({ children }) {
       const response = await axiosInstance.post(AUTH_ENDPOINTS.LOGIN, {
         email,
         password: encryptPayload(password, public_key),
-        mode,
+        mode: effectiveMode,
       }, {
         headers: {
           'X-Key-Id': key_id

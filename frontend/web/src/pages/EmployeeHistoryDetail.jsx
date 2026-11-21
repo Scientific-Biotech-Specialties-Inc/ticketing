@@ -21,6 +21,7 @@ import FilePreviewModal from '@/components/FilePreviewModal';
 import AuthenticatedImage from '@/components/AuthenticatedImage';
 import SermsReimbursementModal from '@/components/employee/SermsReimbursementModal';
 import { getTicketReimbursement } from '@/data/sermsReimbursementData';
+import { isUserAssignedToTicket, isUserRequestorOfTicket } from '@/components/ticket-modal/ticketModalUtils';
 import ReassignmentDisapprovalBanner from '@/components/employee/ReassignmentDisapprovalBanner';
 import { getTicketDetails, reopenTicket } from '@/services/ticketService';
 import { getWindowConfiguration, getCachedWindowConfiguration } from '@/services/configurationService';
@@ -39,35 +40,37 @@ import TicketActivityTimeline from '@/components/TicketActivityTimeline';
 
 export default function EmployeeHistoryDetail() {
   const navigate = useNavigate();
-  const { state } = useLocation();
+  const { state, pathname } = useLocation();
   const { ticketId } = useParams();
   const { user } = useAuth();
 
-  const isCustomer = user?.role === 'customer' || (
-    !window.location.pathname.startsWith('/employee') &&
-    !window.location.pathname.startsWith('/cs') &&
-    !window.location.pathname.startsWith('/it-manager') &&
-    !window.location.pathname.startsWith('/service-manager') &&
-    !window.location.pathname.startsWith('/cs-manager')
-  );
-
+  const isStaffRoute =
+    pathname.startsWith('/employee') ||
+    pathname.startsWith('/cs') ||
+    pathname.startsWith('/it-manager') ||
+    pathname.startsWith('/service-manager') ||
+    pathname.startsWith('/cs-manager') ||
+    pathname.startsWith('/superadmin');
+  const isCustomer = user?.role === 'customer' || (!user?.emp_id && !isStaffRoute);
   const [ticket, setTicket] = useState(state?.ticket || null);
   const [loading, setLoading] = useState(!state?.ticket);
   const [error, setError] = useState(null);
+  const isRequestor = Boolean(ticket && (isCustomer || isUserRequestorOfTicket(ticket, user)));
+  const isAssignedEmployee = Boolean(ticket && !isCustomer && isUserAssignedToTicket(ticket, user));
   const backPath = state?.backPath ?? (
-    window.location.pathname.startsWith('/it-manager') ? '/it-manager/history' :
-    window.location.pathname.startsWith('/service-manager') ? '/service-manager/history' :
-    window.location.pathname.startsWith('/cs-manager') ? '/cs-manager/history' :
-    window.location.pathname.startsWith('/cs') ? '/cs/history' :
-    window.location.pathname.startsWith('/employee') ? '/employee/progress' :
+    pathname.startsWith('/it-manager') ? '/it-manager/history' :
+    pathname.startsWith('/service-manager') ? '/service-manager/history' :
+    pathname.startsWith('/cs-manager') ? '/cs-manager/history' :
+    pathname.startsWith('/cs') ? '/cs/history' :
+    pathname.startsWith('/employee') ? '/employee/progress' :
     '/history'
   );
   const messagesPath = (
-    window.location.pathname.startsWith('/it-manager') ? '/it-manager/messages' :
-    window.location.pathname.startsWith('/service-manager') ? '/service-manager/messages' :
-    window.location.pathname.startsWith('/cs-manager') ? '/cs-manager/messages' :
-    window.location.pathname.startsWith('/cs') ? '/cs/messages' :
-    window.location.pathname.startsWith('/employee') ? '/employee/messages' :
+    pathname.startsWith('/it-manager') ? '/it-manager/messages' :
+    pathname.startsWith('/service-manager') ? '/service-manager/messages' :
+    pathname.startsWith('/cs-manager') ? '/cs-manager/messages' :
+    pathname.startsWith('/cs') ? '/cs/messages' :
+    pathname.startsWith('/employee') ? '/employee/messages' :
     '/messages'
   );
   const [previewFile, setPreviewFile] = useState(null);
@@ -898,53 +901,55 @@ export default function EmployeeHistoryDetail() {
             })}
           </div>
 
-          {/* SERMS Reimbursement Integration Card */}
-          <div className="mt-4 pt-4 border-t border-emerald-500/20">
-            {(() => {
-              const existingClaim = getTicketReimbursement(ticket.ticket_ID || ticket.id);
-              return (
-                <div className="bg-gradient-to-r from-blue-50/70 to-indigo-50/70 border border-blue-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-[#252578] text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
-                      <ReceiptText className="w-5 h-5 text-white" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-bold text-[#252578] uppercase tracking-wider">
-                          SERMS Expense Reimbursement
-                        </span>
-                        {existingClaim ? (
-                          <span className="text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">
-                            Claim #{existingClaim.claimNumber} · ₱{Number(existingClaim.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })} ({existingClaim.status})
-                          </span>
-                        ) : (
-                          <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
-                            Eligible for Claim
-                          </span>
-                        )}
+          {/* SERMS Reimbursement Integration Card (only for the employee assigned to resolve the ticket) */}
+          {isAssignedEmployee && (
+            <div className="mt-4 pt-4 border-t border-emerald-500/20">
+              {(() => {
+                const existingClaim = getTicketReimbursement(ticket.ticket_ID || ticket.id);
+                return (
+                  <div className="bg-gradient-to-r from-blue-50/70 to-indigo-50/70 border border-blue-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-[#252578] text-white flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                        <ReceiptText className="w-5 h-5 text-white" />
                       </div>
-                      <p className="text-xs text-slate-600 mt-1">
-                        {existingClaim
-                          ? `Claim filed on ${new Date(existingClaim.submittedAt).toLocaleDateString()} for ${existingClaim.category}. Click to review details.`
-                          : 'Incurred out-of-pocket expenses (transportation, emergency parts, meals)? Request reimbursement via SERMS.'}
-                      </p>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold text-[#252578] uppercase tracking-wider">
+                            SERMS Expense Reimbursement
+                          </span>
+                          {existingClaim ? (
+                            <span className="text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full">
+                              Claim #{existingClaim.claimNumber} · ₱{Number(existingClaim.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })} ({existingClaim.status})
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                              Eligible for Claim
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-600 mt-1">
+                          {existingClaim
+                            ? `Claim filed on ${new Date(existingClaim.submittedAt).toLocaleDateString()} for ${existingClaim.category}. Click to review details.`
+                            : 'Incurred out-of-pocket expenses (transportation, emergency parts, meals)? Request reimbursement via SERMS.'}
+                        </p>
+                      </div>
                     </div>
-                  </div>
 
-                  <Button
-                    type="button"
-                    variant="default"
-                    size="sm"
-                    onClick={() => setShowSermsModal(true)}
-                    className="bg-[#252578] hover:bg-[#1e1e62] text-white shrink-0 gap-1.5 self-start sm:self-center font-bold text-xs h-9 px-3.5"
-                  >
-                    <ReceiptText className="w-4 h-4" />
-                    {existingClaim ? 'View Reimbursement' : 'Request Reimbursement'}
-                  </Button>
-                </div>
-              );
-            })()}
-          </div>
+                    <Button
+                      type="button"
+                      variant="default"
+                      size="sm"
+                      onClick={() => setShowSermsModal(true)}
+                      className="bg-[#252578] hover:bg-[#1e1e62] text-white shrink-0 gap-1.5 self-start sm:self-center font-bold text-xs h-9 px-3.5"
+                    >
+                      <ReceiptText className="w-4 h-4" />
+                      {existingClaim ? 'View Reimbursement' : 'Request Reimbursement'}
+                    </Button>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
         </div>
       )}
 
@@ -1038,20 +1043,20 @@ export default function EmployeeHistoryDetail() {
         </Dialog>
       )}
 
-      {/* Customer Satisfaction Feedback */}
-      {ticket && (
+      {/* Customer Satisfaction Feedback (only for requestor) */}
+      {ticket && (ticket.status === 'Resolved' || ticket.status === 'Closed') && isRequestor && (
         <div className="rounded-xl border border-border bg-card p-6 shadow-xs">
           <TicketFeedbackSection
             ticket={ticket}
-            readOnly={!isCustomer}
-            onLeaveFeedback={isCustomer ? () => {
+            readOnly={false}
+            onLeaveFeedback={() => {
               setEditingFeedback(null);
               setShowFeedbackModal(true);
-            } : null}
-            onEditFeedback={isCustomer ? (fb) => {
+            }}
+            onEditFeedback={(fb) => {
               setEditingFeedback(fb);
               setShowFeedbackModal(true);
-            } : null}
+            }}
           />
         </div>
       )}
@@ -1153,7 +1158,7 @@ export default function EmployeeHistoryDetail() {
         />
       )}
 
-      {showSermsModal && (
+      {isAssignedEmployee && showSermsModal && (
         <SermsReimbursementModal
           ticket={ticket}
           open={showSermsModal}

@@ -50,17 +50,18 @@ export default function WrongPortal({ portalType }) {
     return '/';
   })();
 
-  // A customer who opened a staff URL on the customer portal itself stays signed in and goes back
-  // to their own dashboard; the employee portal is never offered to them.
+  // On the customer portal (VITE_APP_MODE=customer), never link to the employee portal
+  // or central auth module; keep users on the customer site.
   const isStaffUrlOnCustomerSite = isCustomerSite && !isCustomerPortal;
   const customerDashboardUrl = `${(import.meta.env.BASE_URL || '/').replace(/\/$/, '')}/customer-dashboard`;
+  const customerLoginUrl = import.meta.env.BASE_URL || '/';
 
-  const ctaLabel = isCustomerPortal
-    ? 'Go to Employee Portal'
-    : (isStaffUrlOnCustomerSite ? 'Back to My Dashboard' : 'Go to Customer Portal');
-  const ctaHref = isCustomerPortal
-    ? employeePortalUrl
-    : (isStaffUrlOnCustomerSite ? customerDashboardUrl : customerPortalUrl);
+  const ctaLabel = isCustomerSite
+    ? (isStaffUrlOnCustomerSite ? 'Back to My Dashboard' : 'Back to Customer Login')
+    : (isCustomerPortal ? 'Go to Employee Portal' : 'Go to Customer Portal');
+  const ctaHref = isCustomerSite
+    ? (isStaffUrlOnCustomerSite ? customerDashboardUrl : customerLoginUrl)
+    : (isCustomerPortal ? employeePortalUrl : customerPortalUrl);
 
   const handleLogout = async () => {
     try {
@@ -69,7 +70,9 @@ export default function WrongPortal({ portalType }) {
       // Background logout cleanup failed silently
     }
     if (typeof window !== 'undefined') {
-      const destination = isCustomerPortal ? employeePortalUrl : customerPortalUrl;
+      const destination = isCustomerSite
+        ? customerLoginUrl
+        : (isCustomerPortal ? employeePortalUrl : customerPortalUrl);
       window.location.replace(destination);
     }
   };
