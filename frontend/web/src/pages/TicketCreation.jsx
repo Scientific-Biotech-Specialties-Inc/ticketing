@@ -4,6 +4,7 @@ import NotificationModal from '@/components/NotificationModal';
 import TitleCasingModal from '@/components/TitleCasingModal';
 import AIDepartmentModal from '@/components/AIDepartmentModal';
 import CustomerTicketDetailModal from '@/components/CustomerTicketDetailModal';
+import BoundedSelect from '@/components/BoundedSelect';
 import {
   getTicketFormOptions,
   createTicket,
@@ -26,6 +27,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { PersistentBanner } from '@/components/ui/alert-banner';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/context/ToastContext';
 import {
   ArrowLeft,
@@ -942,7 +944,7 @@ export default function TicketCreation() {
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="ticket-machine">
-                    Equipment Name / ID {selectedDepartment === 'Service' ? <span className="text-destructive">*</span> : <span className="text-muted-slate text-xs font-normal ml-1">(Optional for IT)</span>}
+                    Equipment / Software {selectedDepartment === 'Service' ? <span className="text-destructive">*</span> : <span className="text-muted-slate text-xs font-normal ml-1">(Optional for IT)</span>}
                   </Label>
                   {selectedDepartment === 'IT' && (
                     <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
@@ -950,20 +952,22 @@ export default function TicketCreation() {
                     </span>
                   )}
                 </div>
-                <select
+                {loadingOptions ? (
+                  <Skeleton className="h-10 w-full rounded-lg" data-testid="equipment-skeleton" aria-label="Loading equipment and software" />
+                ) : (
+                <BoundedSelect
                   id="ticket-machine"
                   name="machine_ID"
                   required={selectedDepartment === 'Service'}
                   value={formData.machine_ID}
-                  onChange={handleChange}
+                  onChange={(val) => setFormData((prev) => ({ ...prev, machine_ID: val }))}
+                  options={equipmentOptions}
+                  placeholder={selectedDepartment === 'IT' ? 'None / Not Applicable (Software Issue)' : 'Select Equipment'}
                   disabled={loadingOptions}
-                  className="flex h-10 w-full rounded-lg border border-border bg-card px-3 py-2 text-sm text-dark-slate shadow-xs focus-visible:border-accent focus-visible:ring-2 focus-visible:ring-accent/20 outline-none disabled:opacity-50"
-                >
-                  <option value="">{selectedDepartment === 'IT' ? 'None / Not Applicable (Software Issue)' : 'Select Equipment'}</option>
-                  {equipmentOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
+                  searchable
+                  triggerClassName="h-10 rounded-lg border-border bg-card px-3 py-2 shadow-xs"
+                />
+                )}
               </div>
             </div>
 

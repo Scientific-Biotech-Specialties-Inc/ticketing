@@ -1,140 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Check, ChevronDown, Search } from 'lucide-react';
 import { getCachedTicketFormOptions, getTicketFormOptions, saveTicketDraft, deleteTicketDraft } from '@/services/ticketService';
+import BoundedSelect from '@/components/BoundedSelect';
 import TitleCasingModal from '@/components/TitleCasingModal';
 import { formatProperTitleCase, needsProperCasing } from '@/utils/titleCaseUtils';
 import { getMaxOpenTicketsLimit } from '@/data/ticketLimitConfig';
 import { useAuth } from '@/context/AuthContext';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import useMaxFileCount from '@/hooks/useMaxFileCount';
-
-function BoundedSelect({
-  value,
-  onChange,
-  onBlur,
-  options = [],
-  placeholder = 'Select an option',
-  disabled = false,
-  hasError = false,
-  searchable = false,
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const containerRef = useRef(null);
-
-  const selectedOption = options.find((opt) => String(opt.value) === String(value));
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleClickOutside = (event) => {
-      if (containerRef.current && !containerRef.current.contains(event.target)) {
-        setIsOpen(false);
-        setSearchQuery('');
-        onBlur?.();
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isOpen, onBlur]);
-
-  const filteredOptions = searchable && searchQuery.trim()
-    ? options.filter((opt) => String(opt.label || '').toLowerCase().includes(searchQuery.trim().toLowerCase()))
-    : options;
-
-  return (
-    <div ref={containerRef} className="relative w-full min-w-0">
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => {
-          if (disabled) return;
-          setIsOpen((prev) => {
-            if (prev) {
-              setSearchQuery('');
-              onBlur?.();
-            }
-            return !prev;
-          });
-        }}
-        className={`flex w-full min-w-0 items-center justify-between gap-2 rounded-xl border bg-white px-4 py-3 text-left text-sm outline-none transition-all focus:border-transparent focus:ring-2 focus:ring-[#252578] disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer ${
-          hasError ? 'border-red-400 bg-red-50' : isOpen ? 'border-[#252578] ring-2 ring-[#252578]/20' : 'border-gray-200'
-        }`}
-      >
-        <span className={`min-w-0 flex-1 truncate ${selectedOption ? 'text-dark-slate font-medium' : 'text-gray-500'}`}>
-          {selectedOption ? selectedOption.label : placeholder}
-        </span>
-        <ChevronDown
-          className={`h-4 w-4 shrink-0 text-gray-500 transition-transform duration-150 ${isOpen ? 'rotate-180 text-[#252578]' : ''}`}
-        />
-      </button>
-
-      {isOpen && (
-        <div className="absolute left-0 right-0 z-50 mt-1.5 w-full overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
-          {(searchable || options.length > 6) && (
-            <div className="border-b border-gray-100 p-2 bg-gray-50/60">
-              <div className="relative flex items-center">
-                <Search className="absolute left-2.5 h-3.5 w-3.5 text-gray-400 pointer-events-none" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search options..."
-                  className="w-full rounded-lg border border-gray-200 bg-white pl-8 pr-3 py-1.5 text-xs text-dark-slate outline-none focus:border-[#252578]"
-                  autoFocus
-                />
-              </div>
-            </div>
-          )}
-          <div className="max-h-56 overflow-y-auto p-1">
-            <button
-              type="button"
-              onClick={() => {
-                onChange('');
-                setIsOpen(false);
-                setSearchQuery('');
-                onBlur?.();
-              }}
-              className={`flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs sm:text-sm transition-colors cursor-pointer ${
-                !value ? 'bg-[#252578]/10 font-semibold text-[#252578]' : 'text-gray-500 hover:bg-gray-50'
-              }`}
-            >
-              <span className="truncate">{placeholder}</span>
-              {!value && <Check className="h-3.5 w-3.5 shrink-0 text-[#252578]" />}
-            </button>
-            {filteredOptions.length === 0 ? (
-              <div className="px-3 py-3 text-center text-xs text-gray-400">No matching options found</div>
-            ) : (
-              filteredOptions.map((opt) => {
-                const isSelected = String(opt.value) === String(value);
-                return (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => {
-                      onChange(String(opt.value));
-                      setIsOpen(false);
-                      setSearchQuery('');
-                      onBlur?.();
-                    }}
-                    className={`flex w-full items-start justify-between gap-2 rounded-lg px-3 py-2 text-left text-xs sm:text-sm transition-colors cursor-pointer ${
-                      isSelected
-                        ? 'bg-[#252578] font-semibold text-white'
-                        : 'text-dark-slate hover:bg-[#252578]/5'
-                    }`}
-                  >
-                    <span className="min-w-0 flex-1 break-words leading-snug">{opt.label}</span>
-                    {isSelected && <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-white" />}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 const initialFormData = {
   title: '',
@@ -591,10 +464,11 @@ export default function TicketModal({
           </div>
           )}
 
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+          <div className="grid grid-cols-1 items-start gap-6 md:grid-cols-2">
             <div className="min-w-0">
               <label className="mb-2 block text-sm font-medium text-gray-700">Category</label>
               <BoundedSelect
+                name="problem_category_ID"
                 value={formData.problem_category_ID}
                 onChange={(val) => setFormData((prev) => ({ ...prev, problem_category_ID: val }))}
                 onBlur={() => touch('category')}
@@ -602,6 +476,7 @@ export default function TicketModal({
                 placeholder="Select Category"
                 disabled={loadingOptions || isSubmitting}
                 hasError={Boolean(touched.category && categoryError)}
+                required
               />
               {touched.category && categoryError && <p className="mt-1.5 text-xs text-red-500">{categoryError}</p>}
             </div>
@@ -611,6 +486,7 @@ export default function TicketModal({
                 Equipment Name / ID{isItDepartment && <span className="ml-1 text-xs font-normal text-muted-slate">(Optional for IT)</span>}
               </label>
               <BoundedSelect
+                name="machine_ID"
                 value={formData.machine_ID}
                 onChange={(val) => setFormData((prev) => ({ ...prev, machine_ID: val }))}
                 onBlur={() => touch('equipment')}
@@ -618,6 +494,7 @@ export default function TicketModal({
                 placeholder={isItDepartment ? 'No equipment' : 'Select Equipment'}
                 disabled={loadingOptions || isSubmitting}
                 hasError={Boolean(touched.equipment && equipmentError)}
+                required={!isItDepartment}
                 searchable
               />
               {touched.equipment && equipmentError && <p className="mt-1.5 text-xs text-red-500">{equipmentError}</p>}

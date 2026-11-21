@@ -6,6 +6,7 @@ import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import useMaxFileCount from '@/hooks/useMaxFileCount';
 import ActionErrorModal, { getActionError } from './ActionErrorModal';
 import SermsReimbursementModal from './SermsReimbursementModal';
+import { ConfirmationModal } from '@/components/ui/confirmation-modal';
 
 function ProofFileItem({ file, onRemove }) {
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -53,6 +54,7 @@ export default function ProofCompletionModal({
   ticket,
   onClose,
   onStatusChange,
+  onProofSubmitted,
 }) {
   useLockBodyScroll(Boolean(ticket));
   const navigate = useNavigate();
@@ -63,6 +65,7 @@ export default function ProofCompletionModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [remarks, setRemarks] = useState('');
   const [submitError, setSubmitError] = useState(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showReimbursementPrompt, setShowReimbursementPrompt] = useState(false);
   const [showSermsModal, setShowSermsModal] = useState(false);
 
@@ -73,6 +76,7 @@ export default function ProofCompletionModal({
     setIsSubmitting(false);
     setRemarks('');
     setSubmitError(null);
+    setShowConfirmModal(false);
     setShowReimbursementPrompt(false);
     setShowSermsModal(false);
   }, [ticket]);
@@ -115,7 +119,7 @@ export default function ProofCompletionModal({
     return null;
   };
 
-  const handleProofSubmit = async (e) => {
+  const handleProofSubmit = (e) => {
     e.preventDefault();
     if (proofFiles.length === 0) {
       setErrorMessage('Please select at least one proof of completion file.');
@@ -134,6 +138,11 @@ export default function ProofCompletionModal({
       return;
     }
 
+    setErrorMessage('');
+    setShowConfirmModal(true);
+  };
+
+  const handleConfirmedSubmit = async () => {
     setIsSubmitting(true);
     setErrorMessage('');
     setSuccessMessage('');
@@ -150,16 +159,25 @@ export default function ProofCompletionModal({
 
     try {
       await updateEmployeeTicket(numericId, formData);
-      
+
       if (typeof onStatusChange === 'function') {
         onStatusChange(ticket.id, targetStatus);
+      }
+      if (typeof onProofSubmitted === 'function') {
+        onProofSubmitted(ticket.id, targetStatus);
       }
 
       setSuccessMessage(`Proof of completion submitted successfully! Status updated to ${targetStatus}.`);
       setErrorMessage('');
       setProofFiles([]);
+      setShowConfirmModal(false);
+      if (isInternal) {
+        onClose();
+        return;
+      }
       setShowReimbursementPrompt(true);
     } catch (err) {
+      setShowConfirmModal(false);
       // Every failed submission opens a modal explaining why; the inline text stays as a reminder.
       const notice = getActionError(err, 'Failed to submit proof.');
       setSubmitError(notice);
@@ -429,6 +447,19 @@ export default function ProofCompletionModal({
       </div>
     </div>
     {/* Sibling of the backdrop so clicks in the notice do not bubble to the backdrop's onClose. */}
+    <ConfirmationModal
+      isOpen={showConfirmModal}
+      onClose={() => !isSubmitting && setShowConfirmModal(false)}
+      onConfirm={handleConfirmedSubmit}
+      variant="success"
+      loading={isSubmitting}
+      contentClassName="z-[120]"
+      title="Confirm Proof Upload"
+      description={`Are you sure you want to upload ${proofFiles.length} proof of completion ${proofFiles.length === 1 ? 'file' : 'files'} and update this ticket's status to "${isInternal ? 'Resolved' : 'Pending Evaluation'}"?`}
+      confirmLabel={isSubmitting ? 'Uploading...' : 'Yes, Upload Proof'}
+      cancelLabel="Cancel"
+    />
+
     <ActionErrorModal error={submitError} onClose={() => setSubmitError(null)} />
 
     {/* SERMS Expense Reimbursement Dialog */}

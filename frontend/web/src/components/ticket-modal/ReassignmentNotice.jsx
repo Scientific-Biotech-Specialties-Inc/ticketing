@@ -10,7 +10,6 @@ import { isReassignmentDenied, getReassignmentDisapprovalReason } from '@/utils/
  */
 export default function ReassignmentNotice({
   ticket,
-  onAskWhy,
   coordinatorName = null,
   className = '',
 }) {
@@ -46,18 +45,6 @@ export default function ReassignmentNotice({
               <p className="mt-1 text-xs text-[#7A4A00] leading-relaxed">
                 The coordinator didn&apos;t give a reason. You can accept this ticket, or ask again with new details.
               </p>
-            )}
-
-            {typeof onAskWhy === 'function' && (
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={onAskWhy}
-                  className="min-h-[44px] px-4 py-2 rounded-lg border border-[#F2C879] bg-white text-[#7A4A00] hover:bg-[#FFF4E0] font-semibold text-xs transition-colors cursor-pointer shadow-2xs"
-                >
-                  Ask coordinator why
-                </button>
-              </div>
             )}
           </div>
         </div>

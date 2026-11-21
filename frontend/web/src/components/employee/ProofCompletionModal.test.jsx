@@ -47,6 +47,7 @@ describe('ProofCompletionModal re-upload blocked by the Transition Matrix', () =
     fireEvent.change(container.querySelector('input[type="file"]'), { target: { files: [file] } });
     fireEvent.change(container.querySelector('textarea'), { target: { value: 'Added calibration sheet' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes, Upload Proof' }));
     return { onClose };
   };
 
@@ -54,8 +55,8 @@ describe('ProofCompletionModal re-upload blocked by the Transition Matrix', () =
     vi.spyOn(ticketService, 'updateEmployeeTicket').mockRejectedValue(blockedError);
     await submitProof();
 
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText('Resolved Status Blocked')).toBeInTheDocument();
+    expect(await screen.findByText('Resolved Status Blocked')).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText(
       'The Resolved status has been blocked by the Super Admin, so your changes were not saved. Please contact your Super Admin for assistance.'
     )).toBeInTheDocument();
@@ -78,8 +79,8 @@ describe('ProofCompletionModal re-upload blocked by the Transition Matrix', () =
     });
     await submitProof();
 
-    expect(await screen.findByRole('dialog')).toBeInTheDocument();
-    expect(screen.getByText('Could Not Save')).toBeInTheDocument();
+    expect(await screen.findByText('Could Not Save')).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText('Attachment service is unavailable. Nothing was saved.')).toBeInTheDocument();
     expect(screen.queryByText('Resolved Status Blocked')).not.toBeInTheDocument();
   });
@@ -98,5 +99,47 @@ describe('ProofCompletionModal re-upload blocked by the Transition Matrix', () =
     await submitProof();
 
     expect(await screen.findByText('Connection Problem')).toBeInTheDocument();
+  });
+});
+
+describe('ProofCompletionModal internal ticket confirmation and auto-close', () => {
+  const internalTicket = {
+    id: 'TKT-0099',
+    ticket_ID: 99,
+    title: '[Internal] Printer Setup',
+    status: 'In Progress',
+    is_internal: true,
+  };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('asks for confirmation before uploading and closes the modal after an internal proof upload succeeds', async () => {
+    const spy = vi.spyOn(ticketService, 'updateEmployeeTicket').mockResolvedValue({ data: { status: 'Resolved' } });
+    const onClose = vi.fn();
+    const onStatusChange = vi.fn();
+
+    const { container } = render(
+      <MemoryRouter>
+        <ProofCompletionModal ticket={internalTicket} onClose={onClose} onStatusChange={onStatusChange} />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Upload Proof of Completion (Optional)')).toBeInTheDocument();
+
+    const file = new File(['proof'], 'setup-photo.png', { type: 'image/png' });
+    fireEvent.change(container.querySelector('input[type="file"]'), { target: { files: [file] } });
+    fireEvent.change(container.querySelector('textarea'), { target: { value: 'Printer configured and tested.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText('Confirm Proof Upload')).toBeInTheDocument();
+    expect(spy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, Upload Proof' }));
+
+    await waitFor(() => expect(spy).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(onStatusChange).toHaveBeenCalledWith('TKT-0099', 'Resolved'));
+    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 });

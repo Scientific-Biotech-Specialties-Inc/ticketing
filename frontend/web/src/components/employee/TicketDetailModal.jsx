@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MessageSquare, Loader2, Bell, ChevronUp, ChevronDown, Pencil, Users, Mail } from 'lucide-react';
+import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 import { formatDisplayDate } from '@/utils/dateUtils';
 import {
@@ -30,6 +31,8 @@ import {
   formatPHT,
   buildTechnicianTimeline,
   getAllAssignees,
+  isUserAssignedToTicket,
+  isUserRequestorOfTicket,
   StaffTimelineView,
 } from '../ticket-modal';
 import InternalTicketMessageThread from '@/components/InternalTicketMessageThread';
@@ -53,6 +56,7 @@ export default function TicketDetailModal({
   isAccepting: externalIsAccepting = false,
 }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const toast = useToast();
 
   const [localTicket, setLocalTicket] = useState(ticket);
@@ -101,10 +105,18 @@ export default function TicketDetailModal({
   const numericId = currentTicket.ticket_ID || Number(String(currentTicket.id || '').replace(/\D/g, ''));
   const ticketRef = currentTicket.id || (numericId ? `TKT-${String(numericId).padStart(4, '0')}` : 'TKT-0000');
 
-  const isAccepted = Boolean(currentTicket.accepted === true || ['In Progress', 'Pending', 'Resolved', 'Closed'].includes(currentTicket.status));
+  const isAccepted = Boolean(
+    currentTicket.accepted === true ||
+      ['In Progress', 'Pending', 'Pending Evaluation', 'On Hold', 'Resolved', 'Closed'].includes(currentTicket.status)
+  );
   const isDeclined = isReassignmentDenied(currentTicket);
   const isPendingReassign = hasPendingReassignment(currentTicket);
   const previousDeclineReason = getReassignmentDisapprovalReason(currentTicket);
+  const hasExplicitAssignees = getAllAssignees(currentTicket).length > 0;
+  const canPerformTechnicianActions =
+    !user ||
+    isUserAssignedToTicket(currentTicket, user) ||
+    (!isUserRequestorOfTicket(currentTicket, user) && !hasExplicitAssignees);
 
   // Coordinator resolution
   const coordinatorName =
@@ -207,9 +219,9 @@ export default function TicketDetailModal({
   // Stepper active index:
   // 0 = Submitted, 1 = Assigned to you, 2 = In Progress, 3 = Resolved
   const activeStepIndex = useMemo(() => {
-    const s = String(currentTicket.status || '').toLowerCase();
+    const s = String(currentTicket.status || '').trim().toLowerCase();
     if (s === 'resolved' || s === 'closed') return 3;
-    if (isAccepted || s === 'in progress' || s === 'on hold') return 2;
+    if (isAccepted || s === 'in progress' || s === 'on hold' || s === 'reopened' || s === 'pending evaluation' || s === 'escalated') return 2;
     return 1; // "Assigned to you" (awaiting acceptance)
   }, [currentTicket.status, isAccepted]);
 
@@ -363,7 +375,7 @@ export default function TicketDetailModal({
               </button>
             }
             primaryAction={
-              isAccepted && currentTicket.status !== 'Closed' && currentTicket.status !== 'Discarded' ? (
+              canPerformTechnicianActions && isAccepted && currentTicket.status !== 'Closed' && currentTicket.status !== 'Discarded' ? (
                 <button
                   type="button"
                   onClick={handleUpdateTicket}
@@ -381,8 +393,8 @@ export default function TicketDetailModal({
         <TicketTitleBlock
           title={currentTicket.title}
           priority={currentTicket.priority || 'Low'}
-          statusPill={!isAccepted ? 'Awaiting your acceptance' : null}
-          hideStatusBadge={!isAccepted}
+          statusPill={canPerformTechnicianActions && !isAccepted ? 'Awaiting your acceptance' : null}
+          hideStatusBadge={canPerformTechnicianActions && !isAccepted}
           subtitle={subtitle}
         />
 
@@ -415,12 +427,11 @@ export default function TicketDetailModal({
           <ReassignmentNotice
             ticket={currentTicket}
             coordinatorName={coordinatorName}
-            onAskWhy={handleOpenMessages}
           />
         )}
 
-        {/* 5. Decision Card or Pending Notice */}
-        {!isAccepted ? (
+        {/* 5. Decision Card or Pending Notice (only for assigned technician) */}
+        {canPerformTechnicianActions && !isAccepted ? (
           isPendingReassign ? (
             <AlertBanner
               variant="info"
@@ -614,6 +625,7 @@ export default function TicketDetailModal({
               <StaffTimelineView
                 ticket={currentTicket}
                 serverEvents={currentTicket.timeline || timelineEvents || []}
+                showVisibilityFilter={false}
               />
               {/* Unit test & screen-reader compatibility element */}
               <div className="sr-only">

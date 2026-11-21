@@ -24,7 +24,7 @@ export function FormModal({
 }) {
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && !loading && onClose?.()}>
-      <DialogContent className={cn("p-6 font-sans", maxWidth)}>
+      <DialogContent className={cn("w-[95vw] sm:w-full p-4 sm:p-6 font-sans", maxWidth)}>
         {/* Left-aligned header */}
         <div className="flex items-start gap-4 pb-4 border-b border-slate-100">
           {icon && (
