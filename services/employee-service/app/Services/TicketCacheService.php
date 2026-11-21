@@ -15,7 +15,7 @@ class TicketCacheService
     {
         try {
             Cache::forget('cs_dashboard_counts');
-            Cache::forget('ticket_form_options_cache');
+            Cache::forget('ticket_form_options_cache_v2');
 
             $redis = Redis::connection('cache');
             $prefix = config('cache.prefix') ?? 'laravel_cache';

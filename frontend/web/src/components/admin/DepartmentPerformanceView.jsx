@@ -37,6 +37,9 @@ export default function DepartmentPerformanceView({
   const navigate = useNavigate();
   const branchCtx = useContext(BranchContext);
   const isSuperAdmin = Boolean(branchCtx?.isSuperAdmin || (typeof window !== 'undefined' && window.location?.pathname?.includes('/superadmin')));
+  // A superadmin always names the scope ('all' when no branch is picked); otherwise the server falls back to
+  // the superadmin's own branch. Every other admin sends nothing and the server locks them to their branch.
+  const scopedBranchId = isSuperAdmin ? (branchCtx?.selectedBranchId ?? 'all') : null;
   const [searchQuery, setSearchQuery] = useState('');
   const [sortField, setSortField] = useState('totalTicketsHandled');
   const [sortDirection, setSortDirection] = useState('desc');
@@ -58,6 +61,9 @@ export default function DepartmentPerformanceView({
         if (dateFrom) params.date_from = dateFrom;
         if (dateTo) params.date_to = dateTo;
       }
+      if (scopedBranchId !== null && scopedBranchId !== undefined && scopedBranchId !== '') {
+        params.branch_id = scopedBranchId;
+      }
       const api = await getAdminDepartmentPerformance(params);
       setDeptData(adaptDepartmentPerformance(api));
     } catch (err) {
@@ -66,7 +72,7 @@ export default function DepartmentPerformanceView({
     } finally {
       setLoading(false);
     }
-  }, [selectedPeriod, dateFrom, dateTo]);
+  }, [selectedPeriod, dateFrom, dateTo, scopedBranchId]);
 
   useEffect(() => {
     loadDepartments();

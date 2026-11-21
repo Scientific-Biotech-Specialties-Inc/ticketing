@@ -25,5 +25,6 @@ class AiConversation extends Model
     protected $casts = [
         'messages' => 'array',
         'escalation_data' => 'array',
+        'asset_machine_id' => 'integer',
     ];
 }

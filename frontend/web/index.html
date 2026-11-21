@@ -15,19 +15,70 @@
       content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' ws: wss:; frame-src 'self' blob:; media-src 'self' blob:; worker-src 'self' blob:;"
     />
 
-    <!-- Poppins Font -->
+    <!-- Poppins Font (loaded without blocking first paint; display=swap shows the fallback font meanwhile) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap"
       rel="stylesheet"
+      media="print"
+      onload="this.media='all'"
     />
+    <noscript>
+      <link
+        href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet"
+      />
+    </noscript>
 
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
     <title>SBSI</title>
+
+    <!--
+      Boot skeleton: painted by the browser before any JavaScript loads (full page loads such as the
+      post-login redirect to /ticketing/, refreshes, and portal switches). React replaces it when
+      createRoot().render() mounts the app. Plain CSS because Tailwind is not loaded yet; mirrors the
+      AuthGate skeleton so the hand-off is seamless.
+    -->
+    <style>
+      html, body { margin: 0; background: #F8F9FA; }
+      .boot-skel { min-height: 100vh; box-sizing: border-box; padding: 32px; display: flex; flex-direction: column; gap: 24px; }
+      .boot-skel * { box-sizing: border-box; }
+      .boot-bar { background: #E5E7EB; border-radius: 8px; animation: boot-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+      .boot-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+      .boot-grid { display: grid; grid-template-columns: 1fr; gap: 24px; }
+      .boot-card { height: 128px; border-radius: 16px; }
+      .boot-panel { background: #FFFFFF; border: 1px solid #F3F4F6; border-radius: 24px; padding: 24px; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); display: flex; flex-direction: column; gap: 16px; }
+      .boot-line { height: 48px; border-radius: 12px; }
+      @media (min-width: 768px) { .boot-grid { grid-template-columns: repeat(4, 1fr); } }
+      @keyframes boot-pulse { 50% { opacity: 0.5; } }
+      @media (prefers-reduced-motion: reduce) { .boot-bar { animation: none; } }
+    </style>
   </head>
 
   <body>
-    <div id="app"></div>
+    <div id="app">
+      <div class="boot-skel" aria-busy="true" aria-label="Loading">
+        <div class="boot-row">
+          <div class="boot-bar" style="height: 40px; width: 192px"></div>
+          <div class="boot-bar" style="height: 40px; width: 96px; border-radius: 9999px"></div>
+        </div>
+        <div class="boot-grid">
+          <div class="boot-bar boot-card"></div>
+          <div class="boot-bar boot-card"></div>
+          <div class="boot-bar boot-card"></div>
+          <div class="boot-bar boot-card"></div>
+        </div>
+        <div class="boot-panel">
+          <div class="boot-bar" style="height: 32px; width: 33%; margin-bottom: 8px"></div>
+          <div class="boot-bar boot-line"></div>
+          <div class="boot-bar boot-line"></div>
+          <div class="boot-bar boot-line"></div>
+          <div class="boot-bar boot-line"></div>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="/src/main.jsx"></script>
   </body>

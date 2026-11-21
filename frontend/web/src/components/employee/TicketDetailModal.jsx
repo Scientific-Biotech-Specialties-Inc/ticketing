@@ -327,6 +327,13 @@ export default function TicketDetailModal({
     setShowMessageDialog(true);
   }, []);
 
+  // "Message coordinator": open the Messages page on this ticket's conversation.
+  const handleGoToTicketMessages = useCallback(() => {
+    const tId = currentTicket?.ticket_ID || numericId || currentTicket?.id;
+    onClose?.();
+    navigate('/employee/messages', { state: { selectedTicketId: tId } });
+  }, [currentTicket, numericId, onClose, navigate]);
+
   const handleModalClose = useCallback(() => {
     onClose?.();
     const isApproved = currentTicket?.reassignmentStatus === 'Approved' ||
@@ -364,7 +371,7 @@ export default function TicketDetailModal({
             leftContent={
               <button
                 type="button"
-                onClick={handleOpenMessages}
+                onClick={handleGoToTicketMessages}
                 aria-label="Message coordinator"
                 className="h-9 px-3.5 rounded-lg border border-[#D5D9E4] bg-white text-[#1B2033] hover:text-[#1E2A78] hover:border-[#1E2A78] hover:bg-[#F5F6FA] text-xs font-semibold transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-2xs"
               >
@@ -512,31 +519,13 @@ export default function TicketDetailModal({
                     <h4 className="text-xs font-bold uppercase tracking-wider text-[#1B2033]">
                       Assigned Team ({allAssignees.length})
                     </h4>
-                    {allAssignees.length >= 2 && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                        <MessageSquare className="w-3 h-3 text-indigo-600" />
-                        <span>Group Chat Active</span>
-                      </span>
-                    )}
                   </div>
                   <p className="text-xs text-[#5A6178] mt-0.5">
-                    {allAssignees.length >= 2
-                      ? '2 or more technicians assigned. Team discussion is handled via group chat.'
-                      : 'Technicians currently assigned to collaborate on this ticket.'}
+                    Technicians currently assigned to collaborate on this ticket.
                   </p>
                 </div>
 
-                {allAssignees.length >= 2 ? (
-                  <button
-                    type="button"
-                    onClick={handleOpenMessages}
-                    className="h-8 px-3 bg-[#1E2A78] hover:bg-[#252578] text-white text-xs font-semibold rounded-lg inline-flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-xs"
-                    title="Open team discussion with all assigned staff"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5" />
-                    <span>Message Group Chat</span>
-                  </button>
-                ) : allAssignees.length === 1 ? (
+                {allAssignees.length === 1 ? (
                   <button
                     type="button"
                     onClick={handleOpenMessages}
@@ -598,8 +587,8 @@ export default function TicketDetailModal({
                         </div>
                       </div>
 
-                      {/* When <= 2 assignees, show individual Message button; when > 2, only the single group chat button is shown in the banner */}
-                      {allAssignees.length <= 2 && (
+                      {/* Individual Message button per assignee */}
+                      {(
                         <div className="shrink-0 self-end sm:self-center">
                           <button
                             type="button"

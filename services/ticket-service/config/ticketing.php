@@ -10,18 +10,20 @@
 | department performance, SLA by department, workload) only cover these.
 | Values are compared case insensitively after trimming.
 |
-| Override with TICKETING_TECHNICAL_DEPARTMENTS (comma separated), for
-| example "Service,IT,Field Support".
+| Left unset (the default), the list is the active departments the
+| superadmin manages in the `departments` table (App\Support\TechnicalDepartments).
+| Set TICKETING_TECHNICAL_DEPARTMENTS (comma separated) only to force a fixed
+| list, for example "Service,IT,Field Support".
 |
 */
 
 $technicalDepartments = array_values(array_filter(array_map(
     'trim',
-    explode(',', (string) env('TICKETING_TECHNICAL_DEPARTMENTS', 'Service,IT'))
+    explode(',', (string) env('TICKETING_TECHNICAL_DEPARTMENTS', ''))
 ), fn ($d) => $d !== ''));
 
 return [
-    'technical_departments' => $technicalDepartments !== [] ? $technicalDepartments : ['Service', 'IT'],
+    'technical_departments' => $technicalDepartments !== [] ? $technicalDepartments : null,
 
     /*
     | Employee Performance Score (spec 0039, AC-16, AC-17).

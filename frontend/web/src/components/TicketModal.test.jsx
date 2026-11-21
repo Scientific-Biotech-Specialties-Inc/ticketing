@@ -7,7 +7,10 @@ import TicketModal from './TicketModal';
 vi.mock('@/services/ticketService', () => {
   const options = {
     equipment_options: [{ value: 7, label: 'Centrifuge - SN001' }],
-    category_options: [{ value: 3, label: 'Hardware' }],
+    category_options: [
+      { value: 3, label: 'Hardware', track: 'service' },
+      { value: 4, label: 'Network', track: 'it' },
+    ],
     machines: [],
     problem_categories: [],
   };
@@ -162,5 +165,43 @@ describe('TicketModal department rule (covers: AC-8)', () => {
     choose('department_id', 1);
 
     expect(screen.getByRole('button', { name: 'Submit Ticket' })).toBeDisabled();
+  });
+});
+
+describe('TicketModal internal ticket: department follows the category', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('shows no department selector and sends no department_id', async () => {
+    const { onSubmit } = renderModal({ departmentFromCategory: true });
+    await fillBasics({ title: 'Printer Not Working' });
+    choose('machine_ID', 7);
+
+    expect(field('department_id')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Submit Ticket' }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty('department_id');
+  });
+
+  it('requires equipment for a Service category and says where it is routed', async () => {
+    renderModal({ departmentFromCategory: true });
+    await fillBasics({ title: 'Printer Not Working' });
+
+    expect(screen.getByTestId('derived-department')).toHaveTextContent('Service department');
+    expect(field('machine_ID')).toBeRequired();
+    expect(screen.getByRole('button', { name: 'Submit Ticket' })).toBeDisabled();
+  });
+
+  it('makes equipment optional for an IT category', async () => {
+    const { onSubmit } = renderModal({ departmentFromCategory: true });
+    await fillBasics({ title: 'Printer Not Working' });
+    choose('problem_category_ID', 4);
+
+    expect(screen.getByTestId('derived-department')).toHaveTextContent('IT department');
+    expect(screen.getByText('(Optional for IT)')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Submit Ticket' }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].machine_ID).toBe('');
   });
 });

@@ -57,9 +57,13 @@ class TicketDashboardService
         };
     }
 
-    public function getCustomerDashboard(int $createdBy, int $limit, array $filters = []): array
+    public function getCustomerDashboard(int $createdBy, int $limit, array $filters = [], bool $forceRefresh = false): array
     {
         $hasFilters = !empty(array_filter($filters, fn($v) => $v !== null && $v !== ''));
+        if ($forceRefresh) {
+            Cache::forget("customer_dashboard_counts_{$createdBy}");
+            Cache::forget("customer_dashboard_recent_{$createdBy}_{$limit}");
+        }
         $filterKey = $hasFilters ? md5(json_encode($filters)) : 'none';
 
         $summary = Cache::remember("customer_dashboard_counts_{$createdBy}", 60, function () use ($createdBy) {
@@ -327,7 +331,7 @@ class TicketDashboardService
             return $sum;
         });
 
-        $recentTickets = Cache::remember("cs_dashboard_recent_{$limit}", 60, function () use ($limit) {
+        $recentTickets = Cache::remember("cs_dashboard_recent_v2_{$limit}", 60, function () use ($limit) {
             return DB::table('tickets as t')
                 ->leftJoin('machines as m', 'm.machine_ID', '=', 't.machine_ID')
                 ->join('ticket_statuses as ts', 'ts.ticket_status_ID', '=', 't.ticket_status_ID')
@@ -358,6 +362,8 @@ class TicketDashboardService
                     't.updated_at',
                     't.requested_by',
                     'c.client_name',
+                    'c.email as client_email',
+                    'req.email as requester_employee_email',
                     DB::raw("TRIM(CONCAT(COALESCE(req.first_name, ''), ' ', COALESCE(req.last_name, ''))) as requester_employee_name")
                 )
                 ->orderByDesc('t.created_at')
@@ -372,6 +378,9 @@ class TicketDashboardService
                         'customer' => (bool) $row->is_internal
                             ? (($row->requester_employee_name !== '' && $row->requester_employee_name !== null) ? $row->requester_employee_name : ($row->requested_by ? 'Employee #' . $row->requested_by : 'Internal Requester'))
                             : ($row->client_name ?: 'Unknown Customer'),
+                        'customer_email' => (bool) $row->is_internal
+                            ? ($row->requester_employee_email ?: null)
+                            : ($row->client_email ?: null),
                         'equipment' => $row->machine_name . ' - ' . $row->serial_number,
                         'status' => $row->status_name,
                         'priority' => $row->priority_name,
@@ -390,6 +399,9 @@ class TicketDashboardService
                 ->values()
                 ->toArray();
         });
+
+        // Spec 0048: status column shows Pending On Hold / On Hold Rejected (added after the cache, so it is always fresh).
+        $recentTickets = app(HoldRequestService::class)->annotateRows($recentTickets);
 
         return [
             'summary' => $summary,
@@ -450,6 +462,8 @@ class TicketDashboardService
                     't.created_at',
                     't.updated_at',
                     'c.client_name',
+                    'c.email as client_email',
+                    'req.email as requester_employee_email',
                     DB::raw("TRIM(CONCAT(COALESCE(req.first_name, ''), ' ', COALESCE(req.last_name, ''))) as requester_employee_name"),
                     'm.machine_name',
                     'm.serial_number',
@@ -695,6 +709,10 @@ class TicketDashboardService
                     'customer' => (bool) $row->is_internal
                         ? (($row->requester_employee_name !== '' && $row->requester_employee_name !== null) ? $row->requester_employee_name : ($row->requested_by ? 'Employee #' . $row->requested_by : 'Internal Requester'))
                         : ($row->client_name ?: 'Unknown Customer'),
+                    // The requester's email (customer, or the employee for internal tickets), when on file.
+                    'customer_email' => (bool) $row->is_internal
+                        ? ($row->requester_employee_email ?: null)
+                        : ($row->client_email ?: null),
                     'title' => $row->title,
                     'description' => $row->description ?? '',
                     'category' => $row->category_name,
@@ -744,6 +762,11 @@ class TicketDashboardService
                     'last_reminder_sent_at' => $row->last_reminder_sent_at ? Carbon::parse($row->last_reminder_sent_at)->toIso8601String() : null,
                 ];
             })->values()->toArray();
+
+            // Spec 0048: status column shows Pending On Hold / On Hold Rejected.
+            $incomingTickets = app(HoldRequestService::class)->annotateRows($incomingTickets);
+            // Department manager reassignments CS has not acknowledged yet.
+            $incomingTickets = app(ManagerReassignmentNotice::class)->annotateRows($incomingTickets);
 
             return [
                 'incoming_tickets' => $incomingTickets,
@@ -833,6 +856,9 @@ class TicketDashboardService
         };
     }
 
+    /** Statuses the CS Assigned page's "All Assigned" tab leaves out. */
+    private const CS_ASSIGNED_HIDDEN_STATUSES = ['Resolved', 'Closed', 'Pending Assignment'];
+
     /** Sub tabs of each scope. */
     private function applyCsTab($query, string $scope, string $tab): void
     {
@@ -846,10 +872,14 @@ class TicketDashboardService
         }
 
         match ($tab) {
+            // "All Assigned" on the CS Assigned page: resolved and closed tickets live on Ticket History,
+            // and Pending Assignment tickets are still CS's to assign (they stay on Incoming).
+            'active' => $query->whereNotIn('ts.status_name', self::CS_ASSIGNED_HIDDEN_STATUSES),
             'in_progress' => $query->where('ts.status_name', 'In Progress'),
             'pending_evaluation' => $query->where('ts.status_name', 'Pending Evaluation'),
             'on_hold' => $query->where('ts.status_name', 'On Hold'),
             'reassigned' => $query->whereRaw($this->pendingReassignSql()),
+            'manager_reassigned' => $query->whereRaw(ManagerReassignmentNotice::pendingSql('t')),
             'resolved_closed' => $query->whereIn('ts.status_name', ['Resolved', 'Closed']),
             default => null,
         };
@@ -870,19 +900,25 @@ class TicketDashboardService
             return ['all' => $all, 'pending' => $pending, 'open' => $all - $pending];
         }
 
+        $hiddenList = "'" . implode("', '", self::CS_ASSIGNED_HIDDEN_STATUSES) . "'";
         $row = $base->selectRaw('COUNT(*) as all_count')
+            ->selectRaw($count("ts.status_name NOT IN ({$hiddenList})") . ' as active_count')
             ->selectRaw($count("ts.status_name = 'In Progress'") . ' as in_progress')
             ->selectRaw($count("ts.status_name = 'Pending Evaluation'") . ' as pending_eval')
             ->selectRaw($count($this->pendingReassignSql()) . ' as reassigned')
+            ->selectRaw($count(ManagerReassignmentNotice::pendingSql('t')) . ' as manager_reassigned')
             ->selectRaw($count("ts.status_name = 'On Hold'") . ' as on_hold')
             ->selectRaw($count("ts.status_name IN ('Resolved', 'Closed')") . ' as resolved_closed')
             ->first();
 
         return [
             'all' => (int) ($row->all_count ?? 0),
+            // Matches the 'active' tab (CS Assigned "All Assigned").
+            'active' => (int) ($row->active_count ?? 0),
             'inProgress' => (int) ($row->in_progress ?? 0),
             'pendingEval' => (int) ($row->pending_eval ?? 0),
             'reassigned' => (int) ($row->reassigned ?? 0),
+            'managerReassigned' => (int) ($row->manager_reassigned ?? 0),
             'onHold' => (int) ($row->on_hold ?? 0),
             'resolvedClosed' => (int) ($row->resolved_closed ?? 0),
         ];
@@ -1006,11 +1042,9 @@ class TicketDashboardService
                     ->orWhere('id', is_numeric($target) ? (int)$target : -1)
                     ->orWhereRaw('LOWER(code) = ?', [strtolower($target)])
                     ->first();
-            } elseif ($user && !empty($user->branch_id)) {
-                $branch = is_numeric($user->branch_id)
-                    ? DB::table('branches')->where('id', (int) $user->branch_id)->first()
-                    : DB::table('branches')->where('slug', (string) $user->branch_id)->first();
             } else {
+                // No branch picked means All Branches. The superadmin is global, so a branch that happens to sit
+                // on their employee row (admin@example.com carries Main Branch) must not narrow their view.
                 return (object) [
                     'id' => 'all',
                     'slug' => 'all',

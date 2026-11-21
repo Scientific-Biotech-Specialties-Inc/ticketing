@@ -2,14 +2,38 @@
 
 namespace App\Support;
 
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Throwable;
+
 /**
  * The departments that handle tickets (spec 0031 AC-1, AC-2).
  *
- * Source of truth is config('ticketing.technical_departments'), default Service and IT.
+ * Source of truth, in order:
+ *   1. config('ticketing.technical_departments') when TICKETING_TECHNICAL_DEPARTMENTS is set (explicit override);
+ *   2. the active rows of the superadmin managed `departments` table, so adding, renaming or
+ *      deactivating a department changes the admin dashboards without a deploy;
+ *   3. Service and IT when neither gives a name (table missing, unreachable or every row inactive).
  * Department names are matched case insensitively after trimming, so "it " and "IT" are the same.
  */
 class TechnicalDepartments
 {
+    private const DEFAULTS = ['Service', 'IT'];
+
+    private const CACHE_KEY = 'ticketing:technical_departments:v1';
+
+    /** Seconds a department change in the superadmin settings takes to reach the dashboards. */
+    private const CACHE_TTL = 60;
+
+    /**
+     * Seconds the in-process copy is reused, so per-ticket canonical() calls do not each hit the cache store.
+     * The copy lives on the app container, so every test (fresh app) starts clean and a long running
+     * worker still picks up changes.
+     */
+    private const MEMO_TTL = 5;
+
+    private const MEMO_BINDING = 'ticketing.technical_departments.memo';
+
     /**
      * Configured department names, in their display spelling.
      *
@@ -17,11 +41,86 @@ class TechnicalDepartments
      */
     public static function list(): array
     {
-        $configured = config('ticketing.technical_departments', ['Service', 'IT']);
-        if (!is_array($configured)) {
-            $configured = explode(',', (string) $configured);
+        $app = app();
+        if ($app->bound(self::MEMO_BINDING)) {
+            [$list, $at] = $app->make(self::MEMO_BINDING);
+            if ((microtime(true) - $at) < self::MEMO_TTL) {
+                return $list;
+            }
         }
 
+        $list = self::resolve();
+        $app->instance(self::MEMO_BINDING, [$list, microtime(true)]);
+
+        return $list;
+    }
+
+    /** Drop the cached list, for example right after a department is changed. */
+    public static function flush(): void
+    {
+        $app = app();
+        if ($app->bound(self::MEMO_BINDING)) {
+            $app->forgetInstance(self::MEMO_BINDING);
+        }
+
+        try {
+            Cache::forget(self::CACHE_KEY);
+        } catch (Throwable) {
+            // The cache store being down must not break the caller.
+        }
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private static function resolve(): array
+    {
+        $configured = config('ticketing.technical_departments');
+        if (is_string($configured)) {
+            $configured = explode(',', $configured);
+        }
+
+        $list = is_array($configured) ? self::unique($configured) : [];
+        if ($list === []) {
+            $list = self::unique(self::activeDepartmentNames());
+        }
+
+        return $list !== [] ? $list : self::DEFAULTS;
+    }
+
+    /**
+     * Active department names from the superadmin managed table, cached briefly.
+     *
+     * @return array<int, string>
+     */
+    private static function activeDepartmentNames(): array
+    {
+        $query = fn () => DB::table('departments')
+            ->where('is_active', true)
+            ->orderBy('id')
+            ->pluck('name')
+            ->map(fn ($name) => (string) $name)
+            ->all();
+
+        try {
+            return Cache::remember(self::CACHE_KEY, self::CACHE_TTL, $query);
+        } catch (Throwable) {
+            try {
+                return $query();
+            } catch (Throwable) {
+                return [];
+            }
+        }
+    }
+
+    /**
+     * Trimmed, non-empty names with case-insensitive duplicates removed, first spelling kept.
+     *
+     * @param array<int, mixed> $configured
+     * @return array<int, string>
+     */
+    private static function unique(array $configured): array
+    {
         $list = [];
         foreach ($configured as $dept) {
             $dept = trim((string) $dept);
@@ -30,7 +129,7 @@ class TechnicalDepartments
             }
         }
 
-        return $list !== [] ? $list : ['Service', 'IT'];
+        return $list;
     }
 
     /**

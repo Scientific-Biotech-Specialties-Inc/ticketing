@@ -47,7 +47,7 @@ class AdminReportsTest extends TestCase
         DB::table('reassignment_requests')->whereIn('employee_id', function ($q) use ($testEmails) {
             $q->select('emp_id')->from('employees')->whereIn('email', $testEmails);
         })->delete();
-        DB::table('tickets')->whereIn('branch_id', [901, 902])->delete();
+        DB::table('tickets')->whereIn('branch_id', ['901', '902'])->delete();
         DB::table('branch_ticket_forecasts')->whereIn('branch_id', [901, 902])->delete();
         DB::table('branch_recurring_issue_trends')->whereIn('branch_id', [901, 902])->delete();
         DB::table('forecast_job_runs')->whereIn('branch_id', [901, 902])->delete();

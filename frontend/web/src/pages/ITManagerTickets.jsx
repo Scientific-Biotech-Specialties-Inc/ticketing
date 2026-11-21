@@ -33,6 +33,7 @@ import {
   getDepartments,
 } from '@/services/ticketService';
 import { cn } from '@/lib/utils';
+import { holdRequestDisplayStatus } from '@/utils/holdRequestStatus';
 
 // Fallback seed tickets for instant responsiveness
 const MOCK_IT_TICKETS = [
@@ -558,8 +559,8 @@ export default function ITManagerTickets() {
 
                     {/* Status */}
                     <TableCell>
-                      <Badge variant={getStatusBadgeVariant(t.status)} size="sm">
-                        {t.status}
+                      <Badge variant={getStatusBadgeVariant(holdRequestDisplayStatus(t))} size="sm">
+                        {holdRequestDisplayStatus(t)}
                       </Badge>
                     </TableCell>
 

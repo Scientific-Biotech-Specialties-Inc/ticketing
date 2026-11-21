@@ -22,6 +22,19 @@
         <!-- Tests must never touch the shared dev database (ticketing_system). -->
         <env name="DB_CONNECTION" value="sqlite" force="true"/>
         <env name="DB_DATABASE" value=":memory:" force="true"/>
+        <!-- The dev container runs with `config:cache` / `route:cache`. A cached config ignores the env
+             values above, so tests point at their own (never written) cache files and always read
+             this file's settings instead of the dev database config. -->
+        <env name="APP_CONFIG_CACHE" value="bootstrap/cache/config.testing.php" force="true"/>
+        <env name="APP_ROUTES_CACHE" value="bootstrap/cache/routes.testing.php" force="true"/>
+        <!-- The container sets DB_CONNECTION=mysql / DB_DATABASE=ticketing_system as real environment
+             variables, which land in $_SERVER. Laravel reads $_SERVER before $_ENV, and <env force>
+             only writes $_ENV and putenv, so without these <server> lines tests ran against the shared
+             dev database. tests/CreatesApplication.php refuses to start if that ever happens again. -->
+        <server name="DB_CONNECTION" value="sqlite" force="true"/>
+        <server name="DB_DATABASE" value=":memory:" force="true"/>
+        <server name="APP_CONFIG_CACHE" value="bootstrap/cache/config.testing.php" force="true"/>
+        <server name="APP_ROUTES_CACHE" value="bootstrap/cache/routes.testing.php" force="true"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
         <env name="CACHE_DRIVER" value="array"/>
         <env name="MAIL_MAILER" value="array"/>

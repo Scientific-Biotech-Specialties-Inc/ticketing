@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import EmployeePerformanceView from './EmployeePerformanceView';
 import { getAdminEmployeePerformance } from '@/services/ticketService';
+import BranchContext from '@/context/BranchContext';
 
 vi.mock('@/services/ticketService', () => ({ getAdminEmployeePerformance: vi.fn() }));
 
@@ -36,6 +37,29 @@ describe('EmployeePerformanceView (spec 0029 AC-5, AC-6)', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Sort by SLA Compliance' }));
     await waitFor(() => expect(getAdminEmployeePerformance.mock.calls.at(-1)[0].sort_dir).toBe('asc'));
+  });
+
+  const withBranch = (value, ui) => <BranchContext.Provider value={value}>{ui}</BranchContext.Provider>;
+
+  it('scopes a superadmin to the selected branch, matching what that branch admin sees', async () => {
+    const { rerender } = render(withBranch({ isSuperAdmin: true, selectedBranchId: 5 }, <EmployeePerformanceView selectedPeriod="This Month" />));
+    await screen.findByText('Jasmine');
+    expect(getAdminEmployeePerformance.mock.calls.at(-1)[0]).toMatchObject({ branch_id: 5 });
+
+    rerender(withBranch({ isSuperAdmin: true, selectedBranchId: 6 }, <EmployeePerformanceView selectedPeriod="This Month" />));
+    await waitFor(() => expect(getAdminEmployeePerformance.mock.calls.at(-1)[0]).toMatchObject({ branch_id: 6 }));
+  });
+
+  it('sends all for a superadmin on All Branches so the server does not fall back to their own branch', async () => {
+    render(withBranch({ isSuperAdmin: true, selectedBranchId: null }, <EmployeePerformanceView selectedPeriod="This Month" />));
+    await screen.findByText('Jasmine');
+    expect(getAdminEmployeePerformance.mock.calls.at(-1)[0]).toMatchObject({ branch_id: 'all' });
+  });
+
+  it('never sends a branch for a branch admin, whose scope the server locks', async () => {
+    render(withBranch({ isSuperAdmin: false, selectedBranchId: 5 }, <EmployeePerformanceView selectedPeriod="This Month" />));
+    await screen.findByText('Jasmine');
+    expect(getAdminEmployeePerformance.mock.calls.at(-1)[0]).not.toHaveProperty('branch_id');
   });
 
   it('shows an error with retry instead of fake rows', async () => {

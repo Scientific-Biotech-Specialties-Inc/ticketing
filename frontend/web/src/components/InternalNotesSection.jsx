@@ -147,11 +147,14 @@ export default function InternalNotesSection({
   const [warnPending, setWarnPending] = useState(false);
   const [submitError, setSubmitError] = useState('');
 
-  // Authorization check: only authorized staff roles can view or submit internal notes
+  // Authorization check: internal notes are staff-only, so hide them from customers.
+  // Staff roles vary ("service engineer", "Lead Service Engineer", "it_manager", ...), and an
+  // exact allowlist hid the section from engineers. The API enforces who may read notes
+  // (assigned employee, CS, admins), so the UI only needs to exclude customer roles.
   const isAuthorized = useMemo(() => {
     if (!userRole) return true; // Defaults to authorized when used on internal staff pages
     const r = String(userRole).toLowerCase().trim();
-    return ['employee', 'technician', 'cs', 'customer support', 'customer service', 'head of cs', 'head of customer service', 'admin', 'superadmin', 'super admin', 'engineer'].includes(r);
+    return !['customer', 'client', 'guest'].includes(r);
   }, [userRole]);
 
   const validation = useMemo(() => validateNoteText(noteText), [noteText]);

@@ -3,7 +3,7 @@
 namespace Tests\Feature;
 
 use Tests\TestCase;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Log;
 use App\Models\KbArticle;
 use App\Models\KbChunk;
@@ -13,7 +13,7 @@ use App\Services\GeminiService;
 
 class KnowledgeBaseRagTest extends TestCase
 {
-    use DatabaseTransactions;
+    use RefreshDatabase;
 
     protected RagService $ragService;
 

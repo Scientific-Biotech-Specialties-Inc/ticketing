@@ -1185,6 +1185,22 @@ class SLAService
             }
         }
 
+        // The first breach alert escalates the ticket to these managers: record them so they see it as
+        // escalated to them (queue, conversation access) and CS sees who it went to. Re-alerts do not.
+        if (empty($ticket->sla_breach_notified_at)) {
+            try {
+                app(EscalationParticipants::class)->record(
+                    $ticketId,
+                    collect($managers)->filter()->map(fn ($m) => (int) $m->emp_id)->all(),
+                    (int) (DB::table('employees')->value('emp_id') ?? 1),
+                    'system',
+                    "SLA breached ({$overdueDuration}): escalated automatically."
+                );
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning("Failed to record SLA breach escalation for ticket #{$ticketId}: {$e->getMessage()}");
+            }
+        }
+
         // Broadcast real-time change
         // $managers can be empty (no department manager), so never rely on the foreach variable here.
         $lastManager = collect($managers)->filter()->last();
@@ -1421,6 +1437,14 @@ class SLAService
      */
     public function resolveDepartmentManagersForTicket($ticket): array
     {
+        // Escalation follows the people working the ticket: the manager of each assignee's
+        // department (an IT assignee and a Service assignee reach both managers). The category
+        // based lookup below only runs when the ticket has no assignee to follow.
+        $assigneeManagers = $this->resolveAssigneeDepartmentManagers($ticket);
+        if (!empty($assigneeManagers)) {
+            return $assigneeManagers;
+        }
+
         $categoryName = '';
         if (!empty($ticket->problem_category_ID)) {
             $categoryName = (string) (DB::table('problem_categories')->where('problem_category_ID', $ticket->problem_category_ID)->value('category_name') ?? '');
@@ -1564,6 +1588,105 @@ class SLAService
         }
 
         return $managers->unique('emp_id')->values()->all();
+    }
+
+    /**
+     * One manager per department among the ticket's active assignees.
+     *
+     * A superadmin configured manager (configuration-service `department_managers`) wins for the
+     * departments it covers; otherwise the department's highest ranked active manager is used.
+     * Assignees themselves are never returned as their own escalation manager.
+     *
+     * @return array<int, object> employee rows, unique by emp_id
+     */
+    public function resolveAssigneeDepartmentManagers($ticket): array
+    {
+        $ticketId = (int) ($ticket->ticket_ID ?? 0);
+
+        $assigneeIds = $ticketId > 0
+            ? DB::table('ticket_assignments')
+                ->where('ticket_ID', $ticketId)
+                ->whereNull('completed_at')
+                ->pluck('employee_ID')
+                ->map(fn ($id) => (int) $id)
+                ->all()
+            : [];
+        if (!empty($ticket->assigned_to)) {
+            $assigneeIds[] = (int) $ticket->assigned_to;
+        }
+        $assigneeIds = array_values(array_unique(array_filter($assigneeIds)));
+        if (empty($assigneeIds)) {
+            return [];
+        }
+
+        $departments = DB::table('employees')
+            ->whereIn('emp_id', $assigneeIds)
+            ->pluck('department')
+            ->map(fn ($d) => trim((string) $d))
+            ->filter(fn ($d) => $d !== '')
+            ->unique(fn ($d) => strtolower($d))
+            ->values()
+            ->all();
+        if (empty($departments)) {
+            return [];
+        }
+
+        $configured = [];
+        try {
+            $configUrl = env('CONFIGURATION_SERVICE_URL', 'http://configuration-service:8000');
+            $res = \Illuminate\Support\Facades\Http::timeout(2)->get("{$configUrl}/api/ticket-configurations/department_managers");
+            if ($res->successful()) {
+                $configured = (array) ($res->json('value') ?? $res->json() ?? []);
+            }
+        } catch (\Throwable $e) {
+            // The directory lookup below still finds a manager.
+        }
+
+        $managers = [];
+        foreach ($departments as $department) {
+            $deptLower = strtolower($department);
+            $configKey = match (true) {
+                in_array($deptLower, ['it', 'it support'], true) => 'it',
+                in_array($deptLower, ['customer service', 'cs'], true) => 'cs',
+                $deptLower === 'service' => 'service',
+                default => null,
+            };
+
+            // The configured department manager, when that employee actually exists.
+            if ($configKey && !empty($configured[$configKey]['id'])) {
+                $configuredManager = DB::table('employees')->where('emp_id', (int) $configured[$configKey]['id'])->first();
+                if ($configuredManager && !in_array((int) $configuredManager->emp_id, $assigneeIds, true)) {
+                    $managers[(int) $configuredManager->emp_id] = $configuredManager;
+                }
+            }
+
+            // Every active manager of the department is alerted, not only the first one found:
+            // a department can have several managers and each watches its escalations/breaches.
+            $deptManagers = DB::table('employees')
+                ->whereRaw('LOWER(TRIM(COALESCE(department, ""))) = ?', [$deptLower])
+                ->where('is_active', 1)
+                ->whereNotIn('emp_id', $assigneeIds)
+                ->whereRaw('LOWER(COALESCE(position_level, "")) = ?', ['manager'])
+                ->orderBy('emp_id')
+                ->get();
+
+            // Older directories mark managers by role name instead of position level.
+            if ($deptManagers->isEmpty()) {
+                $deptManagers = DB::table('employees')
+                    ->whereRaw('LOWER(TRIM(COALESCE(department, ""))) = ?', [$deptLower])
+                    ->where('is_active', 1)
+                    ->whereNotIn('emp_id', $assigneeIds)
+                    ->whereRaw('LOWER(COALESCE(role, "")) LIKE ?', ['%manager%'])
+                    ->orderBy('emp_id')
+                    ->get();
+            }
+
+            foreach ($deptManagers as $manager) {
+                $managers[(int) $manager->emp_id] = $manager;
+            }
+        }
+
+        return array_values($managers);
     }
 
     public function resolveDepartmentManagerForTicket($ticket): ?object

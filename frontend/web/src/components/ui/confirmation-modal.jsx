@@ -85,7 +85,7 @@ export function ConfirmationModal({
         {/* Status Icon Badge centered */}
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full mb-3" style={{ background: undefined }}>
           <div className={cn("h-14 w-14 rounded-full flex items-center justify-center", config.bg)}>
-            {config.icon}
+            {icon || config.icon}
           </div>
         </div>
 

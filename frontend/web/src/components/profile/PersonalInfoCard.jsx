@@ -16,7 +16,6 @@ import {
   HelpCircle,
   Briefcase,
   Building,
-  BadgeCheck,
   Loader2,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -277,22 +276,9 @@ export default function PersonalInfoCard({ profile, onProfileUpdated }) {
               </div>
             </div>
 
-            {/* Field 2: Employee ID */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-[11px] font-bold text-muted-slate uppercase tracking-wide flex items-center gap-1.5">
-                  <BadgeCheck size={12} className="text-muted-slate" /> Employee ID
-                </label>
-                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-muted-slate">
-                  <Lock size={10} /> Core Identity
-                </span>
-              </div>
-              <div className="w-full h-10 rounded-xl border border-border bg-slate-50/80 px-3 flex items-center text-sm text-dark-slate font-mono font-semibold">
-                {profile.emp_id || profile.id || 'EMP-001'}
-              </div>
-            </div>
+            {/* The internal employee ID is deliberately not shown on the profile. */}
 
-            {/* Field 3: Corporate Email */}
+            {/* Field 2: Corporate Email */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-bold text-muted-slate uppercase tracking-wide flex items-center gap-1.5">
@@ -318,9 +304,11 @@ export default function PersonalInfoCard({ profile, onProfileUpdated }) {
                 </span>
               </div>
               <div className="w-full h-10 rounded-xl border border-border bg-slate-50/80 px-3 flex items-center text-sm text-dark-slate font-semibold">
-                <Badge variant="secondary">
-                  {profile.role}
-                </Badge>
+                {profile.role ? (
+                  <Badge variant="secondary">
+                    {profile.role}
+                  </Badge>
+                ) : '—'}
               </div>
             </div>
 
@@ -335,22 +323,22 @@ export default function PersonalInfoCard({ profile, onProfileUpdated }) {
                 </span>
               </div>
               <div className="w-full h-10 rounded-xl border border-border bg-slate-50/80 px-3 flex items-center text-sm text-dark-slate font-medium">
-                {profile.department || 'Engineering'}
+                {profile.department || '—'}
               </div>
             </div>
 
-            {/* Field 6: Facility / Location */}
-            <div className="space-y-1.5 md:col-span-2">
+            {/* Field 5: Branch */}
+            <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-bold text-muted-slate uppercase tracking-wide flex items-center gap-1.5">
-                  <MapPin size={12} className="text-muted-slate" /> Assigned Facility / Office
+                  <MapPin size={12} className="text-muted-slate" /> Branch
                 </label>
                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-muted-slate">
-                  <Lock size={10} /> Facility Ops
+                  <Lock size={10} /> Org Unit
                 </span>
               </div>
-              <div className="w-full h-10 rounded-xl border border-border bg-slate-50/80 px-3 flex items-center text-sm text-dark-slate font-medium">
-                {profile.facility || profile.address || 'Enterprise Headquarters'}
+              <div className="w-full h-10 rounded-xl border border-border bg-slate-50/80 px-3 flex items-center text-sm text-dark-slate font-medium" data-testid="profile-branch">
+                {profile.branch || profile.facility || '—'}
               </div>
             </div>
           </div>

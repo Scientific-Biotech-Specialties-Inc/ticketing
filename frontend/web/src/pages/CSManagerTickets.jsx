@@ -28,6 +28,7 @@ import {
   getDepartments,
 } from '@/services/ticketService';
 import { cn } from '@/lib/utils';
+import { holdRequestDisplayStatus } from '@/utils/holdRequestStatus';
 
 // Fallback seed tickets for instant responsiveness
 const MOCK_CS_TICKETS = [
@@ -542,8 +543,8 @@ export default function CSManagerTickets() {
                     </TableCell>
 
                     <TableCell>
-                      <Badge variant={getStatusBadgeVariant(t.status)} className="text-[10px]">
-                        {t.status || 'Pending Assignment'}
+                      <Badge variant={getStatusBadgeVariant(holdRequestDisplayStatus(t))} className="text-[10px]">
+                        {holdRequestDisplayStatus(t, t.status || 'Pending Assignment')}
                       </Badge>
                     </TableCell>
 

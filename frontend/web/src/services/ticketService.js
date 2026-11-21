@@ -300,7 +300,9 @@ const getLocalTicketDetailsStore = () => readJsonStore(CUSTOMER_TICKET_DETAILS_K
 const normalizeCustomerTicket = (ticket = {}) => {
   const overrides = getTicketOverrides()[ticket.id] || {};
   const details = getLocalTicketDetailsStore()[ticket.id] || {};
-  const status = overrides.status || ticket.status || 'Open';
+  // The server status wins: a stale browser override (legacy local store) must never hide or
+  // relabel a ticket the backend reports, e.g. an In Progress ticket.
+  const status = ticket.status || overrides.status || 'Open';
   const now = new Date().toISOString();
   const assigned_to = ticket.assigned_to || details.assigned_to || null;
 
@@ -397,12 +399,14 @@ export const clearTicketFormOptionsCache = () => {
   optionsInFlight = null;
 };
 
-const fetchCustomerDashboard = async ({ createdBy = 1, limit = 5, ...filters } = {}) => {
+const fetchCustomerDashboard = async ({ createdBy = 1, limit = 5, forceRefresh = false, ...filters } = {}) => {
   const params = {
     created_by: createdBy,
     limit,
     ...filters,
   };
+  // Realtime refreshes skip the server's short cache so a status change shows right away.
+  if (forceRefresh) params.forceRefresh = true;
   const response = await ticketClient.get('/customer-dashboard', { params });
 
   const hasFilters = Object.values(filters).some((v) => v !== undefined && v !== '' && v !== null);
@@ -423,7 +427,7 @@ export const getCustomerDashboard = async ({ createdBy = 1, limit = 5, forceRefr
     return dashboardInFlight;
   }
 
-  const promise = fetchCustomerDashboard({ createdBy, limit, ...filters }).finally(() => {
+  const promise = fetchCustomerDashboard({ createdBy, limit, forceRefresh, ...filters }).finally(() => {
     if (!hasFilters) dashboardInFlight = null;
   });
 
@@ -791,13 +795,14 @@ export const acceptTicket = async ({ ticketId, employeeIds, assignedByEmail, pri
   return response.data;
 };
 
-export const updateTicket = async ({ ticketId, statusId, priorityId, assignedByEmail, proof_rejected, rejection_reason, title, description, machine_ID, problem_category_ID } = {}) => {
+export const updateTicket = async ({ ticketId, statusId, priorityId, assignedByEmail, proof_rejected, rejection_reason, escalation_reason, title, description, machine_ID, problem_category_ID } = {}) => {
   const payload = {};
   if (statusId !== undefined) payload.ticket_status_ID = statusId;
   if (priorityId !== undefined) payload.priority_ID = priorityId;
   if (assignedByEmail !== undefined) payload.assigned_by_email = assignedByEmail;
   if (proof_rejected !== undefined) payload.proof_rejected = proof_rejected;
   if (rejection_reason !== undefined) payload.rejection_reason = rejection_reason;
+  if (escalation_reason !== undefined) payload.escalation_reason = escalation_reason;
   if (title !== undefined) payload.title = title;
   if (description !== undefined) payload.description = description;
   if (machine_ID !== undefined) payload.machine_ID = machine_ID;
@@ -831,9 +836,10 @@ export const reopenTicket = async (ticketId, reason) => {
  * Close a ticket through the state machine (allowed only if the superadmin
  * Transition Matrix permits the current state -> Closed).
  */
-export const closeTicket = async (ticketId) => {
+export const closeTicket = async (ticketId, remarks) => {
   const numericId = Number(String(ticketId).replace(/\D/g, ''));
-  const response = await ticketClient.post(`/tickets/${numericId}/close`);
+  const body = remarks && String(remarks).trim() ? { remarks: String(remarks).trim() } : {};
+  const response = await ticketClient.post(`/tickets/${numericId}/close`, body);
   clearCustomerDashboardCache();
   clearIncomingTicketsCache();
   clearCSDashboardCache();
@@ -852,6 +858,61 @@ export const holdTicket = async (ticketId, reason) => {
   clearCSDashboardCache();
   clearEmployeeTicketsCache();
   notifyCsTicketRefresh();
+  return response.data;
+};
+
+// ─── Spec 0048: employee On Hold requests, decided by Customer Service ─────────
+const afterHoldRequestChange = (ticketId) => {
+  if (ticketId) clearTicketDetailsCache(String(ticketId));
+  clearIncomingTicketsCache();
+  clearCSDashboardCache();
+  clearEmployeeTicketsCache();
+  notifyCsTicketRefresh();
+};
+
+/** CS acknowledges a department manager reassignment; clears the notice for every CS user. */
+export const acknowledgeManagerReassignment = async (ticketId) => {
+  const numericId = Number(String(ticketId).replace(/\D/g, ''));
+  const response = await ticketClient.post(`/tickets/${numericId}/manager-reassignment/acknowledge`);
+  afterHoldRequestChange(numericId);
+  return response.data;
+};
+
+/** Employee asks CS to put an assigned ticket On Hold (remarks 3 to 250 characters). */
+export const requestHoldTicket = async (ticketId, remarks) => {
+  const numericId = Number(String(ticketId).replace(/\D/g, ''));
+  const response = await ticketClient.post(`/tickets/${numericId}/hold-requests`, {
+    remarks: String(remarks || '').trim(),
+  });
+  afterHoldRequestChange(numericId);
+  return response.data;
+};
+
+/** The requesting employee withdraws a pending hold request. */
+export const cancelHoldRequest = async (holdRequestId, ticketId) => {
+  const response = await ticketClient.post(`/hold-requests/${Number(holdRequestId)}/cancel`);
+  afterHoldRequestChange(ticketId ? Number(String(ticketId).replace(/\D/g, '')) : null);
+  return response.data;
+};
+
+/** CS approves: the ticket goes On Hold with the employee's remark as the reason. */
+export const approveHoldRequest = async (holdRequestId, ticketId, note) => {
+  const trimmed = String(note || '').trim();
+  const response = await ticketClient.post(
+    `/hold-requests/${Number(holdRequestId)}/approve`,
+    trimmed ? { note: trimmed } : {}
+  );
+  clearCustomerDashboardCache();
+  afterHoldRequestChange(ticketId ? Number(String(ticketId).replace(/\D/g, '')) : null);
+  return response.data;
+};
+
+/** CS rejects with a required reason (3 to 1000 characters). The ticket is unchanged. */
+export const rejectHoldRequest = async (holdRequestId, ticketId, reason) => {
+  const response = await ticketClient.post(`/hold-requests/${Number(holdRequestId)}/reject`, {
+    reason: String(reason || '').trim(),
+  });
+  afterHoldRequestChange(ticketId ? Number(String(ticketId).replace(/\D/g, '')) : null);
   return response.data;
 };
 
@@ -1117,9 +1178,13 @@ export const requestReassignment = async ({ ticketId, reason }) => {
   return response.data;
 };
 
-export const respondReassignment = async ({ ticketId, action, newEmployeeId, reason }) => {
+export const respondReassignment = async ({ ticketId, action, newEmployeeId, newEmployeeIds, reason }) => {
   const body = { action };
   if (newEmployeeId !== undefined) body.new_employee_id = newEmployeeId;
+  // CS can reassign to several employees at once.
+  if (Array.isArray(newEmployeeIds) && newEmployeeIds.length > 0) {
+    body.new_employee_ids = newEmployeeIds.map(Number);
+  }
   if (reason !== undefined) body.reason = reason;
   const response = await employeeClient.post(`/tickets/${ticketId}/reassign-respond`, body);
 
@@ -1593,6 +1658,19 @@ export const getEscalateHandoff = async (conversationId) => {
 };
 
 // Internal Notes (TS028)
+/**
+ * Spec 0038 (AC-31): record that CS opened a proof of completion file. The server only lets
+ * CS approve (resolve/close) a Pending Evaluation ticket after every proof file is recorded.
+ * Returns { viewed_attachment_ids, all_viewed }.
+ */
+export const recordProofView = async (ticketId, attachmentId) => {
+  const numericId = Number(String(ticketId).replace(/\D/g, ''));
+  const response = await ticketClient.post(`/tickets/${numericId}/proof-views`, {
+    attachment_id: Number(attachmentId),
+  });
+  return response.data;
+};
+
 export const getInternalNotes = async (ticketId) => {
   const response = await ticketClient.get(`/tickets/${ticketId}/internal-notes`);
   return response.data?.notes ?? response.data?.data ?? [];
@@ -1710,6 +1788,16 @@ export const getAdminDashboard = (params = {}) => getSharedReport('/admin/dashbo
 export const getManagerDashboard = ({ forceRefresh = false } = {}) =>
   getSharedReport('/manager/dashboard', forceRefresh ? { forceRefresh: true } : {});
 
+/**
+ * The signed-in Service / IT / CS manager's ticket list. Each ticket carries its assignees and
+ * is_escalated / is_breached / can_reassign flags; scope is decided by the server.
+ * Returns { manager_id, scope, tickets }.
+ */
+export const getManagerTickets = async () => {
+  const response = await ticketClient.get('/manager/tickets');
+  return response.data;
+};
+
 export const getAdminReports = async (params = {}) => {
   const response = await ticketClient.get('/admin/reports', { params });
   return response.data;
@@ -1775,27 +1863,3 @@ export const suggestProblemCategory = async (title, description, categories) => 
   }
 };
 
-export const classifyDepartment = async (title, description) => {
-  try {
-    const response = await axiosInstance.post(`${AI_API_URL || '/api/ticketing/ai'}/classify-department`, {
-      title,
-      description,
-    });
-    return response.data?.data || response.data;
-  } catch (err) {
-    console.warn('AI classification request error, falling back to local heuristic:', err);
-    const text = `${title} ${description}`.toLowerCase();
-    const isSoftware = /(software|app|login|password|account|portal|bug|glitch|crash|freeze|network|wifi|database|timeout|license)/i.test(text);
-    return {
-      department: isSoftware ? 'IT' : 'Service',
-      department_id: isSoftware ? 2 : 1,
-      is_software: isSoftware,
-      requires_equipment: !isSoftware,
-      confidence: 0.8,
-      reasoning: isSoftware
-        ? 'Your problem description indicates a software or account issue. Physical equipment is optional.'
-        : 'Your problem description indicates physical machinery or hardware maintenance. Equipment selection is required.',
-      source: 'client-fallback'
-    };
-  }
-};

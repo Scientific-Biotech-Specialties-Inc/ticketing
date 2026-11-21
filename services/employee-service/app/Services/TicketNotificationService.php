@@ -103,13 +103,16 @@ class TicketNotificationService
         string $message,
         ?int $ticketId = null,
         ?array $data = null,
-        ?string $alertKey = null
+        ?string $alertKey = null,
+        bool $forceInApp = false
     ): void {
         $key = $alertKey ?? $this->inferAlertKey($title);
         $channel = $this->getDeliveryChannel($key);
 
-        // If configured as 'email' only, skip in-app notification insertion
-        if ($channel === 'email') {
+        // If configured as 'email' only, skip in-app notification insertion.
+        // $forceInApp overrides this for notices staff must act on (e.g. a reassignment
+        // request awaiting the CS decision), which must always reach the in-app bell.
+        if ($channel === 'email' && !$forceInApp) {
             Log::info("In-app notification for alert [{$key}] skipped due to 'email only' delivery channel setting.");
             return;
         }
@@ -130,7 +133,7 @@ class TicketNotificationService
     /**
      * Notify all customer service employees.
      */
-    public function notifyCS(string $title, string $message, ?int $ticketId = null, ?array $data = null, ?int $excludeUserId = null, ?string $alertKey = null): void
+    public function notifyCS(string $title, string $message, ?int $ticketId = null, ?array $data = null, ?int $excludeUserId = null, ?string $alertKey = null, bool $forceInApp = false): void
     {
         $csUsers = DB::table('employees')
             ->where(function ($q) {
@@ -153,7 +156,7 @@ class TicketNotificationService
             if ($excludeUserId !== null && (int) $csEmpId === $excludeUserId) {
                 continue;
             }
-            $this->notifyRecipient((int)$csEmpId, 'employee', $title, $message, $ticketId, $data, $alertKey ?? 'reassignment');
+            $this->notifyRecipient((int)$csEmpId, 'employee', $title, $message, $ticketId, $data, $alertKey ?? 'reassignment', $forceInApp);
         }
     }
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Home, User, Bell, PanelLeft, ChevronDown } from 'lucide-react';
-import { useAuth } from '@/context/AuthContext';
+import { useAuth, checkIsServiceManager, checkIsItManager, checkIsCSManager } from '@/context/AuthContext';
 import { getNotifications, markNotificationRead, markNotificationsRead, getTicketDetails, getAssignableEmployees, getDepartments, respondReassignment, acceptTicket } from '@/services/ticketService';
 import useRealtimeRefresh from '@/hooks/useRealtimeRefresh';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
@@ -13,6 +13,21 @@ import { TicketSummary, AssignModal } from '@/components/CSModals';
 import { getSystemStatus } from '@/services/configurationService';
 import tokenStore from '@/auth/tokenStore';
 import { isReassignmentDenied } from '@/utils/reassignmentUtils';
+
+/**
+ * Profile card role line. Department managers read as their manager title rather than
+ * the raw account role ("employee"). Order matters: CS before Service (the Service check
+ * matches "Customer Service"), and Service before IT (the IT check matches any department
+ * name containing "it", e.g. Facilities).
+ */
+export const profileRoleLabel = (u) => {
+  if (!u) return '';
+  // CS first: the Service check also matches "Customer Service" departments.
+  if (checkIsCSManager(u)) return 'CS Manager';
+  if (checkIsServiceManager(u)) return 'Service Manager';
+  if (checkIsItManager(u)) return 'IT Manager';
+  return String(u.role || '');
+};
 
 const checkUserIsCS = (u) => {
   if (!u) return false;
@@ -40,6 +55,14 @@ const checkUserIsEmployee = (u) => {
     dept.includes('service') ||
     dept.includes('engineering')
   );
+};
+
+/** A CS reminder sent to an employee about one of their assigned tickets. */
+const isEmployeeReminder = (n, parsed) => {
+  let role = '';
+  try { role = String(JSON.parse(localStorage.getItem('user') || 'null')?.role || '').toLowerCase(); } catch { role = ''; }
+  if (role !== 'employee') return false;
+  return parsed?.type === 'ticket_reminder' || /reminder/i.test(n?.title || '');
 };
 
 export default function Header({ sidebarHovered }) {
@@ -210,6 +233,23 @@ export default function Header({ sidebarHovered }) {
     setNotificationDropdownOpen(false);
     const parsed = (() => { try { return typeof n.data === 'string' ? JSON.parse(n.data) : n.data || {}; } catch { return {}; } })();
     const ticketId = n.ticket_id || parsed?.ticket_id || parsed?.ticketId;
+
+    // CS reminders take the employee straight to the ticket update page for that ticket.
+    if (ticketId && isEmployeeReminder(n, parsed)) {
+      try {
+        if (!n.is_read) {
+          await markNotificationRead(n.id);
+          setNotificationCount((prev) => Math.max(0, prev - 1));
+          setNotifications((prev) => prev.map((item) => (item.id === n.id ? { ...item, is_read: true, unread: false } : item)));
+          window.dispatchEvent(new Event('notifications:updated'));
+        }
+      } catch (err) {
+        console.warn('Failed to mark reminder notification as read:', err);
+      }
+      const numericId = Number(String(ticketId).replace(/\D/g, ''));
+      navigate(`/employee/ticket-update?ticketId=${numericId}`, { state: { ticketId: numericId } });
+      return;
+    }
 
     // Handle new message notification: navigate directly to messaging thread
     const isNewMessage = parsed.type === 'new_message' ||
@@ -420,7 +460,7 @@ export default function Header({ sidebarHovered }) {
               </div>
               <div className="hidden sm:flex flex-col items-start leading-tight text-left">
                 <span className="text-sm font-semibold text-dark-slate">{user?.name || 'User'}</span>
-                <span className="text-xs text-muted-slate capitalize">{user?.role || ''}</span>
+                <span className="text-xs text-muted-slate capitalize">{profileRoleLabel(user)}</span>
               </div>
               <ChevronDown className="w-4 h-4 text-muted-slate ml-1" />
             </button>

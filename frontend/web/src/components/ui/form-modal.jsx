@@ -20,15 +20,22 @@ export function FormModal({
   cancelLabel = "Cancel",
   loading = false,
   maxWidth = "max-w-2xl",
+  tone = "default", // "default" | "destructive": red icon and confirm button for reject/delete flows
   children,
 }) {
+  const isDestructive = tone === "destructive";
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && !loading && onClose?.()}>
       <DialogContent className={cn("w-[95vw] sm:w-full p-4 sm:p-6 font-sans", maxWidth)}>
         {/* Left-aligned header */}
         <div className="flex items-start gap-4 pb-4 border-b border-slate-100">
           {icon && (
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-50 text-accent">
+            <div
+              className={cn(
+                "flex h-11 w-11 shrink-0 items-center justify-center rounded-full",
+                isDestructive ? "bg-red-50 text-red-600" : "bg-blue-50 text-accent"
+              )}
+            >
               {React.isValidElement(icon)
                 ? icon
                 : typeof icon === "function" ||
@@ -66,7 +73,7 @@ export function FormModal({
           </Button>
           <Button
             type="button"
-            variant="default"
+            variant={isDestructive ? "destructive" : "default"}
             onClick={onSubmit}
             loading={loading}
           >

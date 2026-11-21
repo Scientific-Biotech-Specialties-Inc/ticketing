@@ -151,7 +151,9 @@ class AuditTimelineService
             ->where('tal.action_type', 'not like', '%reassign%')
             ->where(function ($sub) {
                 $sub->whereNull('tal.event_type')->orWhere('tal.event_type', 'not like', '%reassign%');
-            });
+            })
+            // Spec 0048 (AC-15): hold request steps are staff only, even if a row lost its is_internal flag.
+            ->where('tal.action_type', 'not like', 'hold\_request%');
         }
 
         // Optional filtering by event type or action type
@@ -329,6 +331,20 @@ class AuditTimelineService
                 return 'SLA breached' . (!empty($details['overdue_duration']) ? ' (' . $details['overdue_duration'] . ')' : '');
             case 'sla_breached_reassigned':
                 return 'SLA breached and ticket reassigned';
+            case 'manager_reassigned':
+                $names = fn ($list) => implode(', ', array_filter(array_map(fn ($p) => $p['name'] ?? null, (array) $list)));
+                $who = trim(($details['department'] ?? '') . ' Manager ' . ($details['manager_name'] ?? ''));
+                $added = $names($details['added'] ?? []);
+                $removed = $names($details['removed'] ?? []);
+                return "{$who} reassigned the ticket"
+                    . ($added !== '' ? ". Added: {$added}" : '')
+                    . ($removed !== '' ? ". Removed: {$removed}" : '');
+            case 'escalated_to_managers':
+                $managerNames = implode(', ', array_filter(array_map(fn ($m) => $m['name'] ?? null, (array) ($details['managers'] ?? []))));
+                return 'Escalated to ' . ($managerNames !== '' ? $managerNames : 'the department managers')
+                    . ($reason ? ": {$reason}" : '');
+            case 'manager_reassignment_acknowledged':
+                return 'Manager reassignment acknowledged by Customer Service';
             case 'accept':
                 return 'Ticket accepted';
             case 'reassign_request':
@@ -338,6 +354,17 @@ class AuditTimelineService
             case 'reassign_deny':
             case 'reassign_reject':
                 return 'Reassignment denied' . ($reason ? ": {$reason}" : '');
+            case 'hold_requested':
+                $remarks = $details['remarks'] ?? null;
+                return 'On Hold requested' . ($remarks ? ": {$remarks}" : '');
+            case 'hold_request_cancelled':
+                return 'On Hold request cancelled' . (!empty($details['details']) ? " ({$details['details']})" : '');
+            case 'hold_request_approved':
+                $note = $details['note'] ?? null;
+                $via = ($details['via'] ?? '') === 'direct_hold' ? ' by a direct hold' : '';
+                return "On Hold request approved{$via}" . ($note ? ": {$note}" : '');
+            case 'hold_request_rejected':
+                return 'On Hold request rejected' . ($reason ? ": {$reason}" : '');
             case 'internal_note':
             case 'internal_note_added':
                 return 'Internal note added';

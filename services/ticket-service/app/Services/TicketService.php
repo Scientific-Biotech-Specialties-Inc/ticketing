@@ -106,6 +106,7 @@ class TicketService
             ->leftJoin('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
             ->join('ticket_statuses as ts', 'ts.ticket_status_ID', '=', 't.ticket_status_ID')
             ->leftJoin('clients as c', 'c.id', '=', 't.created_by')
+            ->leftJoin('employees as req', 'req.emp_id', '=', 't.requested_by')
             ->leftJoin('machines as m', 'm.machine_ID', '=', 't.machine_ID')
             ->leftJoin('ticket_priorities as tp', 'tp.priority_ID', '=', 't.priority_ID')
             ->leftJoin('employees as e', 'e.emp_id', '=', 't.assigned_to')
@@ -122,8 +123,11 @@ class TicketService
                 'e.department',
                 't.created_at',
                 'c.client_name',
+                'c.email as client_email',
+                'req.email as requester_employee_email',
                 'm.machine_name',
                 'm.serial_number',
+                't.equipment_name',
                 'tt.type_name as ticket_type',
                 't.sla_rule_id',
                 't.response_due_at',
@@ -164,12 +168,19 @@ class TicketService
             'ticket_number' => $displayNumber,
             'ticket_ID' => (int) $row->ticket_ID,
             'customer' => $row->client_name ?: 'Unknown Customer',
+            // The requester's email (customer, or the employee for internal tickets), when on file.
+            'customer_email' => (bool) $row->is_internal
+                ? ($row->requester_employee_email ?: null)
+                : ($row->client_email ?: null),
             'title' => $row->title,
             'category' => $row->category_name,
             'status' => $row->status_name,
             'priority' => $row->priority_name,
             'department' => $row->department,
-            'equipment' => $row->machine_name . ' - ' . $row->serial_number,
+            'equipment' => $row->machine_name
+                ? $row->machine_name . ' - ' . $row->serial_number
+                : ($row->equipment_name ?: 'Not specified'),
+            'equipment_name' => $row->equipment_name ?? null,
             'sla' => $this->slaLabel($createdAtObj),
             'date' => $createdAtObj ? $createdAtObj->format('m/d/Y') : now()->format('m/d/Y'),
             'assigned' => $assignedIds,
@@ -196,7 +207,7 @@ class TicketService
      */
     public function getFormOptions(): array
     {
-        return \Illuminate\Support\Facades\Cache::remember('ticket_form_options_cache', 3600, function () {
+        return \Illuminate\Support\Facades\Cache::remember('ticket_form_options_cache_v2', 3600, function () {
             $machines = DB::table('machines')
                 ->select('machine_ID', 'machine_name', 'serial_number')
                 ->orderBy('machine_name')
@@ -231,9 +242,11 @@ class TicketService
                     'value' => $row->machine_ID,
                     'label' => $row->machine_name . ' - ' . $row->serial_number,
                 ])->values()->all(),
+                // track: the department the category belongs to (internal tickets: 'it' makes equipment optional).
                 'category_options' => $problemCategories->map(fn ($row) => [
                     'value' => $row->problem_category_ID,
                     'label' => $row->category_name,
+                    'track' => app(CategoryTrack::class)->forName((string) $row->category_name),
                 ])->values()->all(),
                 'priority_options' => $priorities->map(fn ($row) => [
                     'value' => $row->priority_ID,
@@ -287,6 +300,12 @@ class TicketService
                 ->whereRaw('LOWER(status_name) = ?', [strtolower(trim($defaultStatusName))])
                 ->value('ticket_status_ID') ?: 1;
         }
+
+        // Every ticket gets a branch (request, then equipment, then the default), so branch staff see it.
+        $validated['branch_id'] = app(TicketBranchResolver::class)->resolve(
+            $validated['branch_id'] ?? null,
+            $validated['machine_ID'] ?? null
+        );
 
         $ticketData = [
             'ticket_number' => $ticketNumber,
@@ -496,12 +515,20 @@ class TicketService
                 ->value('ticket_status_ID') ?: 1;
         }
 
+        // Internal tickets: request, then equipment, then the requesting employee's branch, then the default.
+        $validated['branch_id'] = app(TicketBranchResolver::class)->resolve(
+            $validated['branch_id'] ?? null,
+            $validated['machine_ID'] ?? null,
+            $user->branch_id ?? $user->branch ?? null
+        );
+
         $ticketId = $this->ticketLimitService->createWithinLimit(
             $empId,
             true,
             fn () => DB::table('tickets')->insertGetId([
                 'ticket_number' => $ticketNumber,
                 'machine_ID' => $validated['machine_ID'] ?? null,
+                'equipment_name' => isset($validated['equipment_name']) ? trim(strip_tags((string) $validated['equipment_name'])) : null,
                 'problem_category_ID' => $validated['problem_category_ID'],
                 'created_by' => 1,
                 'requested_by' => $empId,
@@ -564,6 +591,7 @@ class TicketService
             ]),
             'details' => json_encode([
                 'machine_ID' => $validated['machine_ID'] ?? null,
+                'equipment_name' => $validated['equipment_name'] ?? null,
                 'problem_category_ID' => $validated['problem_category_ID'],
                 'title' => $cleanTitle,
             ]),
@@ -656,6 +684,40 @@ class TicketService
     /**
      * Get detailed ticket data including timeline, attachments, worklogs, and SLA.
      */
+    /**
+     * Managers a ticket is escalated to: every recorded escalation, or, for an open breached ticket
+     * with none recorded (breached before breach escalations were recorded), the department managers
+     * the breach alert goes to.
+     *
+     * @return array<int, array{id: int, name: string, department: ?string, automatic: bool}>
+     */
+    protected function escalatedTo(object $ticket): array
+    {
+        $ticketId = (int) ($ticket->ticket_ID ?? 0);
+        $recorded = app(EscalationParticipants::class)->managersFor($ticketId);
+        if (!empty($recorded)) {
+            return $recorded;
+        }
+
+        $finished = ['resolved', 'closed', 'discarded', 'cancelled'];
+        if (in_array(strtolower(trim((string) ($ticket->status_name ?? ''))), $finished, true)
+            || ($this->slaService->computeTicketSlaMetrics($ticket)['status'] ?? null) !== 'Breached') {
+            return [];
+        }
+
+        return collect($this->slaService->resolveDepartmentManagersForTicket($ticket))
+            ->filter()
+            ->unique('emp_id')
+            ->map(fn ($m) => [
+                'id' => (int) $m->emp_id,
+                'name' => trim(($m->first_name ?? '') . ' ' . ($m->last_name ?? '')) ?: 'Manager #' . $m->emp_id,
+                'department' => $m->department ?? null,
+                'automatic' => true,
+            ])
+            ->values()
+            ->all();
+    }
+
     public function showTicket(int $ticketId, $user, bool $isCustomer): ?array
     {
         $ticket = DB::table('tickets as t')
@@ -681,10 +743,13 @@ class TicketService
                 't.updated_at',
                 'm.machine_name',
                 'm.serial_number',
+                't.equipment_name',
                 'm.model as machine_model',
                 'm.brand as machine_brand',
                 'mc.category_name as equipment_type',
                 'c.client_name',
+                'c.email as client_email',
+                'req.email as requester_employee_email',
                 DB::raw("TRIM(CONCAT(COALESCE(req.first_name, ''), ' ', COALESCE(req.last_name, ''))) as requester_employee_name"),
                 't.created_by',
                 't.assigned_to',
@@ -792,8 +857,12 @@ class TicketService
 
         if ($isCustomer) {
             $auditLogs = $auditLogs->reject(function ($log) {
-                return str_contains(strtolower((string) ($log->action_type ?? '')), 'reassign')
-                    || str_contains(strtolower((string) ($log->event_type ?? '')), 'reassign');
+                $action = strtolower((string) ($log->action_type ?? ''));
+                return str_contains($action, 'reassign')
+                    || str_contains(strtolower((string) ($log->event_type ?? '')), 'reassign')
+                    // Spec 0048 (AC-15): hold requests and every internal row stay staff only.
+                    || str_starts_with($action, 'hold_request')
+                    || (int) ($log->is_internal ?? 0) === 1;
             })->values();
         }
 
@@ -863,6 +932,19 @@ class TicketService
             } elseif ($log->action_type === 'hold') {
                 $reason = $details['reason'] ?? '';
                 $timelineText = "Ticket placed on hold by {$actorName}." . ($reason !== '' ? " Reason: \"{$reason}\"." : '');
+            } elseif ($log->action_type === 'hold_requested') {
+                $remarks = $details['remarks'] ?? '';
+                $timelineText = "On Hold requested by {$actorName}." . ($remarks !== '' ? " Remarks: \"{$remarks}\"." : '');
+            } elseif ($log->action_type === 'hold_request_cancelled') {
+                $why = $details['details'] ?? '';
+                $timelineText = "On Hold request cancelled by {$actorName}." . ($why !== '' ? " ({$why})" : '');
+            } elseif ($log->action_type === 'hold_request_approved') {
+                $note = $details['note'] ?? '';
+                $via = ($details['via'] ?? '') === 'direct_hold' ? ' (closed by a direct hold)' : '';
+                $timelineText = "On Hold request approved by {$actorName}{$via}." . ($note !== '' && $note !== null ? " Note: \"{$note}\"." : '');
+            } elseif ($log->action_type === 'hold_request_rejected') {
+                $reason = $details['reason'] ?? '';
+                $timelineText = "On Hold request rejected by {$actorName}." . ($reason !== '' ? " Reason: \"{$reason}\"." : '');
             } elseif ($log->action_type === 'resume') {
                 $timelineText = "Ticket resumed from hold by {$actorName}.";
             } elseif ($log->action_type === 'resolve') {
@@ -1253,6 +1335,8 @@ class TicketService
                 'e.email',
                 'e.department',
                 'e.role',
+                'e.is_active',
+                'e.last_seen_at',
                 'ta.assignment_status',
                 'ta.assigned_at',
                 'ta.accepted_at',
@@ -1293,6 +1377,8 @@ class TicketService
             'machine_ID' => $ticket->machine_ID,
             'machine_name' => $ticket->machine_name,
             'serial_number' => $ticket->serial_number,
+            // Free-text equipment / software name typed by staff on internal tickets.
+            'equipment_name' => $ticket->equipment_name ?? null,
             'machine_model' => $ticket->machine_model ?? null,
             'machine_brand' => $ticket->machine_brand ?? null,
             'equipment_type' => $equipmentType,
@@ -1315,12 +1401,18 @@ class TicketService
             'sla_status' => $this->slaLabel($ticket->created_at, $ticket),
             'resolution_due_at' => (!empty($ticket->resolution_due_at)) ? Carbon::parse($ticket->resolution_due_at)->toIso8601String() : null,
             'sla_metrics' => $this->slaService->computeTicketSlaMetrics($ticket),
-            'equipment' => $ticket->machine_name ? ($ticket->machine_name . ($ticket->serial_number ? ' - ' . $ticket->serial_number : '')) : ($ticket->serial_number ?: 'Not specified'),
+            // Managers the ticket is escalated to, by hand or automatically on an SLA breach.
+            'escalated_to' => $isCustomer ? [] : $this->escalatedTo($ticket),
+            'equipment' => $ticket->machine_name ? ($ticket->machine_name . ($ticket->serial_number ? ' - ' . $ticket->serial_number : '')) : ($ticket->serial_number ?: ($ticket->equipment_name ?: 'Not specified')),
             'customer' => (bool) $ticket->is_internal
                 ? (($ticket->requester_employee_name !== '' && $ticket->requester_employee_name !== null)
                     ? $ticket->requester_employee_name
                     : ($ticket->requested_by ? 'Employee #' . $ticket->requested_by : 'Internal Requester'))
                 : ($ticket->client_name ?: 'Unknown Customer'),
+            // The requester's email (customer, or the employee for internal tickets), when on file.
+            'customer_email' => (bool) $ticket->is_internal
+                ? ($ticket->requester_employee_email ?: null)
+                : ($ticket->client_email ?: null),
             'accepted' => $accepted,
             'assigned_employee' => $primaryAssignedName,
             'assigned_employee_name' => $primaryAssignedName,
@@ -1334,7 +1426,20 @@ class TicketService
                     'assignment_status' => $e->assignment_status,
                     'completed_at' => $e->completed_at,
                 ])->values()->all()
-                : $assignedEmployees->toArray(),
+                : $assignedEmployees->map(function ($e) {
+                    // Spec 0035 presence for staff: online only on a fresh heartbeat, never assumed.
+                    $onlineSince = now()->subSeconds(max(1, (int) config('presence.online_window_seconds', 90)));
+                    $isOnline = (bool) $e->is_active
+                        && !empty($e->last_seen_at)
+                        && Carbon::parse($e->last_seen_at)->greaterThanOrEqualTo($onlineSince);
+                    $row = (array) $e;
+                    unset($row['last_seen_at']);
+                    $row['presence'] = !$e->is_active ? 'inactive' : ($isOnline ? 'online' : 'offline');
+                    $row['is_online'] = $isOnline;
+                    return $row;
+                })->values()->all(),
+            // Unacknowledged department manager reassignment (staff only; customers never see it).
+            'manager_reassignment' => $isCustomer ? null : app(ManagerReassignmentNotice::class)->pendingForTicket((int) $ticketId),
             'reassignmentRequested' => !empty($pendingReassign),
             'reassignmentReason' => $pendingReassign ? $pendingReassign->reason : null,
             'reassignmentRequestedBy' => $pendingReassign ? ($pendingReassign->requesting_employee_name ?: 'Assigned Employee') : null,
@@ -1345,6 +1450,8 @@ class TicketService
             'reassignmentDenied' => !empty($deniedReassign),
             'disapprovalReason' => $actualDenyReason,
             'reassignmentDenyReason' => $actualDenyReason,
+            // Spec 0048 (AC-9, AC-12, AC-15): staff only; omitted entirely for customers below.
+            ...($isCustomer ? [] : app(HoldRequestService::class)->detailsFor($ticket)),
             'proofRejected' => (bool)$ticket->proof_rejected,
             'rejectionReason' => $ticket->rejection_reason,
             'resolved_at' => $resolvedAtIso,
@@ -1381,54 +1488,35 @@ class TicketService
     }
 
     /**
-     * A customer may change the category of their own open ticket (to an active category). The
-     * machine rules follow the category being saved: no machine on a Software ticket, a machine
-     * required on a Service ticket, and only the customer's own registered machines.
+     * Spec 0047 (AC-6): on a customer's own edit the category is never chosen directly; it follows
+     * the equipment or software item. Changing the item must name one of the customer's own
+     * pickable items, and the category is set again from it. Adjusts $validated in place.
      */
-    protected function customerEditError(object $ticket, array $validated, int $clientId): ?array
+    protected function customerEditError(object $ticket, array &$validated, int $clientId): ?array
     {
         $reject = fn (string $field, string $message) => [
             'status' => 422,
             'data' => ['message' => $message, 'errors' => [$field => [$message]]],
         ];
 
-        $currentCategory = $ticket->problem_category_ID !== null ? (int) $ticket->problem_category_ID : null;
-        if (array_key_exists('problem_category_ID', $validated) && $validated['problem_category_ID'] !== null) {
-            $requested = (int) $validated['problem_category_ID'];
-            $active = DB::table('problem_categories')
-                ->where('problem_category_ID', $requested)
-                ->where('is_active', true)
-                ->exists();
-            if (!$active) {
-                return $reject('problem_category_ID', 'Choose one of the available categories.');
-            }
-            $currentCategory = $requested;
-        }
+        // The category is read only for customers; any value sent is ignored.
+        unset($validated['problem_category_ID']);
 
         if (!array_key_exists('machine_ID', $validated)) {
             return null;
         }
 
-        $machineId = $validated['machine_ID'] !== null ? (int) $validated['machine_ID'] : null;
-        $resolver = app(CategoryDepartmentResolver::class);
-
-        if ($resolver->isSoftware($currentCategory) && $machineId !== null) {
-            return $reject('machine_ID', 'A Software ticket does not take a machine.');
+        if ($validated['machine_ID'] === null) {
+            return $reject('machine_ID', 'Choose one of your registered equipment or software.');
         }
 
-        if ($resolver->isService($currentCategory) && $machineId === null) {
-            return $reject('machine_ID', 'A Service ticket needs one of your registered machines.');
+        $assets = app(CustomerAssetService::class);
+        $asset = $assets->findPickable($clientId, (int) $validated['machine_ID']);
+        if (!$asset) {
+            return $reject('machine_ID', 'Choose one of your registered equipment or software.');
         }
 
-        if ($machineId !== null) {
-            $owned = DB::table('machines')
-                ->where('machine_ID', $machineId)
-                ->where('client_ID', $clientId)
-                ->exists();
-            if (!$owned) {
-                return $reject('machine_ID', 'The selected machine is not registered to this customer.');
-            }
-        }
+        $validated['problem_category_ID'] = $assets->categoryIdFor((string) $asset->asset_type);
 
         return null;
     }
@@ -1452,6 +1540,34 @@ class TicketService
 
         if ($ticket->is_internal && $user instanceof \App\Models\Client) {
             return ['status' => 404, 'data' => ['message' => 'Ticket not found']];
+        }
+
+        // Spec 0048 (AC-2, AC-6): employees cannot set Pending (7) or On Hold (11) themselves; they
+        // file a hold request for CS. While one is pending they cannot change the status at all.
+        $isEmployeeCaller = !($user instanceof \App\Models\Client) && !RoleHelper::isCsOrAdmin($user);
+        $requestedStatus = array_key_exists('ticket_status_ID', $validated) && $validated['ticket_status_ID'] !== null
+            ? (int) $validated['ticket_status_ID']
+            : null;
+        if ($isEmployeeCaller && $requestedStatus !== null) {
+            if (in_array($requestedStatus, [TicketStateMachine::STATUS_ID_PENDING, TicketStateMachine::STATUS_ID_ON_HOLD], true)) {
+                return [
+                    'status' => 422,
+                    'data' => [
+                        'message' => 'Employees cannot set Pending or On Hold directly. Send an On Hold request for Customer Service to review.',
+                        'code' => 'HOLD_APPROVAL_REQUIRED',
+                    ],
+                ];
+            }
+            if ($requestedStatus !== (int) $ticket->ticket_status_ID
+                && DB::table(HoldRequestRecorder::TABLE)->where('ticket_ID', $ticketId)->where('status', HoldRequestRecorder::STATUS_PENDING)->exists()) {
+                return [
+                    'status' => 409,
+                    'data' => [
+                        'message' => 'On Hold request pending CS review. The status cannot change until Customer Service decides.',
+                        'code' => 'HOLD_REQUEST_PENDING',
+                    ],
+                ];
+            }
         }
 
         // 2. Reject status 11 (On Hold) via generic update endpoint
@@ -1546,6 +1662,9 @@ class TicketService
             if ($customerEditError !== null) {
                 return $customerEditError;
             }
+            // The category may now follow a new item, so the SLA recalculation below sees it.
+            $attemptsCategoryChange = array_key_exists('problem_category_ID', $validated) && $validated['problem_category_ID'] !== null
+                && (int) $validated['problem_category_ID'] !== (int) $ticket->problem_category_ID;
         } else {
             // Staff / Employee edits:
             // Category edits: Customer service, admin, superadmin may edit on any non-closed ticket.
@@ -1776,6 +1895,12 @@ class TicketService
                 // Spec 0039 (AC-3): Resolved, Closed or Discarded ends every holding period.
                 if ((int) $ticket->ticket_status_ID !== $statusToSet) {
                     $this->periods()->releaseForStatus($ticketId, $statusToSet);
+
+                    // Spec 0048 (AC-16): a status change that does not end On Hold cancels a pending hold request.
+                    $endsOnHold = $this->stateMachine->resolveTargetState($statusToSet, $ticket) === TicketStateMachine::STATE_ON_HOLD;
+                    if (!$endsOnHold) {
+                        app(HoldRequestRecorder::class)->cancelForTransition((int) $ticketId, $statusToSet);
+                    }
                 }
 
                 if ($actorType === 'employee') {
@@ -1862,18 +1987,46 @@ class TicketService
         });
 
         if ($statusToSet === 5) {
-            $assignedManagerId = $validated['assigned_to'] ?? $ticket->assigned_to ?? null;
             $escReason = $validated['escalation_reason'] ?? $validated['reason'] ?? 'Escalated by Customer Service for supervisory review.';
             $ticketRef = TicketNumberGeneratorService::refFor($ticketId);
             $ticketTitle = $ticket->title ?? "Ticket #{$ticketId}";
 
-            if ($assignedManagerId) {
-                $mgrTitle = "Urgent: Ticket Escalated - {$ticketRef}";
-                $mgrMessage = "Manager Alert: Ticket {$ticketRef}: \"{$ticketTitle}\" has been escalated to you. Reason: \"{$escReason}\". Immediate departmental intervention required.";
+            // Escalation goes to the manager of each assigned employee's department (for example
+            // the IT manager and the Service manager when one IT and one Service employee are
+            // assigned), not to a category based target. An explicit assigned_to still counts.
+            $escalationManagerIds = [];
+            try {
+                $freshTicket = DB::table('tickets')->where('ticket_ID', $ticketId)->first() ?? $ticket;
+                foreach ($this->slaService->resolveDepartmentManagersForTicket($freshTicket) as $mgr) {
+                    if ($mgr && !empty($mgr->emp_id)) {
+                        $escalationManagerIds[] = (int) $mgr->emp_id;
+                    }
+                }
+            } catch (\Throwable $e) {
+                Log::warning("Failed to resolve escalation managers for ticket #{$ticketId}: " . $e->getMessage());
+            }
+            if (!empty($validated['assigned_to'])) {
+                $escalationManagerIds[] = (int) $validated['assigned_to'];
+            }
+            $escalationManagerIds = array_values(array_unique(array_filter($escalationManagerIds)));
+            $assignedManagerId = $escalationManagerIds[0] ?? null;
 
+            // The escalation managers may join the ticket conversation (messaging-service checks this).
+            try {
+                app(EscalationParticipants::class)->record($ticketId, $escalationManagerIds, (int) $assignedBy, (string) $actorType, $escReason);
+            } catch (\Throwable $e) {
+                Log::warning("Failed to record escalation managers for ticket #{$ticketId}: " . $e->getMessage());
+            }
+
+            $mgrTitle = "Urgent: Ticket Escalated - {$ticketRef}";
+            $mgrMessage = "Manager Alert: Ticket {$ticketRef}: \"{$ticketTitle}\" has been escalated to you. Reason: \"{$escReason}\". Immediate departmental intervention required.";
+            $catNameEsc = DB::table('problem_categories')->where('problem_category_ID', $ticket->problem_category_ID)->value('category_name') ?? '';
+            $prioNameEsc = DB::table('ticket_priorities')->where('priority_ID', $ticket->priority_ID ?? 1)->value('priority_name') ?? '';
+
+            foreach ($escalationManagerIds as $managerId) {
                 try {
                     $this->notificationService->notifyRecipient(
-                        (int) $assignedManagerId,
+                        $managerId,
                         'employee',
                         $mgrTitle,
                         $mgrMessage,
@@ -1888,11 +2041,8 @@ class TicketService
                         'ticket_escalated'
                     );
 
-                    $catNameEsc = DB::table('problem_categories')->where('problem_category_ID', $ticket->problem_category_ID)->value('category_name') ?? '';
-                    $prioNameEsc = DB::table('ticket_priorities')->where('priority_ID', $ticket->priority_ID ?? 1)->value('priority_name') ?? '';
-
                     $this->notificationService->sendTicketEmail(
-                        (int) $assignedManagerId,
+                        $managerId,
                         $mgrTitle,
                         $mgrMessage,
                         $ticketId,
@@ -1905,7 +2055,7 @@ class TicketService
                         ]
                     );
                 } catch (\Throwable $e) {
-                    Log::warning("Failed to dispatch manager escalation notification for ticket #{$ticketId}: " . $e->getMessage());
+                    Log::warning("Failed to dispatch manager escalation notification for ticket #{$ticketId} (manager {$managerId}): " . $e->getMessage());
                 }
             }
 
@@ -1915,6 +2065,7 @@ class TicketService
                     'status' => 'Escalated',
                     'status_id' => 5,
                     'assigned_to' => $assignedManagerId,
+                    'manager_ids' => $escalationManagerIds,
                     'escalation_reason' => $escReason,
                 ]);
             } catch (\Throwable $e) {
@@ -2183,8 +2334,13 @@ class TicketService
 
     /**
      * Put an in-progress ticket on hold.
+     *
+     * Spec 0048 $options (used when CS approves an employee hold request):
+     *   hold_request_id             the request being approved, closed in the hold transaction
+     *   hold_request_note           the optional CS approval note
+     *   skip_assignee_notify_emp_id the requester, who gets "Hold request approved" instead (AC-12)
      */
-    public function holdTicket(int $ticketId, $user, ?string $reason = null): array
+    public function holdTicket(int $ticketId, $user, ?string $reason = null, array $options = []): array
     {
         $ticket = DB::table('tickets')->where('ticket_ID', $ticketId)->first();
         if (!$ticket) {
@@ -2223,7 +2379,12 @@ class TicketService
         }
 
         try {
-            $result = $this->stateMachine->applyTransition($ticketId, 'hold', ['reason' => $trimmedReason], $user);
+            $holdContext = ['reason' => $trimmedReason];
+            if (!empty($options['hold_request_id'])) {
+                $holdContext['hold_request_id'] = (int) $options['hold_request_id'];
+                $holdContext['hold_request_note'] = $options['hold_request_note'] ?? null;
+            }
+            $result = $this->stateMachine->applyTransition($ticketId, 'hold', $holdContext, $user);
 
             if (($result['status'] ?? 0) === 200 && !empty($result['data']['transitioned'])) {
                 // TODO: TS005 per-user notification preferences
@@ -2260,7 +2421,8 @@ class TicketService
                         );
                     }
 
-                    if (!empty($ticket->assigned_to)) {
+                    $skipAssignee = (int) ($options['skip_assignee_notify_emp_id'] ?? 0);
+                    if (!empty($ticket->assigned_to) && (int) $ticket->assigned_to !== $skipAssignee) {
                         $this->notificationService->notifyRecipient(
                             (int) $ticket->assigned_to,
                             'employee',
@@ -2300,15 +2462,28 @@ class TicketService
             return ['status' => 404, 'data' => ['message' => 'Ticket not found']];
         }
 
-        if (!RoleHelper::isCsOrAdmin($user)) {
+        // An employee assigned to the ticket may resume it too: an On Hold ticket must be
+        // resumed before it can be resolved, and the assignee is the one resolving it.
+        $resumingEmpId = (int) ($user->emp_id ?? 0);
+        $isAssignee = $resumingEmpId > 0 && (
+            (int) ($ticket->assigned_to ?? 0) === $resumingEmpId
+            || DB::table('ticket_assignments')
+                ->where('ticket_ID', $ticketId)
+                ->where('employee_ID', $resumingEmpId)
+                ->exists()
+        );
+        $isCsOrAdmin = RoleHelper::isCsOrAdmin($user);
+
+        if (!$isCsOrAdmin && !$isAssignee) {
             return [
                 'status' => 403,
                 'data' => [
-                    'message' => 'Only Customer Service or Administrators can resume a ticket from on hold.',
+                    'message' => 'Only Customer Service, Administrators, or the assigned employee can resume a ticket from on hold.',
                     'code' => 'FORBIDDEN',
                 ],
             ];
         }
+        $resumedByAssignee = $isAssignee && !$isCsOrAdmin;
 
         try {
             $result = $this->stateMachine->applyTransition($ticketId, 'resume', [], $user);
@@ -2342,7 +2517,25 @@ class TicketService
                         );
                     }
 
-                    if (!empty($ticket->assigned_to)) {
+                    if ($resumedByAssignee) {
+                        // Tell the CSR who delegated the ticket that the employee resumed it.
+                        $delegatorId = (int) (DB::table('ticket_assignments')
+                            ->where('ticket_ID', $ticketId)
+                            ->where('employee_ID', $resumingEmpId)
+                            ->value('assigned_by') ?? 0);
+                        if ($delegatorId > 0 && $delegatorId !== $resumingEmpId) {
+                            $emp = DB::table('employees')->where('emp_id', $resumingEmpId)->first();
+                            $empName = $emp ? trim($emp->first_name . ' ' . $emp->last_name) : 'The assigned employee';
+                            $this->notificationService->notifyRecipient(
+                                $delegatorId,
+                                'employee',
+                                'Ticket Resumed',
+                                "{$empName} resumed Ticket {$ticketRef} from On Hold. It is back in progress.",
+                                $ticketId,
+                                $resumeData
+                            );
+                        }
+                    } elseif (!empty($ticket->assigned_to)) {
                         $this->notificationService->notifyRecipient(
                             (int) $ticket->assigned_to,
                             'employee',
@@ -2391,7 +2584,7 @@ class TicketService
     /**
      * Close a resolved ticket.
      */
-    public function closeTicket(int $ticketId, $user): array
+    public function closeTicket(int $ticketId, $user, ?string $remarks = null): array
     {
         $ticket = DB::table('tickets')->where('ticket_ID', $ticketId)->first();
         if (!$ticket) {
@@ -2431,7 +2624,30 @@ class TicketService
         }
 
         try {
-            return $this->stateMachine->applyTransition($ticketId, 'close', [], $user);
+            $context = [];
+            $remarks = trim((string) $remarks);
+            if ($remarks !== '') {
+                $context['reason'] = $remarks;
+            }
+            $result = $this->stateMachine->applyTransition($ticketId, 'close', $context, $user);
+
+            // Keep the remarks next to the ticket's other staff notes.
+            if ($remarks !== '' && !($user instanceof \App\Models\Client) && !empty($user->emp_id)
+                && (int) ($result['status'] ?? 500) < 300) {
+                try {
+                    DB::table('internal_notes')->insert([
+                        'ticket_id' => $ticketId,
+                        'employee_id' => (int) $user->emp_id,
+                        'note' => 'Resolve remarks: ' . $remarks,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                } catch (\Throwable $e) {
+                    Log::warning("Could not save resolve remarks note for ticket #{$ticketId}: " . $e->getMessage());
+                }
+            }
+
+            return $result;
         } catch (\App\Exceptions\InvalidTicketTransitionException $e) {
             return [
                 'status' => 422,

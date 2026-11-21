@@ -16,6 +16,43 @@ class ManagerDashboardController extends Controller
     {
     }
 
+    /**
+     * The signed-in manager's ticket list, with escalated and breached flags.
+     */
+    public function tickets(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthenticated.'], 401);
+        }
+
+        // Scope comes only from the caller's own employees row, never from request parameters.
+        $email = strtolower(trim((string) ($user->email ?? '')));
+        $employee = $email !== ''
+            ? DB::table('employees')->whereRaw('LOWER(email) = ?', [$email])->first()
+            : null;
+
+        if (!$employee) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'No employee record found for the signed in user.',
+            ], 404);
+        }
+
+        if (!ManagerDashboardService::isManager($employee)
+            || ManagerDashboardService::supportedDepartment($employee->department ?? null) === null) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Access denied: Service, IT, or Customer Service manager role required.',
+            ], 403);
+        }
+
+        return response()->json(array_merge(
+            ['status' => 'success', 'manager_id' => (int) $employee->emp_id],
+            $this->managerDashboard->ticketsForManager($employee)
+        ));
+    }
+
     public function dashboard(Request $request): JsonResponse
     {
         $user = $request->user();

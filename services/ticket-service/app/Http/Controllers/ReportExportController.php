@@ -27,7 +27,7 @@ class ReportExportController extends Controller
         }
 
         $role = strtolower(trim((string) ($user->role ?? '')));
-        if (!in_array($role, ['superadmin', 'super admin', 'admin', 'systemadministrator', 'itadmin', 'it admin'], true)) {
+        if (!in_array($role, ['superadmin', 'super admin', 'admin', 'branch admin', 'branchadmin', 'branch_admin', 'systemadministrator', 'itadmin', 'it admin'], true)) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Access denied: Admin role required to export operational reports.',

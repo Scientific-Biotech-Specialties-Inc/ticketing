@@ -87,7 +87,9 @@ class ManagerDashboardService
 
         if (!$isBranchMode) {
             // AC-8: Service and IT scopes are by the assignee's department; unassigned tickets are not in them.
-            $query->whereRaw('LOWER(TRIM(e.department)) = ?', [TechnicalDepartments::normalize($department)]);
+            // Same rule as the manager's ticket list: any open assignment, or assigned_to, in the department.
+            // (A ticket can have a Service engineer in ticket_assignments while assigned_to is someone else.)
+            $this->applyDepartmentScope($query, $department);
         }
 
         $openTickets = $query->select(
@@ -109,11 +111,25 @@ class ManagerDashboardService
             't.created_at'
         )->get();
 
+        // Service / IT: the assignee to show is the one from the manager's own department.
+        $deptAssignees = $isBranchMode
+            ? []
+            : $this->departmentAssignees($openTickets->pluck('ticket_ID')->map(fn ($id) => (int) $id)->all(), $department);
+
         $unassigned = 0;
         $withinSla = 0;
         $breachedQueue = [];
 
         foreach ($openTickets as $t) {
+            $deptAssignee = $deptAssignees[(int) $t->ticket_ID] ?? null;
+            if ($deptAssignee) {
+                $t->assigned_to = $deptAssignee->emp_id;
+                $t->assignee_first_name = $deptAssignee->first_name;
+                $t->assignee_last_name = $deptAssignee->last_name;
+                $t->assignee_email = $deptAssignee->email;
+                $t->assignee_department = $deptAssignee->department;
+            }
+
             if (empty($t->assigned_to)) {
                 $unassigned++;
             }
@@ -163,6 +179,168 @@ class ManagerDashboardService
     }
 
     /**
+     * The manager's ticket list (Service / IT manager tickets page): open tickets in the
+     * manager's scope, with their assignees and whether each is escalated or breached.
+     * Same scope as the dashboard: assignee department (any open assignment, or assigned_to)
+     * for Service and IT managers, the whole branch for the CS manager. Not cached, so a
+     * reassignment shows on the next load.
+     *
+     * @return array{scope: array, tickets: array<int, array>}
+     */
+    public function ticketsForManager(object $manager): array
+    {
+        $department = self::supportedDepartment($manager->department ?? null);
+        $isBranchMode = $department === self::CUSTOMER_SERVICE;
+        $branch = $this->resolveBranch($manager);
+        $now = now();
+
+        $query = DB::table('tickets as t')
+            ->join('ticket_statuses as ts', 'ts.ticket_status_ID', '=', 't.ticket_status_ID')
+            ->leftJoin('ticket_priorities as tp', 'tp.priority_ID', '=', 't.priority_ID')
+            ->leftJoin('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
+            // Requester: the client, or the employee who raised an internal ticket.
+            ->leftJoin('clients as c', 'c.id', '=', 't.created_by')
+            ->leftJoin('employees as req', 'req.emp_id', '=', 't.requested_by')
+            ->whereNotIn(DB::raw('LOWER(TRIM(ts.status_name))'), self::NOT_OPEN_STATUSES);
+
+        // Tickets escalated to this manager show (and can be reassigned) even outside their branch scope.
+        $escalatedToMe = $isBranchMode
+            ? []
+            : app(EscalationParticipants::class)->ticketIdsForManager((int) ($manager->emp_id ?? 0), $department);
+
+        $scoped = function ($scope) use ($branch, $isBranchMode, $department) {
+            $this->dashboardService->applyBranchTicketFilter($scope, $branch);
+
+            if (!$isBranchMode) {
+                $this->applyDepartmentScope($scope, $department);
+            }
+        };
+
+        $query->where(function ($outer) use ($scoped, $escalatedToMe) {
+            $outer->where(fn ($scope) => $scoped($scope));
+            if (!empty($escalatedToMe)) {
+                $outer->orWhereIn('t.ticket_ID', $escalatedToMe);
+            }
+        });
+
+        $rows = $query->select(
+            't.ticket_ID',
+            't.ticket_number',
+            't.title',
+            't.description',
+            't.ticket_status_ID',
+            'ts.status_name',
+            't.priority_ID',
+            'tp.priority_name',
+            'pc.category_name',
+            't.assigned_to',
+            't.resolution_due_at',
+            't.resolved_at',
+            't.closed_at',
+            't.sla_status',
+            't.escalation_reason',
+            't.created_by',
+            't.requested_by',
+            't.is_internal',
+            'c.client_name',
+            'c.email as client_email',
+            DB::raw("TRIM(CONCAT(COALESCE(req.first_name, ''), ' ', COALESCE(req.last_name, ''))) as requester_employee_name"),
+            'req.email as requester_employee_email',
+            't.created_at',
+            't.updated_at'
+        )->orderByDesc('t.updated_at')->get();
+
+        $ticketIds = $rows->pluck('ticket_ID')->map(fn ($id) => (int) $id)->all();
+        $assigneesByTicket = [];
+        $onlineSince = $now->copy()->subSeconds(max(1, (int) config('presence.online_window_seconds', 90)));
+        if (!empty($ticketIds)) {
+            DB::table('ticket_assignments as ta')
+                ->join('employees as e', 'e.emp_id', '=', 'ta.employee_ID')
+                ->whereIn('ta.ticket_ID', $ticketIds)
+                ->whereNull('ta.completed_at')
+                ->select('ta.ticket_ID', 'e.emp_id', 'e.first_name', 'e.last_name', 'e.department', 'e.is_active', 'e.last_seen_at', 'ta.assignment_status')
+                ->orderBy('ta.assigned_at')
+                ->get()
+                ->each(function ($a) use (&$assigneesByTicket, $onlineSince) {
+                    $name = trim("{$a->first_name} {$a->last_name}");
+                    // Presence comes from heartbeat freshness (spec 0035); no heartbeat means offline.
+                    $isOnline = (bool) $a->is_active
+                        && !empty($a->last_seen_at)
+                        && Carbon::parse($a->last_seen_at)->greaterThanOrEqualTo($onlineSince);
+                    $assigneesByTicket[(int) $a->ticket_ID][] = [
+                        'id' => (int) $a->emp_id,
+                        'name' => $name !== '' ? $name : 'Engineer #' . $a->emp_id,
+                        'department' => $a->department,
+                        'assignment_status' => $a->assignment_status,
+                        'presence' => !$a->is_active ? 'inactive' : ($isOnline ? 'online' : 'offline'),
+                        'is_online' => $isOnline,
+                    ];
+                });
+        }
+
+        // Tickets escalated to this manager: they may join the ticket conversation.
+        $managerId = (int) ($manager->emp_id ?? 0);
+        $escalationManagers = app(EscalationParticipants::class)->managerIdsFor($ticketIds);
+
+        $tickets = $rows->map(function ($t) use ($now, $assigneesByTicket, $managerId, $escalationManagers, $escalatedToMe) {
+            $escalatedToThisManager = in_array($managerId, $escalationManagers[(int) $t->ticket_ID] ?? [], true)
+                || in_array((int) $t->ticket_ID, $escalatedToMe, true);
+            $isEscalated = strcasecmp(trim((string) $t->status_name), 'Escalated') === 0;
+            $isBreached = $this->slaOutcomes->isOpenBreach($t, $now);
+
+            // Same requester rule as the ticket details payload (TicketService).
+            $isInternal = (bool) $t->is_internal;
+            $requesterName = $isInternal
+                ? (($t->requester_employee_name ?? '') !== ''
+                    ? $t->requester_employee_name
+                    : ($t->requested_by ? 'Employee #' . $t->requested_by : 'Internal Requester'))
+                : ($t->client_name ?: 'Unknown Customer');
+            $requesterEmail = $isInternal ? ($t->requester_employee_email ?: null) : ($t->client_email ?: null);
+
+            return [
+                'ticket_ID' => (int) $t->ticket_ID,
+                'id' => TicketNumberGeneratorService::refFor($t->ticket_ID, $t->ticket_number ?? null),
+                'title' => $t->title,
+                'description' => $t->description,
+                'status' => $t->status_name,
+                'ticket_status_ID' => (int) $t->ticket_status_ID,
+                'priority' => $t->priority_name,
+                'priority_ID' => $t->priority_ID ? (int) $t->priority_ID : null,
+                'category' => $t->category_name,
+                'customer' => $requesterName,
+                'customer_name' => $requesterName,
+                'customer_email' => $requesterEmail,
+                'created_by' => $t->created_by ? (int) $t->created_by : null,
+                'requested_by' => $t->requested_by ? (int) $t->requested_by : null,
+                'is_internal' => $isInternal,
+                'assigned_to' => $t->assigned_to ? (int) $t->assigned_to : null,
+                'assignees' => $assigneesByTicket[(int) $t->ticket_ID] ?? [],
+                'resolution_due_at' => $t->resolution_due_at ? Carbon::parse($t->resolution_due_at)->toIso8601String() : null,
+                'sla_status' => $isBreached ? 'Breached' : $t->sla_status,
+                'escalation_reason' => $t->escalation_reason,
+                'is_escalated' => $isEscalated,
+                'is_breached' => $isBreached,
+                // Managers step in only on escalated or breached tickets.
+                'can_reassign' => $isEscalated || $isBreached,
+                'can_join_conversation' => $escalatedToThisManager,
+                'escalated_to_me' => $escalatedToThisManager,
+                'created_at' => $t->created_at ? Carbon::parse($t->created_at)->toIso8601String() : null,
+                'updated_at' => $t->updated_at ? Carbon::parse($t->updated_at)->toIso8601String() : null,
+            ];
+        })->values()->all();
+
+        return [
+            'scope' => [
+                'department' => $department,
+                'branch_id' => $branch->id,
+                'branch_name' => $branch->name,
+                'mode' => $isBranchMode ? 'branch' : 'department',
+            ],
+            'tickets' => $tickets,
+        ];
+    }
+
+    /**
      * Open, has an SLA, not on hold, and not yet past its resolution deadline.
      */
     protected function isWithinSla(object $ticket, Carbon $now): bool
@@ -191,6 +369,57 @@ class ManagerDashboardService
         // Employees without a branch id belong to the main branch (same rule the admin scoping uses).
         return DB::table('branches')->where('id', 1)->first()
             ?? (object) ['id' => 1, 'slug' => 'main', 'name' => 'Main Branch', 'code' => 'MAIN'];
+    }
+
+    /**
+     * Limit a tickets query (aliased t) to tickets with an open assignment, or assigned_to, in the department.
+     * Shared by the dashboard and the ticket list so both count the same tickets.
+     */
+    protected function applyDepartmentScope($query, string $department): void
+    {
+        $deptNorm = TechnicalDepartments::normalize($department);
+        $query->where(function ($q) use ($deptNorm) {
+            $q->whereExists(function ($sub) use ($deptNorm) {
+                $sub->select(DB::raw(1))
+                    ->from('ticket_assignments as ta')
+                    ->join('employees as ae', 'ae.emp_id', '=', 'ta.employee_ID')
+                    ->whereColumn('ta.ticket_ID', 't.ticket_ID')
+                    ->whereNull('ta.completed_at')
+                    ->whereRaw('LOWER(TRIM(ae.department)) = ?', [$deptNorm]);
+            })->orWhereExists(function ($sub) use ($deptNorm) {
+                $sub->select(DB::raw(1))
+                    ->from('employees as oe')
+                    ->whereColumn('oe.emp_id', 't.assigned_to')
+                    ->whereRaw('LOWER(TRIM(oe.department)) = ?', [$deptNorm]);
+            });
+        });
+    }
+
+    /**
+     * The first open assignee from the department for each ticket, keyed by ticket id.
+     *
+     * @param  int[]  $ticketIds
+     * @return array<int, object>
+     */
+    protected function departmentAssignees(array $ticketIds, string $department): array
+    {
+        if (empty($ticketIds)) {
+            return [];
+        }
+
+        $byTicket = [];
+        DB::table('ticket_assignments as ta')
+            ->join('employees as ae', 'ae.emp_id', '=', 'ta.employee_ID')
+            ->whereIn('ta.ticket_ID', $ticketIds)
+            ->whereNull('ta.completed_at')
+            ->whereRaw('LOWER(TRIM(ae.department)) = ?', [TechnicalDepartments::normalize($department)])
+            ->orderBy('ta.assigned_at')
+            ->get(['ta.ticket_ID', 'ae.emp_id', 'ae.first_name', 'ae.last_name', 'ae.email', 'ae.department'])
+            ->each(function ($a) use (&$byTicket) {
+                $byTicket[(int) $a->ticket_ID] ??= $a;
+            });
+
+        return $byTicket;
     }
 
     protected function assigneeName(object $t): string

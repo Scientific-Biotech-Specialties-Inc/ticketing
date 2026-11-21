@@ -132,6 +132,15 @@ export const getStepIndex = (status, isAssigned) => {
  * Handles ticket.assigned_employees (array of objects/ids), ticket.assigned (array of objects/ids),
  * or single string/object properties like ticket.assigned_employee.
  */
+/**
+ * Online only when the server says so: `presence === 'online'` or an explicit `is_online` / `online` flag.
+ */
+const resolveIsOnline = (emp) => {
+  if (!emp || typeof emp !== 'object') return false;
+  if (emp.presence) return String(emp.presence).toLowerCase() === 'online';
+  return Boolean(emp.is_online ?? emp.online ?? false);
+};
+
 export const getAllAssignees = (ticket, employees = []) => {
   if (!ticket) return [];
   const list = [];
@@ -146,7 +155,8 @@ export const getAllAssignees = (ticket, employees = []) => {
     let role = 'Assigned Technician';
     let email = '';
     let assignmentStatus = 'assigned';
-    let isOnline = true;
+    // Unknown presence is shown as offline, never assumed online (spec 0035).
+    let isOnline = false;
 
     if (typeof raw === 'object' && raw !== null) {
       id = raw.id || raw.emp_id || raw.employee_id;
@@ -155,7 +165,7 @@ export const getAllAssignees = (ticket, employees = []) => {
       role = raw.role || raw.position || raw.job_title || role;
       email = raw.email || '';
       assignmentStatus = raw.assignment_status || raw.status || 'assigned';
-      isOnline = raw.is_online ?? raw.online ?? true;
+      isOnline = resolveIsOnline(raw);
     } else if (typeof raw === 'string' || typeof raw === 'number') {
       const match = (employees || []).find(
         (e) =>
@@ -169,7 +179,7 @@ export const getAllAssignees = (ticket, employees = []) => {
         department = match.department || department;
         role = match.role || match.position || match.job_title || role;
         email = match.email || '';
-        isOnline = match.is_online ?? match.online ?? true;
+        isOnline = resolveIsOnline(match);
       } else if (typeof raw === 'string' && raw.toLowerCase() !== 'unassigned') {
         name = raw;
       }
@@ -193,6 +203,9 @@ export const getAllAssignees = (ticket, employees = []) => {
         if (role === 'Assigned Technician' && (matched.role || matched.position)) {
           role = matched.role || matched.position;
         }
+        const rawHasPresence = typeof raw === 'object' && raw !== null
+          && (raw.presence !== undefined || raw.is_online !== undefined || raw.online !== undefined);
+        if (!rawHasPresence) isOnline = resolveIsOnline(matched);
       }
     }
 

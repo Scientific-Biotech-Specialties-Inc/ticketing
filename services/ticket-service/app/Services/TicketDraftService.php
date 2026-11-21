@@ -54,6 +54,11 @@ class TicketDraftService
         if (array_key_exists('machine_ID', $data)) {
             $draft->machine_ID = !empty($data['machine_ID']) ? (int) $data['machine_ID'] : null;
         }
+        if (array_key_exists('equipment_name', $data)) {
+            // Free-text equipment / software name on staff drafts.
+            $name = mb_substr(trim(strip_tags((string) ($data['equipment_name'] ?? ''))), 0, 150);
+            $draft->equipment_name = $name !== '' ? $name : null;
+        }
         if (array_key_exists('problem_category_ID', $data)) {
             $draft->problem_category_ID = !empty($data['problem_category_ID']) ? (int) $data['problem_category_ID'] : null;
         }
@@ -125,6 +130,7 @@ class TicketDraftService
             'raw_title' => $draft->title,
             'description' => $draft->description ?? '',
             'machine_ID' => $draft->machine_ID,
+            'equipment_name' => $draft->equipment_name,
             'problem_category_ID' => $draft->problem_category_ID,
             'priority_ID' => $draft->priority_ID ?? 1,
             'attachments' => $draft->attachments ?? [],

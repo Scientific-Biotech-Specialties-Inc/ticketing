@@ -93,6 +93,7 @@ export default function InternalTicketMessageThread({
   const [sending, setSending] = useState(false);
 
   const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
 
@@ -103,8 +104,14 @@ export default function InternalTicketMessageThread({
   const currentUserId = user?.emp_id ?? user?.id;
 
   const scrollToBottom = useCallback((smooth = true) => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' });
+    // Scroll only the thread pane. scrollIntoView also scrolls every ancestor (the
+    // modal and the page), which made the layout jump after each message was sent.
+    const pane = messagesContainerRef.current;
+    if (!pane) return;
+    if (typeof pane.scrollTo === 'function') {
+      pane.scrollTo({ top: pane.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+    } else {
+      pane.scrollTop = pane.scrollHeight;
     }
   }, []);
 
@@ -303,6 +310,7 @@ export default function InternalTicketMessageThread({
 
       {/* Messages Scrollable Area */}
       <div
+        ref={messagesContainerRef}
         className="p-6 overflow-y-auto space-y-4 max-h-[480px] min-h-[220px] bg-background/50"
         role="log"
         aria-live="polite"

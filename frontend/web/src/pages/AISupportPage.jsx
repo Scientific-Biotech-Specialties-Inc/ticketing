@@ -168,7 +168,7 @@ const gatherDetailsMessage = {
       </p>
       <div className="space-y-2">
         {[
-          { step: 1, title: 'Equipment / Machine Name', desc: 'Which machine or equipment unit is experiencing the issue?' },
+          { step: 1, title: 'Equipment / Software Name', desc: 'Which equipment or software is experiencing the issue?' },
           { step: 2, title: 'Brand & Model', desc: 'What is the manufacturer brand and specific model number?' },
           { step: 3, title: 'Serial Number', desc: 'Provide the unit serial number (or reply "Not Available" if unknown).' },
           { step: 4, title: 'Symptom & Error Code', desc: 'Describe the exact fault, behavior, or error code displayed on screen.' },
@@ -799,6 +799,8 @@ function AISupportPage() {
   const [submissionError, setSubmissionError] = useState({ isOpen: false, title: '', message: '' });
   const [conversationPhase, setConversationPhase] = useState(0);
   const [escalationTicketData, setEscalationTicketData] = useState(null);
+  // Spec 0047: the customer's own items the AI asked them to choose from (tap to choose buttons).
+  const [assetOptions, setAssetOptions] = useState([]);
   const [ticketOptions, setTicketOptions] = useState(null);
   const [feedbackMap, setFeedbackMap] = useState({});
 
@@ -833,6 +835,7 @@ function AISupportPage() {
   // Load conversation state
   const loadConversation = useCallback((convId) => {
     if (!convId) return;
+    setAssetOptions([]);
 
     // Handle local draft conversations that have not been persisted to the backend yet
     const isLocalDraft = String(convId).startsWith('draft-') && !(conversationsRef.current || []).some(c => c.id === convId);
@@ -960,6 +963,7 @@ function AISupportPage() {
   }, [currentUserId]);
 
   const handleNewChat = useCallback(() => {
+    setAssetOptions([]);
     const list = conversationsRef.current || [];
     // If active conversation or an existing list item is already an unused conversation, just navigate to it
     const existingUnused = list.find(c =>
@@ -1149,9 +1153,11 @@ function AISupportPage() {
     inputRef.current?.focus();
   }, []);
 
-  const handleSend = useCallback(() => {
-    const text = input.trim();
+  // `overrideText` / `selectedAssetId` come from tapping one of the customer's items (spec 0047 AC-8).
+  const handleSend = useCallback((overrideText, selectedAssetId) => {
+    const text = (typeof overrideText === 'string' ? overrideText : input).trim();
     if (!text || isTyping) return;
+    setAssetOptions([]);
 
     const userMessage = {
       id: `user-${Date.now()}`,
@@ -1177,10 +1183,11 @@ function AISupportPage() {
 
     const activeIdToSend = String(activeConversationId).startsWith('draft-') ? null : activeConversationId;
 
-    axiosInstance.post(`${AI_API_URL}/chat`, { 
+    axiosInstance.post(`${AI_API_URL}/chat`, {
       messages: apiMessages,
       conversation_id: activeIdToSend,
-      user_id: currentUserId
+      user_id: currentUserId,
+      ...(selectedAssetId ? { selected_asset_id: Number(selectedAssetId) } : {}),
     }, { baseURL: '' })
       .then(res => {
         clearPending(sendingConvId);
@@ -1212,6 +1219,8 @@ function AISupportPage() {
 
         const isEscalated = res.data.escalate === true;
         const escTicketData = res.data.ticket_data || null;
+        // Spec 0047 (AC-8, AC-9): the AI needs one of the customer's own items before a ticket.
+        setAssetOptions(Array.isArray(res.data.asset_options) ? res.data.asset_options : []);
 
         if (isEscalated && escTicketData) {
           setEscalationTicketData(escTicketData);
@@ -1282,6 +1291,10 @@ function AISupportPage() {
       });
 
   }, [input, conversationPhase, messages, showSuggestionChips, showTicketCard, activeConversationId, isTyping, addMessage, saveConversationState, escalationTicketData, fetchConversationsListOnly, currentUserId, markPending, clearPending]);
+
+  const handleAssetPick = useCallback((asset) => {
+    handleSend(`It's my ${asset.name}.`, asset.machine_ID);
+  }, [handleSend]);
 
   const handleKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1414,7 +1427,8 @@ function AISupportPage() {
       (user?.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : '') || 'Customer Organization';
 
     // ─── DYNAMIC MACHINE MODEL RESOLUTION ─────────────────────
-    let model = escData?.machineModel;
+    // Spec 0047: when the chat identified one of the customer's own items, use it as is (no guessing).
+    let model = escData?.machineModel || (escData?.machine_ID ? escData?.machine : null);
     let matchedMachineId = escData?.machine_ID || null;
     let isExplicitMachine = false;
 
@@ -1491,7 +1505,8 @@ function AISupportPage() {
 
   const handleCreateTicket = useCallback(async () => {
     const review = generateRealReviewData(escalationTicketData);
-    let targetMachineId = review.machine_ID || null;
+    // Spec 0047 (AC-11): the owned item the chat identified wins over any name matching below.
+    let targetMachineId = escalationTicketData?.machine_ID || review.machine_ID || null;
     const targetModel = (review.machineModel || '').trim().toLowerCase();
 
     if (!targetMachineId && ticketOptions?.machines && targetModel) {
@@ -2211,6 +2226,38 @@ function AISupportPage() {
           </div>
 
           <div className="px-3 sm:px-6 py-2.5 sm:py-3 border-t border-border bg-card shrink-0">
+            {assetOptions.length > 0 && (
+              <div className="mb-2" data-testid="asset-options">
+                <label htmlFor="asset-options-select" className="block text-xs text-muted-slate mb-2">
+                  Choose your equipment or software:
+                </label>
+                <select
+                  id="asset-options-select"
+                  value=""
+                  disabled={isTyping}
+                  onChange={(e) => {
+                    const picked = assetOptions.find((a) => String(a.machine_ID) === e.target.value);
+                    if (picked) handleAssetPick(picked);
+                  }}
+                  className="w-full sm:w-auto sm:min-w-72 rounded-xl border border-border bg-card px-4 py-2 text-sm text-dark-slate outline-none transition-all focus:border-accent focus:ring-2 focus:ring-accent/20 cursor-pointer disabled:opacity-40"
+                >
+                  <option value="" disabled>Select equipment or software...</option>
+                  {['equipment', 'software'].map((type) => {
+                    const group = assetOptions.filter((a) => (a.asset_type === 'software' ? 'software' : 'equipment') === type);
+                    if (group.length === 0) return null;
+                    return (
+                      <optgroup key={type} label={type === 'software' ? 'Software' : 'Equipment'}>
+                        {group.map((asset) => (
+                          <option key={asset.machine_ID} value={String(asset.machine_ID)}>
+                            {asset.label || asset.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    );
+                  })}
+                </select>
+              </div>
+            )}
             <div className="flex items-center gap-3">
               <textarea
                 ref={inputRef}

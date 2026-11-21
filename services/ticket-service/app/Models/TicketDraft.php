@@ -13,6 +13,7 @@ class TicketDraft extends Model
         'title',
         'description',
         'machine_ID',
+        'equipment_name',
         'problem_category_ID',
         'priority_ID',
         'attachments',

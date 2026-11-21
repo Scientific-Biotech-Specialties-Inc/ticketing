@@ -22,7 +22,7 @@ class TicketCacheService
 
         try {
             Cache::forget('cs_dashboard_counts');
-            Cache::forget('ticket_form_options_cache');
+            Cache::forget('ticket_form_options_cache_v2');
 
             $redis = Redis::connection('cache');
             $prefix = config('cache.prefix') ?? 'laravel_cache';
@@ -97,6 +97,11 @@ class TicketCacheService
                 ->value('created_by');
             if ($createdBy) {
                 Cache::forget("customer_dashboard_counts_{$createdBy}");
+                // The ticket list too, for the page sizes the customer screens request
+                // (dashboard 5, My Tickets 100), so the next realtime refresh is fresh.
+                foreach ([5, 10, 20, 50, 100, 200] as $limit) {
+                    Cache::forget("customer_dashboard_recent_{$createdBy}_{$limit}");
+                }
             }
         } catch (\Throwable $e) {
             Log::warning('Customer dashboard cache clear failed: ' . $e->getMessage());

@@ -37,7 +37,10 @@ class TicketDashboardController extends Controller
             'date_to' => $request->query('date_to'),
         ];
 
-        $data = app(\App\Actions\Dashboards\GetCustomerDashboardMetricsAction::class)->execute($createdBy, $limit, $filters);
+        // Realtime refreshes (websocket / poll) ask for fresh rows instead of the 60s cache.
+        $forceRefresh = filter_var($request->query('forceRefresh', $request->query('force_refresh', false)), FILTER_VALIDATE_BOOLEAN);
+
+        $data = app(\App\Actions\Dashboards\GetCustomerDashboardMetricsAction::class)->execute($createdBy, $limit, $filters, $forceRefresh);
         return response()->json($data);
     }
 
@@ -143,7 +146,7 @@ class TicketDashboardController extends Controller
 
         // Branch dashboard is Admin and Super Admin only (same allow list as adminReports).
         $role = strtolower(trim((string) ($user->role ?? '')));
-        $allowedRoles = ['superadmin', 'super admin', 'admin', 'systemadministrator', 'itadmin', 'it admin'];
+        $allowedRoles = ['superadmin', 'super admin', 'admin', 'branch admin', 'branchadmin', 'branch_admin', 'systemadministrator', 'itadmin', 'it admin'];
         if (!in_array($role, $allowedRoles, true)) {
             return response()->json([
                 'status' => 'error',
@@ -173,7 +176,7 @@ class TicketDashboardController extends Controller
         }
 
         $role = strtolower(trim((string) ($user->role ?? '')));
-        $allowedRoles = ['superadmin', 'super admin', 'admin', 'systemadministrator', 'itadmin', 'it admin'];
+        $allowedRoles = ['superadmin', 'super admin', 'admin', 'branch admin', 'branchadmin', 'branch_admin', 'systemadministrator', 'itadmin', 'it admin'];
         if (!in_array($role, $allowedRoles, true)) {
             return response()->json([
                 'status' => 'error',

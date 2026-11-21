@@ -39,10 +39,10 @@ class TicketTimelineTest extends TestCase
         ];
 
         DB::table('ticket_audit_logs')->whereIn('ticket_ID', function ($q) {
-            $q->select('ticket_ID')->from('tickets')->whereIn('branch_id', [931]);
+            $q->select('ticket_ID')->from('tickets')->whereIn('branch_id', ['931']);
         })->delete();
 
-        DB::table('tickets')->whereIn('branch_id', [931])->delete();
+        DB::table('tickets')->whereIn('branch_id', ['931'])->delete();
         DB::table('employees')->whereIn('email', $testEmails)->delete();
 
         // Branches

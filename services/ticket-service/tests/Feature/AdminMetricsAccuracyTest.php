@@ -46,7 +46,7 @@ class AdminMetricsAccuracyTest extends TestCase
 
         Http::fake(fn () => Http::response($this->analyticsResponse, 200));
 
-        DB::table('tickets')->whereIn('branch_id', [self::BRANCH, self::OTHER_BRANCH])->delete();
+        DB::table('tickets')->whereIn('branch_id', [(string) self::BRANCH, (string) self::OTHER_BRANCH])->delete();
         DB::table('employees')->where('email', 'like', '%@spec0031.test')->delete();
 
         foreach ([self::BRANCH => 'spec31-main', self::OTHER_BRANCH => 'spec31-other'] as $id => $slug) {

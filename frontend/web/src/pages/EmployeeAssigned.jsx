@@ -22,6 +22,7 @@ import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@
 import { DataTableSkeleton, DataTableEmptyState } from '@/components/ui/data-table';
 import { Button } from '@/components/ui/button';
 import Pagination from '@/components/Pagination';
+import { holdRequestDisplayStatus } from '@/utils/holdRequestStatus';
 
 const CLOSED_STATUSES = ['Closed', 'Resolved', 'Discarded', 'Discarded by Customer'];
 
@@ -383,6 +384,15 @@ export default function EmployeeAssigned() {
       return;
     }
 
+    // Spec 0048 (AC-2): employees cannot set Pending (7) or On Hold (11); they send a hold request to CS.
+    if (newStatus === 'Pending' || newStatus === 'On Hold') {
+      setActionError(getActionError(
+        { response: { data: { message: 'Pending and On Hold need Customer Service approval. Open the ticket and use "Request On Hold".' } } },
+        'Pending and On Hold need Customer Service approval.'
+      ));
+      return;
+    }
+
     const statusMap = {
       'Open': 1,
       'In Progress': 2,
@@ -390,9 +400,7 @@ export default function EmployeeAssigned() {
       'Closed': 4,
       'Escalated': 5,
       'Pending Evaluation': 6,
-      'Pending': 7,
       'Reopened': 8,
-      'On Hold': 11,
     };
     const ticketObj = tickets.find((t) => t.id === id);
     if (!ticketObj) return;
@@ -584,63 +592,6 @@ export default function EmployeeAssigned() {
         </div>
       </div>
 
-      {/* Needs Attention Filter Pills */}
-      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wider shrink-0">
-          NEEDS ATTENTION
-        </span>
-        <button
-          type="button"
-          onClick={() => setStatusFilter((prev) => (prev === 'Escalated' ? 'All Status' : 'Escalated'))}
-          className={`inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold border transition-colors cursor-pointer ${
-            statusFilter === 'Escalated'
-              ? 'border-brand-primary bg-brand-primary/10 text-brand-primary shadow-xs'
-              : 'border-gray-200 bg-surface text-dark-slate hover:border-gray-300 hover:bg-page'
-          }`}
-        >
-          <span>Escalated</span>
-          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-            statusFilter === 'Escalated' ? 'bg-brand-primary text-white' : 'bg-gray-100 text-gray-600'
-          }`}>
-            {escalatedCount}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setStatusFilter((prev) => (prev === 'Reassignment Failed' ? 'All Status' : 'Reassignment Failed'))}
-          className={`inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold border transition-colors cursor-pointer ${
-            statusFilter === 'Reassignment Failed'
-              ? 'border-brand-primary bg-brand-primary/10 text-brand-primary shadow-xs'
-              : 'border-gray-200 bg-surface text-dark-slate hover:border-gray-300 hover:bg-page'
-          }`}
-        >
-          <span>Reassignment failed</span>
-          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-            statusFilter === 'Reassignment Failed' ? 'bg-brand-primary text-white' : 'bg-gray-100 text-gray-600'
-          }`}>
-            {reassignmentFailedCount}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setStatusFilter((prev) => (prev === 'On Hold' ? 'All Status' : 'On Hold'))}
-          className={`inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-semibold border transition-colors cursor-pointer ${
-            statusFilter === 'On Hold'
-              ? 'border-brand-primary bg-brand-primary/10 text-brand-primary shadow-xs'
-              : 'border-gray-200 bg-surface text-dark-slate hover:border-gray-300 hover:bg-page'
-          }`}
-        >
-          <span>On hold</span>
-          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
-            statusFilter === 'On Hold' ? 'bg-brand-primary text-white' : 'bg-gray-100 text-gray-600'
-          }`}>
-            {onHoldCount}
-          </span>
-        </button>
-      </div>
-
       <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-surface shadow-xs">
         <Table>
           <TableHeader>
@@ -722,8 +673,8 @@ export default function EmployeeAssigned() {
                           </span>
                         </div>
                       ) : (
-                        <Badge variant={getStatusBadgeVariant(t.status)}>
-                          {t.status}
+                        <Badge variant={getStatusBadgeVariant(holdRequestDisplayStatus(t))}>
+                          {holdRequestDisplayStatus(t)}
                         </Badge>
                       )}
                       {(() => {

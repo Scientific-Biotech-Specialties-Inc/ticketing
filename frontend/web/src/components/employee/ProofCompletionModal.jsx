@@ -119,6 +119,12 @@ export default function ProofCompletionModal({
     return null;
   };
 
+  // Back to the employee queue. External proof lands in Pending Evaluation, so open that tab.
+  const goToQueue = () => {
+    onClose();
+    navigate('/employee/machine', isInternal ? undefined : { state: { tab: 'pending_evaluation' } });
+  };
+
   const handleProofSubmit = (e) => {
     e.preventDefault();
     if (proofFiles.length === 0) {
@@ -167,15 +173,18 @@ export default function ProofCompletionModal({
         onProofSubmitted(ticket.id, targetStatus);
       }
 
-      setSuccessMessage(`Proof of completion submitted successfully! Status updated to ${targetStatus}.`);
       setErrorMessage('');
       setProofFiles([]);
       setShowConfirmModal(false);
-      if (isInternal) {
-        onClose();
+
+      // External tickets now await CS evaluation: go straight to that tab.
+      if (!isInternal) {
+        goToQueue();
         return;
       }
-      setShowReimbursementPrompt(true);
+
+      setSuccessMessage(`Proof of completion submitted successfully! Status updated to ${targetStatus}.`);
+      onClose();
     } catch (err) {
       setShowConfirmModal(false);
       // Every failed submission opens a modal explaining why; the inline text stays as a reminder.
@@ -279,10 +288,7 @@ export default function ProofCompletionModal({
 
                   <button
                     type="button"
-                    onClick={() => {
-                      onClose();
-                      navigate('/employee/machine');
-                    }}
+                    onClick={goToQueue}
                     className="w-full sm:w-auto inline-flex items-center justify-center px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 text-xs font-semibold transition-colors cursor-pointer"
                   >
                     No Expenses / Back to Queue
@@ -468,13 +474,11 @@ export default function ProofCompletionModal({
       open={showSermsModal}
       onClose={() => {
         setShowSermsModal(false);
-        onClose();
-        navigate('/employee/machine');
+        goToQueue();
       }}
       onReimbursementSubmitted={() => {
         setShowSermsModal(false);
-        onClose();
-        navigate('/employee/machine');
+        goToQueue();
       }}
     />
     </>

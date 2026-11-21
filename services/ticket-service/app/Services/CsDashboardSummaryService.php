@@ -95,6 +95,8 @@ class CsDashboardSummaryService
                 'ts.status_name',
                 'tp.priority_name',
                 'c.client_name',
+                'c.email as client_email',
+                'req.email as requester_email',
                 DB::raw("TRIM(CONCAT(COALESCE(req.first_name, ''), ' ', COALESCE(req.last_name, ''))) as requester_name")
             );
 
@@ -257,6 +259,9 @@ class CsDashboardSummaryService
             'customer' => (bool) ($row->is_internal ?? false)
                 ? (($row->requester_name ?? '') !== '' ? $row->requester_name : 'Internal Requester')
                 : ($row->client_name ?: 'Unknown Customer'),
+            'customer_email' => (bool) ($row->is_internal ?? false)
+                ? (($row->requester_email ?? null) ?: null)
+                : (($row->client_email ?? null) ?: null),
             'status' => $row->status_name,
             'priority' => $row->priority_name,
             'sla_status' => $sla['status'] ?? 'On Track',

@@ -15,6 +15,7 @@ import { getTicketTimeline } from '@/services/ticketService';
 import { formatDisplayDate } from '@/utils/dateUtils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import SkeletonLoader from '@/components/SkeletonLoader';
 
 const FILTER_TYPES = [
   { id: 'all', label: 'All Activities' },
@@ -59,6 +60,9 @@ function eventLabel(entry) {
   return titleCase(type) || 'Update';
 }
 
+/** Lists (e.g. assignee names) read as "A, B"; anything else as text. */
+const formatStateValue = (value) => (Array.isArray(value) ? value.join(', ') : String(value));
+
 /** Only changes that really have an old and a new value get the before/after strip. */
 function beforeAfterOf(entry) {
   const before = entry.before_state;
@@ -68,8 +72,8 @@ function beforeAfterOf(entry) {
   if (!field || !(field in after)) return null;
   return {
     field: FIELD_LABELS[field] || titleCase(field.replace(/_ID$/i, '')),
-    before: before[field] == null ? '' : String(before[field]),
-    after: after[field] == null ? 'None' : String(after[field]),
+    before: before[field] == null ? '' : formatStateValue(before[field]),
+    after: after[field] == null ? 'None' : formatStateValue(after[field]) || 'None',
   };
 }
 
@@ -86,16 +90,20 @@ export default function TicketActivityTimeline({
   pageSize = 8,
   collapsible = false,
   defaultCollapsed = false,
+  // Customers see the full trail without the activity type filter.
+  showFilter = true,
 }) {
   // Always the real database id. A display id such as "TKTS-00015" is not the same number.
   const ticketId = ticketIdProp ?? ticket?.ticket_ID ?? null;
 
   const [isCollapsed, setIsCollapsed] = useState(() => Boolean(collapsible && defaultCollapsed));
-  const [sortOrder, setSortOrder] = useState('asc'); // asc = oldest first
+  const [sortOrder, setSortOrder] = useState('desc'); // newest first by default
   const [selectedFilter, setSelectedFilter] = useState('all');
   const [entries, setEntries] = useState([]);
   const [pagination, setPagination] = useState({ current_page: 0, last_page: 1, total: 0 });
-  const [loading, setLoading] = useState(false);
+  // Start in the loading state when there is a ticket to fetch, so the first paint is the skeleton,
+  // not a flash of "No activity has been recorded".
+  const [loading, setLoading] = useState(() => Boolean(ticketId));
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState(null);
   const requestToken = useRef(0);
@@ -211,7 +219,7 @@ export default function TicketActivityTimeline({
             <div className="flex items-center gap-2 flex-wrap">
               <Clock className="w-4 h-4 text-primary shrink-0" />
               <h3 className="text-xs font-bold text-slate-dark uppercase tracking-wider">
-                Activity Timeline &amp; History ({pagination.total})
+                Activity Timeline &amp; History{loading ? '' : ` (${pagination.total})`}
               </h3>
               <Badge variant="outline" className="text-[11px]">Read-Only Audit</Badge>
             </div>
@@ -235,16 +243,18 @@ export default function TicketActivityTimeline({
         </div>
 
         <div className={`${collapsible && isCollapsed ? 'hidden' : 'flex'} items-center gap-2 flex-wrap`}>
-          <select
-            aria-label="Filter activity"
-            value={selectedFilter}
-            onChange={(e) => setSelectedFilter(e.target.value)}
-            className="h-8 rounded-lg border border-border bg-page px-2.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
-          >
-            {FILTER_TYPES.map((f) => (
-              <option key={f.id} value={f.id}>{f.label}</option>
-            ))}
-          </select>
+          {showFilter && (
+            <select
+              aria-label="Filter activity"
+              value={selectedFilter}
+              onChange={(e) => setSelectedFilter(e.target.value)}
+              className="h-8 rounded-lg border border-border bg-page px-2.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
+            >
+              {FILTER_TYPES.map((f) => (
+                <option key={f.id} value={f.id}>{f.label}</option>
+              ))}
+            </select>
+          )}
 
           <Button
             type="button"
@@ -270,9 +280,19 @@ export default function TicketActivityTimeline({
         )}
 
         {loading ? (
-          <div className="space-y-3" aria-busy="true" aria-label="Loading ticket history">
+          <div className="space-y-4 py-1" aria-busy="true" aria-label="Loading ticket history" data-testid="timeline-skeleton">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-16 rounded-xl bg-muted/50 animate-pulse" />
+              <div key={i} className="flex items-start gap-3">
+                <SkeletonLoader className="h-3 w-3 rounded-full mt-1 shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <SkeletonLoader className="h-3 w-1/3" />
+                    <SkeletonLoader className="h-3 w-20" />
+                  </div>
+                  <SkeletonLoader className="h-3 w-3/4" />
+                  <SkeletonLoader className="h-3 w-1/4" />
+                </div>
+              </div>
             ))}
           </div>
         ) : visibleEvents.length === 0 ? (
