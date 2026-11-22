@@ -82,16 +82,16 @@ Route::middleware('auth.subsystem')->group(function () {
     Route::get('/customer/filter-options', [TicketDashboardController::class, 'customerFilterOptions']);
 
     // ─── CS Dashboard & Incoming Queue (Token Authenticated) ──────────────────
-    Route::get('/cs-dashboard', [TicketDashboardController::class, 'csDashboard'])->middleware('no-cache');
-    Route::get('/cs-dashboard-summary', [TicketDashboardController::class, 'csDashboardSummary'])->middleware('no-cache');
-    Route::get('/cs-incoming', [TicketDashboardController::class, 'csIncoming'])->middleware('no-cache');
+    Route::get('/cs-dashboard', [TicketDashboardController::class, 'csDashboard'])->middleware(['no-cache', 'ticketing.employee']);
+    Route::get('/cs-dashboard-summary', [TicketDashboardController::class, 'csDashboardSummary'])->middleware(['no-cache', 'ticketing.employee']);
+    Route::get('/cs-incoming', [TicketDashboardController::class, 'csIncoming'])->middleware(['no-cache', 'ticketing.employee']);
 
     // ─── Admin Branch Dashboard & Reports ─────────────────────────────────────
     Route::get('/admin-dashboard', [TicketDashboardController::class, 'adminDashboard'])->middleware('no-cache');
     Route::get('/admin/dashboard', [TicketDashboardController::class, 'adminDashboard'])->middleware('no-cache');
     // Spec 0031: live summary and breached queue for Service, IT and Customer Service managers.
-    Route::get('/manager/dashboard', [\App\Http\Controllers\ManagerDashboardController::class, 'dashboard'])->middleware('no-cache');
-    Route::get('/manager/tickets', [\App\Http\Controllers\ManagerDashboardController::class, 'tickets'])->middleware('no-cache');
+    Route::get('/manager/dashboard', [\App\Http\Controllers\ManagerDashboardController::class, 'dashboard'])->middleware(['no-cache', 'ticketing.employee']);
+    Route::get('/manager/tickets', [\App\Http\Controllers\ManagerDashboardController::class, 'tickets'])->middleware(['no-cache', 'ticketing.employee']);
     Route::get('/admin-reports', [TicketDashboardController::class, 'adminReports'])->middleware('no-cache');
     Route::get('/admin/reports', [TicketDashboardController::class, 'adminReports'])->middleware('no-cache');
     Route::post('/admin/reports/export', [\App\Http\Controllers\ReportExportController::class, 'export'])->middleware(['no-cache', 'throttle:30,1']);
@@ -106,8 +106,8 @@ Route::middleware('auth.subsystem')->group(function () {
     Route::post('/admin/etl/trigger', [TicketDashboardController::class, 'triggerEtl'])->middleware('no-cache');
     Route::get('/superadmin/system-dashboard', [SuperAdminDashboardController::class, 'systemDashboard'])->middleware('no-cache');
     Route::get('/super-admin/system-dashboard', [SuperAdminDashboardController::class, 'systemDashboard'])->middleware('no-cache');
-    Route::get('/employee/dashboard', [EmployeeDashboardController::class, 'dashboard'])->middleware('no-cache');
-    Route::get('/employee-dashboard', [EmployeeDashboardController::class, 'dashboard'])->middleware('no-cache');
+    Route::get('/employee/dashboard', [EmployeeDashboardController::class, 'dashboard'])->middleware(['no-cache', 'ticketing.employee']);
+    Route::get('/employee-dashboard', [EmployeeDashboardController::class, 'dashboard'])->middleware(['no-cache', 'ticketing.employee']);
 
     // ─── Ticket Reminders (TS084) ─────────────────────────────────────────────
     Route::post('/tickets/{ticketId}/reminders', [TicketReminderController::class, 'sendReminder']);

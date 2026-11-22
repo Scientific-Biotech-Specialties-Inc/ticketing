@@ -103,6 +103,9 @@ function Avatar({ name, size = 'md' }) {
 
 // ─── Main Messaging Page ──────────────────────────────────────────────────
 
+/** True when a ticket is an internal (employee raised) ticket, whichever field the API filled. */
+const isInternalTicket = (t) => Boolean(t?.is_internal || t?.ticket_type === 'Internal' || t?.type === 'Internal');
+
 export default function MessagingPage() {
   const { user } = useAuth();
 
@@ -325,6 +328,9 @@ export default function MessagingPage() {
               } else {
                 setConversationTab('active');
               }
+              // CS lists are split into External/Internal; show the side the ticket is on, or the
+              // auto-select effect below replaces the deep linked chat with the first visible one.
+              if (isCS) setCsFilter(isInternalTicket(found) ? 'internal' : 'external');
               setSelectedContactId(selectedId);
               // Clear location state so it doesn't keep resetting selection on refresh
               window.history.replaceState({}, document.title);
@@ -340,6 +346,7 @@ export default function MessagingPage() {
                     setConversationTab('active');
                   }
                   setTickets(prev => [singleTicket, ...prev.filter(t => (t.ticket_ID || t.id) !== sId)]);
+                  if (isCS) setCsFilter(isInternalTicket(singleTicket) ? 'internal' : 'external');
                   setSelectedContactId(sId);
                   window.history.replaceState({}, document.title);
                 }
@@ -373,8 +380,8 @@ export default function MessagingPage() {
       const rawCustomer = typeof t.customer === 'string' ? t.customer : (t.customer?.name || t.client?.client_name || t.client_name || t.created_by_name || null);
       if (isCS) {
         contactName = rawCustomer || 'Client';
-        contactRole = t.is_internal ? 'Employee' : 'Customer';
-        type = t.is_internal ? 'internal' : 'external';
+        contactRole = isInternalTicket(t) ? 'Employee' : 'Customer';
+        type = isInternalTicket(t) ? 'internal' : 'external';
       } else if (isEmployee) {
         const isDelegatedToMe = !t.is_internal || (t.requested_by != user?.emp_id && t.requested_by != user?.id);
         if (isDelegatedToMe) {
@@ -565,18 +572,15 @@ export default function MessagingPage() {
             attachments: e.attachments || [],
             created_at: e.created_at,
           };
-          // The broadcast of our own message usually lands before the send request
-          // resolves. Swap it into the optimistic "Sending..." bubble's slot instead of
-          // appending a second copy, so the list never grows and then shrinks (the jump).
-          const optimisticIdx = prev.findIndex(m =>
-            m.isPending &&
-            m.sender_type === e.sender_type &&
-            Number(m.sender_id) === Number(e.sender_id) &&
-            (m.message || '') === (e.message || '')
-          );
-          if (optimisticIdx !== -1) {
+          // The broadcast of my own message can arrive before the send request returns: swap it
+          // into my pending bubble (same spot, same React key) instead of showing it twice.
+          const pendingIdx = prev.findIndex(m => m.isPending
+            && String(m.sender_type) === String(e.sender_type)
+            && Number(m.sender_id) === Number(e.sender_id)
+            && (m.message || '') === (e.message || ''));
+          if (pendingIdx !== -1) {
             const next = [...prev];
-            next[optimisticIdx] = incoming;
+            next[pendingIdx] = { ...incoming, clientKey: prev[pendingIdx].clientKey };
             return next;
           }
           return [...prev, incoming];
@@ -875,6 +879,8 @@ export default function MessagingPage() {
       })),
       created_at: new Date().toISOString(),
       isPending: true,
+      // Stable React key kept when the server copy replaces this bubble, so it never remounts.
+      clientKey: tempOptimisticId,
     };
 
     setMessages(prev => [...prev, optimisticMessage]);
@@ -889,10 +895,16 @@ export default function MessagingPage() {
         if (newMsg.ticket_id && Number(newMsg.ticket_id) !== numericTargetId) {
           return filtered;
         }
+        // Already added by the realtime broadcast (which took over the pending bubble).
         if (filtered.some(m => (m.id && (m.id === newMsg.id || m.id === newMsg._id)) || (m._id && (m._id === newMsg.id || m._id === newMsg._id)))) {
           return filtered;
         }
-        return [...filtered, newMsg];
+        // Swap the server copy into the pending bubble's spot, keeping its key: no jump or flicker.
+        const pendingIdx = prev.findIndex(m => m.id === tempOptimisticId || m._id === tempOptimisticId);
+        if (pendingIdx === -1) return [...filtered, newMsg];
+        const next = [...prev];
+        next[pendingIdx] = { ...newMsg, clientKey: tempOptimisticId };
+        return next;
       });
     } catch (err) {
       console.error("Failed to send message", err);
@@ -1346,7 +1358,7 @@ export default function MessagingPage() {
                     }
 
                     return (
-                      <React.Fragment key={msg.id ? `msg-${msg.id}` : (msg._id ? `msg-${msg._id}` : `msg-idx-${idx}`)}>
+                      <React.Fragment key={msg.clientKey ? `msg-${msg.clientKey}` : (msg.id ? `msg-${msg.id}` : (msg._id ? `msg-${msg._id}` : `msg-idx-${idx}`))}>
                         {showNewMessagesBanner && (
                           <div className="flex items-center my-4 select-none">
                             <div className="flex-1 border-t border-gray-200"></div>
@@ -1366,7 +1378,7 @@ export default function MessagingPage() {
                           
                           <div className={`flex items-center gap-2 ${isMine ? 'flex-row-reverse' : 'flex-row'}`}>
                             {/* Message Bubble */}
-                            <div className={`px-4 py-2.5 ${
+                            <div className={`px-4 py-2.5 transition-opacity ${msg.isPending ? 'opacity-70' : ''} ${
                               isMine
                                 ? 'bg-primary text-primary-foreground rounded-2xl rounded-br-md'
                                 : 'bg-card text-slate-dark border border-border rounded-2xl rounded-bl-md shadow-xs'
@@ -1557,19 +1569,15 @@ export default function MessagingPage() {
                                     </div>
                                   )}
                                   {/* Optimistic sending / scanning indicator */}
-                                  {msg.isPending && (
+                                  {msg.isPending && Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
                                     <div className={`mt-2 pt-1.5 border-t flex items-center justify-between text-[10px] ${
                                       isMine ? 'border-white/15 text-white/70' : 'border-gray-200 text-slate-400'
                                     }`}>
                                       <span className="flex items-center gap-1 font-medium">
                                         <Loader2 size={11} className="animate-spin" />
-                                        {Array.isArray(msg.attachments) && msg.attachments.length > 0
-                                          ? 'Scanning file for malware...'
-                                          : 'Sending...'}
+                                        Scanning file for malware...
                                       </span>
-                                      {Array.isArray(msg.attachments) && msg.attachments.length > 0 && (
-                                        <span className="italic opacity-80">Sending</span>
-                                      )}
+                                      <span className="italic opacity-80">Sending</span>
                                     </div>
                                   )}
                                 </>
@@ -1746,7 +1754,6 @@ export default function MessagingPage() {
                       onChange={e => setMessageInput(e.target.value)}
                       onKeyDown={handleKeyDown}
                       onFocus={handleInputFocus}
-                      disabled={isSending}
                       placeholder={selectedFiles.length > 0 ? "Add an optional caption..." : "Type a message..."}
                       className="flex-1 rounded-xl border border-border px-4 py-2.5 text-sm outline-none transition-all focus:border-accent focus:ring-2 focus:ring-accent/20"
                     />

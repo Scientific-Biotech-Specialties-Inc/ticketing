@@ -766,6 +766,16 @@ export function SendReminderDialog({ isOpen, onClose, onConfirm, ticket, assigne
 /* ─────────────────────────────────────────────
    TICKET SUMMARY VIEW (post-save / already assigned)
 ───────────────────────────────────────────── */
+/** Messages route for the current role area (React Router paths, relative to the app basename). */
+const getMessagesPath = () => {
+  const pathname = window.location.pathname;
+  if (pathname.includes('/cs-manager')) return '/cs-manager/messages';
+  if (pathname.includes('/service-manager')) return '/service-manager/messages';
+  if (pathname.includes('/it-manager')) return '/it-manager/messages';
+  if (pathname.includes('/employee')) return '/employee/messages';
+  return '/cs/messages';
+};
+
 export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onEdit, onStatusUpdate, readOnly = false, isLoadingDetails = false, onManagerReassignmentSeen }) {
   // Follow the backend while the summary is open so assignee/status changes made elsewhere
   // (another CS agent, the employee accepting) show up without closing and reopening it.
@@ -1105,13 +1115,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
   // Message thread redirection
   const handleOpenMessages = () => {
     onClose();
-    const tId = ticket?.ticket_ID || ticket?.id;
-    let path = '/cs/messages';
-    if (window.location.pathname.startsWith('/cs-manager')) path = '/cs-manager/messages';
-    else if (window.location.pathname.startsWith('/service-manager')) path = '/service-manager/messages';
-    else if (window.location.pathname.startsWith('/it-manager')) path = '/it-manager/messages';
-    else if (window.location.pathname.startsWith('/employee')) path = '/employee/messages';
-    navigate(path, { state: { selectedTicketId: tId } });
+    navigate(getMessagesPath(), { state: { selectedTicketId: ticket?.ticket_ID || ticket?.id } });
   };
 
   // Reminder authorization & cooldown check
@@ -1663,6 +1667,13 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
           <ModalHeader
             ticketId={ticketFormattedId}
             onClose={onClose}
+            extraBadge={
+              isExternal && !String(ticket.title || '').startsWith('[Internal]') ? (
+                <Badge variant="medium-info">External</Badge>
+              ) : (
+                <Badge variant="medium-violet">Internal</Badge>
+              )
+            }
           />
         }
         footer={
@@ -1690,7 +1701,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                   title="Communicate directly with the customer regarding this ticket"
                 >
                   <MessageCircle className="w-3.5 h-3.5 text-[#1E2A78]" />
-                  <span>Message customer</span>
+                  <span>Message</span>
                 </button>
               </div>
             }
@@ -2449,6 +2460,11 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
   const { pathname: routePath } = useLocation();
   // Close without assigning is offered only when the superadmin Transition Matrix
   // allows the ticket's current state to move to Closed (backend sends allowed_transitions).
+  const navigate = useNavigate();
+  const handleOpenMessages = () => {
+    onClose();
+    navigate(getMessagesPath(), { state: { selectedTicketId: ticket?.ticket_ID || ticket?.id } });
+  };
   const canCloseWithoutAssigning = typeof onCloseTicket === 'function'
     && Array.isArray(ticket?.allowed_transitions)
     && ticket.allowed_transitions.includes('Closed');
@@ -3286,17 +3302,29 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
             <div className="px-6 pt-3 text-xs font-medium text-destructive bg-card">{closeError}</div>
           )}
           <div className="flex justify-end gap-3 px-6 py-4 border-t border-border shrink-0 bg-card">
-            {canCloseWithoutAssigning && (
+            <div className="mr-auto flex items-center gap-3">
+              {canCloseWithoutAssigning && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => { setCloseError(''); setShowCloseConfirm(true); }}
+                  disabled={isSaving || isClosing}
+                  className="text-destructive border-destructive/40 hover:bg-destructive/10"
+                >
+                  Close Ticket
+                </Button>
+              )}
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => { setCloseError(''); setShowCloseConfirm(true); }}
+                onClick={handleOpenMessages}
                 disabled={isSaving || isClosing}
-                className="mr-auto"
+                title="Communicate directly with the customer regarding this ticket"
               >
-                Resolve
+                <MessageCircle className="w-4 h-4 mr-1.5" />
+                Message
               </Button>
-            )}
+            </div>
             <Button
               type="button"
               variant="outline"

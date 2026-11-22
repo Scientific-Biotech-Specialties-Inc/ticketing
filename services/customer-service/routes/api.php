@@ -38,7 +38,7 @@ Route::middleware('auth.subsystem')->group(function () {
     Route::post('/first-login/resend-otp', [AuthController::class, 'resendFirstLoginOtp'])->middleware('throttle:otp_request');
     Route::post('/first-login/verify-otp', [AuthController::class, 'verifyFirstLoginOtp'])->middleware('throttle:otp_request');
     Route::get('/me', [AuthController::class, 'me']);
-    Route::get('/employee-statuses', [AuthController::class, 'employeeStatuses']);
+    Route::get('/employee-statuses', [AuthController::class, 'employeeStatuses'])->middleware('ticketing.employee');
     Route::get('/user', function (Request $request) {
         return $request->user();
     });

@@ -210,6 +210,17 @@ class EmployeeReassignmentService
                 if (!$newEmp) {
                     continue;
                 }
+                // Spec 0045 (AC-11): the new holder must be a designated ticketing employee.
+                if (\Ticketing\Auth\Access\TicketingAccess::isAdmin($newEmp) || !$newEmp->is_ticketing_employee || !$newEmp->is_active) {
+                    return [
+                        'status' => 403,
+                        'data' => [
+                            'message' => \Ticketing\Auth\Access\TicketingAccess::NOT_TICKETING_MESSAGE,
+                            'code' => 'NOT_TICKETING_EMPLOYEE',
+                            'employee_id' => (int) $candidateId,
+                        ],
+                    ];
+                }
                 $eligibility = \App\Http\Controllers\EmployeeDirectoryController::checkEligibility($newEmp, $ticket, $track);
                 if (!$eligibility['eligible']) {
                     $name = trim(($newEmp->first_name ?? '') . ' ' . ($newEmp->last_name ?? ''));

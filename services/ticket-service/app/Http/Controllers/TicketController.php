@@ -335,6 +335,22 @@ class TicketController extends Controller
             'machine_ID' => ['nullable', 'integer', 'exists:machines,machine_ID'],
         ]);
 
+        // Spec 0045 (AC-11): this route can change the assignee, so it must honour the designation flag too.
+        if (!empty($validated['assigned_to'])) {
+            $currentAssignee = \Illuminate\Support\Facades\DB::table('tickets')->where('ticket_ID', $ticketId)->value('assigned_to');
+            if ((int) $currentAssignee !== (int) $validated['assigned_to']) {
+                $assignee = \Illuminate\Support\Facades\DB::table('employees')
+                    ->where('emp_id', (int) $validated['assigned_to'])
+                    ->first(['role', 'position_level', 'is_active', 'is_ticketing_employee']);
+                if (!$assignee || \Ticketing\Auth\Access\TicketingAccess::isAdmin($assignee) || !$assignee->is_ticketing_employee || !$assignee->is_active) {
+                    return response()->json([
+                        'message' => \Ticketing\Auth\Access\TicketingAccess::NOT_TICKETING_MESSAGE,
+                        'code' => 'NOT_TICKETING_EMPLOYEE',
+                    ], 403);
+                }
+            }
+        }
+
         $user = $request->user();
         $result = $this->ticketService->updateTicket($ticketId, $validated, $user);
 

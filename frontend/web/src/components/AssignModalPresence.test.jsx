@@ -1,7 +1,11 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, waitFor } from '@testing-library/react';
 import { AssignModal } from './CSModals';
+import { MemoryRouter } from 'react-router-dom';
+
+// AssignModal uses useNavigate (Message button), so it must render inside a router.
+const render = (ui, options) => rtlRender(ui, { wrapper: MemoryRouter, ...options });
 import * as ticketService from '@/services/ticketService';
 
 vi.mock('@/context/AuthContext', () => ({

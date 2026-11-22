@@ -51,7 +51,8 @@ import {
   deleteBranchCategory,
   resetBranchCategoriesToDefaults,
   saveBranchSlaPolicy,
-  deleteBranchSlaPolicy
+  deleteBranchSlaPolicy,
+  getTicketingEmployees
 } from '@/services/ticketService';
 
 import {
@@ -102,6 +103,7 @@ import {
   resetMessagingConfiguration,
 } from '@/services/configurationService';
 import EmailVisualEditor from '@/components/EmailVisualEditor';
+import TicketingAccessPanel from '@/components/ticketing-access/TicketingAccessPanel';
 
 import useRealtimeRefresh from '@/hooks/useRealtimeRefresh';
 import { isFeedbackFormEnabled, setFeedbackFormEnabled } from '@/data/mockFeedbackData';
@@ -128,6 +130,7 @@ export const GROUP_LIFECYCLE = 'lifecycle';
 export const GROUP_SLA_ESCALATION = 'sla-escalation';
 export const GROUP_NOTIFICATIONS = 'notifications';
 export const GROUP_SECURITY = 'security';
+export const GROUP_ACCESS = 'access';
 
 export const TAB_TICKET_CATEGORIES = 'ticket-categories';
 export const TAB_EQUIPMENT = 'equipment';
@@ -147,6 +150,8 @@ export const TAB_NOTIFICATIONS = 'notifications';
 export const TAB_ESCALATION = 'escalation';
 export const TAB_FEEDBACK = 'feedback';
 export const TAB_MESSAGING = 'messaging';
+// Spec 0045: ticketing access (handler departments and designated employees)
+export const TAB_TICKETING_ACCESS = 'ticketing-access';
 
 export const BRANCH_SUBTAB_CATEGORIES = 'categories';
 export const BRANCH_SUBTAB_PRIORITIES = 'priorities-sla';
@@ -209,6 +214,14 @@ export const GROUPS_CONFIG = [
     defaultSubTab: TAB_FILES,
     subTabs: [
       { id: TAB_FILES, label: 'File Limits & Security' },
+    ],
+  },
+  {
+    id: GROUP_ACCESS,
+    label: 'Access',
+    defaultSubTab: TAB_TICKETING_ACCESS,
+    subTabs: [
+      { id: TAB_TICKETING_ACCESS, label: 'Ticketing Access' },
     ],
   },
 ];
@@ -298,6 +311,11 @@ export const SUBTAB_METADATA = {
   [TAB_FILES]: {
     icon: FileUp,
     subtitle: 'File size limits, allowed extensions & ClamAV',
+  },
+  // Access
+  [TAB_TICKETING_ACCESS]: {
+    icon: UserCheck,
+    subtitle: 'Which departments and people may work tickets',
   },
 };
 
@@ -1076,6 +1094,7 @@ export default function SuperAdminTicketConfig() {
     if (g === 'notifications') return GROUP_NOTIFICATIONS;
     if (g === 'security' || g === 'files') return GROUP_SECURITY;
     if (g === 'feedback') return GROUP_LIFECYCLE;
+    if (g === 'access') return GROUP_ACCESS;
     return null;
   }, []);
 
@@ -1130,8 +1149,26 @@ export default function SuperAdminTicketConfig() {
     [GROUP_SLA_ESCALATION]: TAB_SLA,
     [GROUP_NOTIFICATIONS]: NOTIF_SUBTAB_RECIPIENTS,
     [GROUP_SECURITY]: TAB_FILES,
+    [GROUP_ACCESS]: TAB_TICKETING_ACCESS,
     ...(initialSavedState?.activeSubTabs || {}),
   }));
+
+  // Spec 0045 (AC-9): "Not Yet Designated" count badge on the Ticketing Access tab.
+  const [ticketingPendingCount, setTicketingPendingCount] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await getTicketingEmployees({ status: 'pending', perPage: 1 });
+        if (!cancelled) setTicketingPendingCount(res?.pending_count || 0);
+      } catch {
+        // the badge is a hint only; the tab itself shows the live count
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Resolve active group and subtab from clean short routes (/superadmin/config/:subtab) or legacy routes
   const rawParam = params.subtab || params.group;
@@ -5102,6 +5139,14 @@ export default function SuperAdminTicketConfig() {
                   <IconComponent size={14} />
                 </div>
                 <span>{sub.label}</span>
+                {sub.id === TAB_TICKETING_ACCESS && ticketingPendingCount > 0 && (
+                  <span
+                    className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent px-2 text-[11px] font-bold text-white"
+                    aria-label={`${ticketingPendingCount} not yet designated`}
+                  >
+                    {ticketingPendingCount}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -5114,7 +5159,10 @@ export default function SuperAdminTicketConfig() {
         key={`${activeGroup}-${currentSubTab}-${branchSubSection}`}
         className="w-full animate-fade-slide-in flex flex-col gap-6 scroll-mt-36"
       >
-        {loading ? (
+        {tab === TAB_TICKETING_ACCESS ? (
+          // Spec 0045: this page is superadmin only, so the department list is editable here.
+          <TicketingAccessPanel isSuperAdmin onPendingCountChange={setTicketingPendingCount} />
+        ) : loading ? (
           <TicketConfigTabSkeleton currentSubTab={currentSubTab} />
         ) : tab === TAB_WORKFLOW ? (
           <div className="flex flex-col gap-6">
