@@ -724,6 +724,15 @@ class TicketStateMachine
             Log::warning("Failed to broadcast ticket change for ticket {$ticketId}: " . $e->getMessage());
         }
 
+        // Tell PRS about tickets it raised. Queued, so a port-forwarded PRS that is slow or down
+        // never stalls the transition, and the push is retried instead of lost. The job no-ops for
+        // tickets of any other origin, so there is nothing to check here.
+        try {
+            \App\Jobs\NotifyPrsTicketStatusChanged::dispatch((int) $ticketId);
+        } catch (\Throwable $e) {
+            Log::warning("Failed to queue the PRS status callback for ticket {$ticketId}: " . $e->getMessage());
+        }
+
         $freshTicket = DB::table('tickets')->where('ticket_ID', $ticketId)->first();
 
         return [

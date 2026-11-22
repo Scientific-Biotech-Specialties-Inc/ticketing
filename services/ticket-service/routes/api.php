@@ -70,6 +70,15 @@ Route::middleware('internal.serms')
 Route::middleware('internal.serms')
     ->post('/internal/reimbursements/status', [\App\Http\Controllers\InternalSermsController::class, 'reimbursementStatus']);
 
+// PRS -> TS: PRS raises an equipment repair ticket for a staff member who already exists in the
+// auth service, so it lands as an internal ticket under that employee. Guarded by the PRS secret
+// alone (no customer or staff token is involved), and the read is scoped to PRS-origin tickets.
+Route::middleware('internal.prs')->group(function () {
+    Route::post('/internal/prs/tickets', [\App\Http\Controllers\InternalPrsController::class, 'store']);
+    Route::get('/internal/prs/tickets/{ticketId}', [\App\Http\Controllers\InternalPrsController::class, 'show'])
+        ->whereNumber('ticketId');
+});
+
 Route::middleware('auth.subsystem')->group(function () {
     // ─── Customer Ticket Drafts (spec 0034: verified customer token only) ────
     Route::post('/tickets/draft', [TicketDraftController::class, 'saveDraft']);

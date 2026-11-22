@@ -71,5 +71,6 @@ class Kernel extends HttpKernel
         'ticketing.employee' => \Ticketing\Auth\Middleware\EnsureTicketingEmployee::class,
         'internal.token' => \App\Http\Middleware\VerifyInternalToken::class,
         'internal.serms' => \App\Http\Middleware\VerifySermsInternalAccess::class,
+        'internal.prs' => \App\Http\Middleware\VerifyPrsInternalAccess::class,
     ];
 }

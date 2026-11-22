@@ -58,4 +58,21 @@ return [
         'timeout' => (int) env('SERMS_TIMEOUT', 15),
     ],
 
+    'prs' => [
+        // PRS -> TS ticket intake. PRS sends X-Internal-Secret; we accept it only on /internal/prs.
+        // Its own secret, not INTERNAL_SERVICE_SECRET, so PRS can be rotated or revoked on its own.
+        'secret' => (string) env('PRS_INTERNAL_SECRET', ''),
+        // Public base of the ticketing SPA, used to build the ticket_url handed back to PRS.
+        // Left empty, ticket_url is null rather than an unusable localhost link.
+        'ticket_url_base' => rtrim((string) env('PRS_TICKET_URL_BASE', ''), '/'),
+
+        // TS -> PRS status callback. We send PRS_CALLBACK_SECRET as X-Internal-Secret; it is PRS's
+        // own secret and is unrelated to PRS_INTERNAL_SECRET, which guards our inbound routes.
+        // With no URL configured the callback is skipped entirely, so nothing is queued.
+        'callback_url' => rtrim((string) env('PRS_CALLBACK_URL', ''), '/'),
+        'callback_path' => '/' . ltrim((string) env('PRS_CALLBACK_PATH', '/api/internal/ts/tickets/status'), '/'),
+        'callback_secret' => (string) env('PRS_CALLBACK_SECRET', ''),
+        'callback_timeout' => (int) env('PRS_CALLBACK_TIMEOUT', 15),
+    ],
+
 ];
