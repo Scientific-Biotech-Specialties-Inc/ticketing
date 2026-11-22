@@ -20,7 +20,7 @@ import { formatDisplayDate } from '@/utils/dateUtils';
 import FilePreviewModal from '@/components/FilePreviewModal';
 import AuthenticatedImage from '@/components/AuthenticatedImage';
 import SermsReimbursementModal from '@/components/employee/SermsReimbursementModal';
-import { getTicketReimbursement } from '@/data/sermsReimbursementData';
+import useTicketReimbursement from '@/hooks/useTicketReimbursement';
 import ReassignmentDisapprovalBanner from '@/components/employee/ReassignmentDisapprovalBanner';
 import { getTicketDetails, reopenTicket } from '@/services/ticketService';
 import { getWindowConfiguration, getCachedWindowConfiguration } from '@/services/configurationService';
@@ -75,6 +75,10 @@ export default function EmployeeHistoryDetail() {
   const [now, setNow] = useState(Date.now());
   const [showConversationModal, setShowConversationModal] = useState(false);
   const [showSermsModal, setShowSermsModal] = useState(false);
+  const { claim: existingReimbursement, refresh: refreshReimbursement } = useTicketReimbursement(
+    ticket?.ticket_ID || ticket?.id,
+    { enabled: Boolean(ticket) }
+  );
 
   // Reopen State
   const [showReopenModal, setShowReopenModal] = useState(false);
@@ -901,7 +905,7 @@ export default function EmployeeHistoryDetail() {
           {/* SERMS Reimbursement Integration Card */}
           <div className="mt-4 pt-4 border-t border-emerald-500/20">
             {(() => {
-              const existingClaim = getTicketReimbursement(ticket.ticket_ID || ticket.id);
+              const existingClaim = existingReimbursement;
               return (
                 <div className="bg-gradient-to-r from-blue-50/70 to-indigo-50/70 border border-blue-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div className="flex items-start gap-3">
@@ -1157,8 +1161,11 @@ export default function EmployeeHistoryDetail() {
         <SermsReimbursementModal
           ticket={ticket}
           open={showSermsModal}
-          onClose={() => setShowSermsModal(false)}
-          onReimbursementSubmitted={() => setShowSermsModal(false)}
+          onClose={() => {
+            setShowSermsModal(false);
+            refreshReimbursement();
+          }}
+          onReimbursementSubmitted={() => refreshReimbursement()}
         />
       )}
     </div>

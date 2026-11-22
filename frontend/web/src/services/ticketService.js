@@ -878,6 +878,31 @@ export const acknowledgeManagerReassignment = async (ticketId) => {
   return response.data;
 };
 
+/**
+ * SERMS reimbursement for a ticket: { data: claim | null, eligible, can_submit, categories }.
+ * The ticket-service refreshes the claim status from SERMS at most once a minute.
+ */
+export const getTicketReimbursement = async (ticketId) => {
+  const numericId = Number(String(ticketId).replace(/\D/g, ''));
+  const response = await ticketClient.get(`/tickets/${numericId}/reimbursement`);
+  return response.data;
+};
+
+/**
+ * Files a SERMS reimbursement claim for a Resolved or Closed ticket.
+ * fields: { amount, expense_category, description, expense_date }, receipts: File[] (JPG/PNG/PDF, 2 MB each).
+ */
+export const submitTicketReimbursement = async (ticketId, fields, receipts) => {
+  const numericId = Number(String(ticketId).replace(/\D/g, ''));
+  const formData = new FormData();
+  Object.entries(fields).forEach(([key, value]) => formData.append(key, value));
+  (receipts || []).forEach((file) => formData.append('receipts[]', file));
+  const response = await ticketClient.post(`/tickets/${numericId}/reimbursement`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+  return response.data;
+};
+
 /** Employee asks CS to put an assigned ticket On Hold (remarks 3 to 250 characters). */
 export const requestHoldTicket = async (ticketId, remarks) => {
   const numericId = Number(String(ticketId).replace(/\D/g, ''));

@@ -48,4 +48,14 @@ return [
         'default_branch' => env('TICKET_DEFAULT_BRANCH', 'sbsi-makati-branch'),
     ],
 
+    // TS <-> SERMS reimbursement integration. TS sends X-Internal-Secret on calls to SERMS, and accepts
+    // the same secret from SERMS on /internal routes. SERMS_INTERNAL_SECRET overrides the shared
+    // INTERNAL_SERVICE_SECRET when the SERMS secret differs (for example a local tunnel).
+    'serms' => [
+        'url' => rtrim((string) env('SERMS_API_URL', ''), '/'),
+        'prefix' => '/' . trim((string) env('SERMS_API_PREFIX', '/api'), '/'),
+        'secret' => (string) env('SERMS_INTERNAL_SECRET', env('INTERNAL_SERVICE_SECRET', '')),
+        'timeout' => (int) env('SERMS_TIMEOUT', 15),
+    ],
+
 ];

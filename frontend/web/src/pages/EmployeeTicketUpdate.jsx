@@ -29,7 +29,7 @@ import { getTicketDetails, updateEmployeeTicket, saveWorkLog, getAssignableEmplo
 import { getTicketMessages } from '@/services/messagingService';
 import ProofCompletionModal from '@/components/employee/ProofCompletionModal';
 import SermsReimbursementModal from '@/components/employee/SermsReimbursementModal';
-import { getTicketReimbursement } from '@/data/sermsReimbursementData';
+import useTicketReimbursement from '@/hooks/useTicketReimbursement';
 import ActionErrorModal, { getActionError } from '@/components/employee/ActionErrorModal';
 import ReassignmentModal from '@/components/employee/ReassignmentModal';
 import HoldRequestModal from '@/components/employee/HoldRequestModal';
@@ -78,6 +78,10 @@ export default function EmployeeTicketUpdate() {
 
   const [showProofModal, setShowProofModal] = useState(false);
   const [showSermsModal, setShowSermsModal] = useState(false);
+  const { claim: existingReimbursement, refresh: refreshReimbursement } = useTicketReimbursement(
+    ticket?.ticket_ID || ticket?.id,
+    { enabled: Boolean(ticket) }
+  );
   const [showReassignModal, setShowReassignModal] = useState(false);
   const [showHoldRequestModal, setShowHoldRequestModal] = useState(false);
   const [isCancellingHold, setIsCancellingHold] = useState(false);
@@ -511,7 +515,6 @@ export default function EmployeeTicketUpdate() {
 
   // SERMS expense reimbursement opens only once the work is done (Resolved, or Closed after it).
   // A claim already filed stays viewable even if the ticket is later reopened.
-  const existingReimbursement = ticket ? getTicketReimbursement(ticket.ticket_ID || ticket.id) : null;
   const canUseReimbursement = ['Resolved', 'Closed'].includes(ticket?.status) || Boolean(existingReimbursement);
 
   const handleResumeTicket = async () => {
@@ -826,7 +829,7 @@ export default function EmployeeTicketUpdate() {
             {canUseReimbursement && (
             <div className="rounded-xl border border-border bg-card p-6 shadow-xs">
               {(() => {
-                const existingClaim = getTicketReimbursement(ticket.ticket_ID || ticket.id);
+                const existingClaim = existingReimbursement;
                 return (
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                     <div className="flex items-start gap-3.5">
@@ -970,7 +973,7 @@ export default function EmployeeTicketUpdate() {
                 {canUseReimbursement && (
                 <div className="w-full mt-4 pt-4 border-t border-border">
                   {(() => {
-                    const existingClaim = getTicketReimbursement(ticket.ticket_ID || ticket.id);
+                    const existingClaim = existingReimbursement;
                     return (
                       <div className="bg-gradient-to-r from-blue-50/70 to-indigo-50/70 border border-blue-200/80 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div className="flex items-start gap-3">
@@ -1550,8 +1553,11 @@ export default function EmployeeTicketUpdate() {
         <SermsReimbursementModal
           ticket={ticket}
           open={showSermsModal}
-          onClose={() => setShowSermsModal(false)}
-          onReimbursementSubmitted={() => setShowSermsModal(false)}
+          onClose={() => {
+            setShowSermsModal(false);
+            refreshReimbursement();
+          }}
+          onReimbursementSubmitted={() => refreshReimbursement()}
         />
       )}
 

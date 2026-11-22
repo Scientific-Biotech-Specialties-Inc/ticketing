@@ -64,6 +64,11 @@ Route::middleware('internal.token')
 // Spec 0048: hold request display state for employee-service ticket lists.
 Route::middleware('internal.token')
     ->get('/internal/hold-requests/states', [\App\Http\Controllers\HoldRequestController::class, 'states']);
+// TS <-> SERMS reimbursement: SERMS lists tickets and pushes claim status changes.
+Route::middleware('internal.serms')
+    ->get('/internal/tickets', [\App\Http\Controllers\InternalSermsController::class, 'tickets']);
+Route::middleware('internal.serms')
+    ->post('/internal/reimbursements/status', [\App\Http\Controllers\InternalSermsController::class, 'reimbursementStatus']);
 
 Route::middleware('auth.subsystem')->group(function () {
     // ─── Customer Ticket Drafts (spec 0034: verified customer token only) ────
@@ -111,6 +116,10 @@ Route::middleware('auth.subsystem')->group(function () {
     // ─── Spec 0038: proof review gate and lightweight ownership lookup ───────
     Route::post('/tickets/{ticketId}/proof-views', [\App\Http\Controllers\TicketProofReviewController::class, 'store'])->whereNumber('ticketId');
     Route::get('/tickets/{ticketId}/ownership', [\App\Http\Controllers\TicketOwnershipController::class, 'show'])->whereNumber('ticketId')->middleware('no-cache');
+
+    // ─── TS <-> SERMS expense reimbursement ──────────────────────────────────
+    Route::get('/tickets/{ticketId}/reimbursement', [\App\Http\Controllers\TicketReimbursementController::class, 'show'])->whereNumber('ticketId')->middleware('no-cache');
+    Route::post('/tickets/{ticketId}/reimbursement', [\App\Http\Controllers\TicketReimbursementController::class, 'store'])->whereNumber('ticketId')->middleware('throttle:10,1');
 
     // ─── Core Ticket Lifecycle & Status Transitions ───────────────────────────
     Route::post('/tickets', [TicketController::class, 'store']);
