@@ -2458,13 +2458,12 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
   const navigate = useNavigate();
   // Router pathname (without the /ticketing/ base) picks the right role's messages page.
   const { pathname: routePath } = useLocation();
-  // Close without assigning is offered only when the superadmin Transition Matrix
-  // allows the ticket's current state to move to Closed (backend sends allowed_transitions).
-  const navigate = useNavigate();
   const handleOpenMessages = () => {
     onClose();
     navigate(getMessagesPath(), { state: { selectedTicketId: ticket?.ticket_ID || ticket?.id } });
   };
+  // Close without assigning is offered only when the superadmin Transition Matrix
+  // allows the ticket's current state to move to Closed (backend sends allowed_transitions).
   const canCloseWithoutAssigning = typeof onCloseTicket === 'function'
     && Array.isArray(ticket?.allowed_transitions)
     && ticket.allowed_transitions.includes('Closed');
