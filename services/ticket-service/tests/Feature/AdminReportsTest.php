@@ -51,7 +51,6 @@ class AdminReportsTest extends TestCase
         DB::table('branch_ticket_forecasts')->whereIn('branch_id', [901, 902])->delete();
         DB::table('branch_recurring_issue_trends')->whereIn('branch_id', [901, 902])->delete();
         DB::table('forecast_job_runs')->whereIn('branch_id', [901, 902])->delete();
-        DB::table('daily_employee_performance')->whereIn('branch_id', [901, 902])->delete();
         DB::table('employees')->whereIn('email', $testEmails)->delete();
 
         // Setup test branch

@@ -84,18 +84,12 @@ Mandatory verification evidence submitted by technicians prior to resolution.
 * `rejection_reason` (`TEXT`, Nullable)
 * `created_at`, `updated_at` (`TIMESTAMP`)
 
-#### `sla_trackings`
-Maintains operational telemetry regarding SLA response and resolution deadlines.
-* `id` (`BIGINT UNSIGNED`, PK)
-* `ticket_id` (`BIGINT UNSIGNED`, Unique FK to `tickets.id`)
-* `target_response_deadline` (`DATETIME`)
-* `target_resolution_deadline` (`DATETIME`)
-* `first_response_at` (`DATETIME`, Nullable)
-* `resolved_at` (`DATETIME`, Nullable)
-* `response_breached` (`TINYINT(1)`, Default: `0`)
-* `resolution_breached` (`TINYINT(1)`, Default: `0`)
-* `paused_at` (`DATETIME`, Nullable)
-* `total_paused_minutes` (`INT UNSIGNED`, Default: `0`)
+#### SLA timing (no separate table)
+SLA deadlines and pause time are stored on `tickets`: `response_due_at`, `resolution_due_at`,
+`first_response_at`, `response_sla_status`, `resolution_sla_status`, `sla_status`, `sla_started_at`,
+`sla_paused_at`, `sla_paused_total_seconds`. Per-assignment timing is in `ticket_assignment_periods`.
+The old `sla_trackings` table was never used and was dropped
+(see `docs/database-cleanup-plan.md`).
 
 #### `ticket_audit_logs`
 Immutable compliance and change-tracking ledger.

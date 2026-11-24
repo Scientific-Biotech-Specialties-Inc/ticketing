@@ -67,7 +67,7 @@ The **Enterprise Ticketing System** is engineered as a distributed, event-driven
   * Ticket assignment and reassignment approval workflow.
   * Proof of completion submission and review.
   * Work log tracking and audit log recording.
-* **Storage**: MySQL (`tickets`, `ticket_assignments`, `proof_of_completion`, `slas`, `sla_rules`, `sla_trackings`, `ticket_audit_logs`, `work_logs`) and Redis (query cache, incoming queue caching, Reverb broadcast driver).
+* **Storage**: MySQL (`tickets`, `ticket_assignments`, `proof_of_completion`, `slas`, `sla_rules`, `ticket_audit_logs`, `work_logs`) and Redis (query cache, incoming queue caching, Reverb broadcast driver).
 
 ### 3. `attachment-service` (Secure Document Management)
 * **Code Location**: [services/attachment-service/](file:///c:/Users/Shelley/Desktop/projects/php/enterprise-ticketing-system/services/attachment-service)
