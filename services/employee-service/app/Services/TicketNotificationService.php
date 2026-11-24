@@ -117,13 +117,18 @@ class TicketNotificationService
             return;
         }
 
+        // notifications.type is generated from data->type, so every row carries one: a caller's
+        // specific event type wins, otherwise the alert key this notification was routed under.
+        $data = $data ?? [];
+        $data['type'] = $data['type'] ?? $key;
+
         DB::table('notifications')->insert([
             'recipient_id'   => $recipientId,
             'recipient_type' => $recipientType,
             'title'          => $title,
             'message'        => $message,
             'ticket_id'      => $ticketId,
-            'data'           => $data ? json_encode($data) : null,
+            'data'           => json_encode($data),
             'is_read'        => false,
             'created_at'     => now(),
             'updated_at'     => now(),

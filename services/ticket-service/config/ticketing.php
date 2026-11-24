@@ -40,4 +40,13 @@ return [
         ],
         'min_judged_periods' => 3,
     ],
+
+    /*
+    | In-app notification retention (database cleanup, phase 1).
+    | `notifications:purge` runs daily and deletes notifications that have been
+    | read and are older than retention_days. Unread notifications are never purged.
+    */
+    'notifications' => [
+        'retention_days' => (int) env('NOTIFICATION_RETENTION_DAYS', 90),
+    ],
 ];

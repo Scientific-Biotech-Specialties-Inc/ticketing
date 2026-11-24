@@ -148,40 +148,6 @@ Route::middleware('auth.subsystem')->group(function () {
         return response()->json(['message' => 'Internal notes cannot be deleted to preserve collaboration history integrity.'], 405);
     });
 
-    // ─── Security Incident Audit Details (TS085) ─────────────────────────────
-    Route::get('/security-incidents/{id}', function (Request $request, $id) {
-        $user = $request->user();
-        if (!$user) {
-            return response()->json(['message' => 'Unauthorized'], 401);
-        }
-        $role = strtolower(trim((string) ($user->role ?? '')));
-        if (!in_array($role, ['superadmin', 'super admin', 'admin'], true)) {
-            return response()->json(['message' => 'Access denied: Admin role required to review security incident records.'], 403);
-        }
-
-        $row = Illuminate\Support\Facades\DB::table('notifications')
-            ->where(function ($q) use ($id) {
-                if (is_numeric($id)) {
-                    $q->where('notification_ID', $id);
-                }
-                $q->orWhere('data', 'like', "%{$id}%");
-            })
-            ->first();
-
-        if (!$row) {
-            return response()->json(['message' => 'Security incident record not found.'], 404);
-        }
-
-        $data = json_decode($row->data ?? '{}', true);
-        return response()->json([
-            'id' => $row->notification_ID ?? $id,
-            'title' => $row->title,
-            'message' => $row->message,
-            'incident_details' => $data,
-            'created_at' => $row->created_at,
-        ]);
-    });
-
     // ─── Notifications ────────────────────────────────────────────────────────
     Route::get('/notifications', [TicketNotificationController::class, 'getNotifications']);
     Route::patch('/notifications/read-all', [TicketNotificationController::class, 'markNotificationsRead']);
