@@ -779,7 +779,16 @@ const getMessagesPath = () => {
 export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onEdit, onStatusUpdate, readOnly = false, isLoadingDetails = false, onManagerReassignmentSeen }) {
   // Follow the backend while the summary is open so assignee/status changes made elsewhere
   // (another CS agent, the employee accepting) show up without closing and reopening it.
-  const { ticket, refresh: refreshLiveTicket } = useLiveTicket(ticketProp);
+  const { ticket: liveTicket, refresh: refreshLiveTicket } = useLiveTicket(ticketProp);
+  const [localPatch, setLocalPatch] = useState(null);
+  const ticketKey = ticketProp?.ticket_ID ?? ticketProp?.id ?? null;
+  useEffect(() => {
+    setLocalPatch(null);
+  }, [ticketKey]);
+  const ticket = useMemo(
+    () => (localPatch && liveTicket ? { ...liveTicket, ...localPatch } : liveTicket),
+    [liveTicket, localPatch]
+  );
 
   // Keep the manager reassignment shown for this whole view, even after opening it marks it seen
   // (the refreshed ticket no longer carries it).
@@ -1451,24 +1460,14 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
       });
 
       const timestamp = new Date().toISOString();
-      ticket.reassignmentRequested = false;
-      ticket.reassignmentStatus = 'Approved';
-      ticket.assigned_to = newEmployeeIds[0];
-      ticket.assigned = newEmployeeIds;
-      ticket.assigned_employee = targetName;
-      ticket.status = 'In Progress';
-
       const approveTimelineEvent = {
         id: `reassign-approve-${Date.now()}`,
         type: 'reassign',
         text: `Reassignment approved by CS. Ticket reassigned to ${targetName}.`,
         timestamp,
       };
-      if (!ticket.timeline) ticket.timeline = [];
-      ticket.timeline.push(approveTimelineEvent);
-
-      const updated = {
-        ...ticket,
+      const nextTimeline = [...(ticket.timeline || []), approveTimelineEvent];
+      const patch = {
         reassignmentRequested: false,
         reassignmentStatus: 'Approved',
         // Already sent to the reassign-respond endpoint above; parents must not resend it.
@@ -1477,12 +1476,21 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
         assigned: newEmployeeIds,
         assigned_employee: targetName,
         status: 'In Progress',
-        timeline: [...ticket.timeline],
+        timeline: nextTimeline,
+      };
+      setLocalPatch(patch);
+
+      const updated = {
+        ...ticket,
+        ...patch,
+        // Already sent to the reassign-respond endpoint above; parents must not resend it.
+        reassignmentHandled: true,
       };
 
       if (typeof onStatusUpdate === 'function') {
         await onStatusUpdate(updated);
       }
+      refreshLiveTicket?.();
 
       setActionSuccessNotice(`Reassignment approved. Ticket successfully assigned to ${targetName}.`);
       setTimeout(() => setActionSuccessNotice(''), 6000);
@@ -1507,33 +1515,33 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
       }).catch((e) => console.warn('respondReassignment deny call failed, falling back to local update:', e));
 
       const timestamp = new Date().toISOString();
-      ticket.reassignmentRequested = false;
-      ticket.reassignmentStatus = 'Denied';
-      ticket.reassignmentDenyReason = reason;
-      ticket.status = 'In Progress';
-
       const rejectTimelineEvent = {
         id: `reassign-deny-${Date.now()}`,
         type: 'reassign',
         text: `Reassignment request rejected by CS. Reason: "${reason}". Ticket status returned to In Progress.`,
         timestamp,
       };
-      if (!ticket.timeline) ticket.timeline = [];
-      ticket.timeline.push(rejectTimelineEvent);
-
-      const updated = {
-        ...ticket,
+      const nextTimeline = [...(ticket.timeline || []), rejectTimelineEvent];
+      const patch = {
         reassignmentRequested: false,
         reassignmentStatus: 'Denied',
         reassignmentDenyReason: reason,
         reassignmentHandled: true,
         status: 'In Progress',
-        timeline: [...ticket.timeline],
+        timeline: nextTimeline,
+      };
+      setLocalPatch(patch);
+
+      const updated = {
+        ...ticket,
+        ...patch,
+        reassignmentHandled: true,
       };
 
       if (typeof onStatusUpdate === 'function') {
         await onStatusUpdate(updated);
       }
+      refreshLiveTicket?.();
 
       setShowRejectModal(false);
       setActionSuccessNotice(`Reassignment request rejected. Reason dispatched to ${requestingEmployee.name}.`);
@@ -1693,15 +1701,23 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
                   </button>
                 )}
 
-                {/* Secondary: Message the Customer */}
+                {/* Secondary: Message the Customer / Requestor */}
                 <button
                   type="button"
                   onClick={handleOpenMessages}
                   className="h-9 px-3.5 border border-[#D5D9E4] hover:bg-[#F5F6FA] text-xs font-semibold text-[#1B2033] rounded-lg transition-colors inline-flex items-center gap-1.5 cursor-pointer"
-                  title="Communicate directly with the customer regarding this ticket"
+                  title={
+                    !isExternal || String(ticket.title || '').startsWith('[Internal]')
+                      ? 'Communicate directly with the requestor regarding this ticket'
+                      : 'Communicate directly with the customer regarding this ticket'
+                  }
                 >
                   <MessageCircle className="w-3.5 h-3.5 text-[#1E2A78]" />
-                  <span>Message</span>
+                  <span>
+                    {!isExternal || String(ticket.title || '').startsWith('[Internal]')
+                      ? 'Message requestor'
+                      : 'Message customer'}
+                  </span>
                 </button>
               </div>
             }
@@ -1967,8 +1983,8 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
           </div>
         )}
 
-        {/* 4. DecisionCard (if pending reassignment) */}
-        {ticket.reassignmentRequested && (
+        {/* 4. DecisionCard (if pending reassignment) or Rejection Confirmation */}
+        {ticket.reassignmentRequested ? (
           <DecisionCard
             requestingEmployee={requestingEmployee}
             reason={ticket.reassignmentReason}
@@ -1978,6 +1994,21 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
             onOpenRejectDialog={() => setShowRejectModal(true)}
             isProcessing={isProcessing}
           />
+        ) : ticket.reassignmentStatus === 'Denied' && (
+          <div className="rounded-xl border border-rose-200 bg-rose-50/70 p-4 flex items-start gap-3">
+            <XCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="space-y-1 text-xs text-rose-900">
+              <p className="font-semibold text-sm text-rose-950">Reassignment Request Rejected</p>
+              <p>
+                Your rejection has been submitted and the ticket remains in <span className="font-semibold">In Progress</span>.
+              </p>
+              {ticket.reassignmentDenyReason && (
+                <p className="text-rose-800">
+                  <span className="font-semibold">Submitted reason:</span> {ticket.reassignmentDenyReason}
+                </p>
+              )}
+            </div>
+          </div>
         )}
 
         {/* Unit test & screen-reader compatibility element */}

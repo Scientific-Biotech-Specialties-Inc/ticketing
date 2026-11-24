@@ -8,6 +8,7 @@ import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import NotificationDropdown from '@/components/notifications/NotificationDropdown';
 import CustomerTicketDetailModal from '@/components/CustomerTicketDetailModal';
 import TicketDetailModal from '@/components/employee/TicketDetailModal';
+import { isUserAssignedToTicket } from '@/components/ticket-modal/ticketModalUtils';
 import { TicketSummary, AssignModal } from '@/components/CSModals';
 import { getSystemStatus } from '@/services/configurationService';
 import tokenStore from '@/auth/tokenStore';
@@ -227,7 +228,7 @@ export default function Header({ sidebarHovered }) {
       setActiveTicket(null);
     }
 
-    if (checkUserIsEmployee(user) && closedTicket) {
+    if (checkUserIsEmployee(user) && closedTicket && isUserAssignedToTicket(closedTicket, user)) {
       const isApproved = closedTicket.reassignmentStatus === 'Approved' ||
         closedTicket.notificationData?.type === 'reassignment_approved';
       const isRejected = isReassignmentDenied(closedTicket) ||
@@ -525,7 +526,7 @@ export default function Header({ sidebarHovered }) {
             } catch (e) { console.warn(e); }
           }}
         />
-      ) : activeTicket && checkUserIsEmployee(user) ? (
+      ) : activeTicket && checkUserIsEmployee(user) && isUserAssignedToTicket(activeTicket, user) ? (
         <TicketDetailModal
           ticket={activeTicket}
           onClose={handleCloseActiveTicket}
@@ -562,7 +563,7 @@ export default function Header({ sidebarHovered }) {
           onResolve={null}
           allowReopen={false}
           customerName={activeTicket.customer}
-          onAssign={(t) => setAssignModalTicket(t || activeTicket)}
+          onAssign={isCS ? (t) => setAssignModalTicket(t || activeTicket) : undefined}
         />
       ) : null}
 

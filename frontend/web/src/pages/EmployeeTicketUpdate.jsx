@@ -1546,6 +1546,7 @@ export default function EmployeeTicketUpdate() {
           onStatusChange={(id, newStatus) =>
             setTicket((prev) => ({ ...prev, status: newStatus }))
           }
+          onProofSubmitted={() => loadTicketData({ forceRefresh: true })}
         />
       )}
 

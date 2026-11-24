@@ -399,8 +399,8 @@ export default function SuperAdminSettings() {
 
     if (newStatus === 'Under Maintenance') {
       showConfirm(
-        `Set ${selectedBranch.name} to Under Maintenance?`,
-        `Setting ${selectedBranch.name} to Under Maintenance may restrict or affect access for users at this location. Are you sure?`,
+        'Set Global Platform to Under Maintenance?',
+        'This affects ALL branches and users platform-wide (not just a single branch). Non-admin users across the entire system will be presented with maintenance advisories or restricted access. Are you sure?',
         async () => {
           closeNotif();
           setIsSavingStatus(true);
@@ -413,7 +413,7 @@ export default function SuperAdminSettings() {
             }));
             showSuccess(
               'System Status Updated',
-              `Platform status for ${selectedBranch.name} set to "Under Maintenance". Advisory banners will be presented to non-admin users at this location.`
+              'Global platform status set to "Under Maintenance". Advisory banners will be presented to non-admin users across all branches.'
             );
           } catch (err) {
             showError('Status Update Failed', err.response?.data?.message || 'Unable to change system status.');
@@ -422,7 +422,7 @@ export default function SuperAdminSettings() {
           }
         },
         {
-          confirmText: 'Set to Maintenance',
+          confirmText: 'Set Global Maintenance',
           confirmClassName: 'bg-amber-600 hover:bg-amber-700',
         }
       );
@@ -437,7 +437,7 @@ export default function SuperAdminSettings() {
         }));
         showSuccess(
           'System Status Restored',
-          `Platform status for ${selectedBranch.name} has been restored to "Operational".`
+          'Global platform status has been restored to "Operational".'
         );
       } catch (err) {
         showError('Status Update Failed', err.response?.data?.message || 'Unable to restore operational status.');
@@ -448,8 +448,7 @@ export default function SuperAdminSettings() {
   };
 
   // ── Log Level Handlers (Global Infrastructure) ────────────────────────────
-  const handleSaveLogLevel = async (newLevel) => {
-    const levelToSet = newLevel || logLevel;
+  const persistLogLevel = async (levelToSet) => {
     setIsSavingLogLevel(true);
     try {
       const updated = await updateLogLevel(levelToSet);
@@ -464,6 +463,26 @@ export default function SuperAdminSettings() {
     } finally {
       setIsSavingLogLevel(false);
     }
+  };
+
+  const handleSaveLogLevel = async (newLevel) => {
+    const levelToSet = newLevel || logLevel;
+    if (String(levelToSet).toLowerCase() === 'debug') {
+      showConfirm(
+        'Enable Verbose Debug Logging?',
+        'Debug mode logs complete request payloads, database queries, and stack traces across the platform. This can expose sensitive data in log files and increase disk usage. Revert to "Info" when finished.',
+        () => {
+          closeNotif();
+          persistLogLevel(levelToSet);
+        },
+        {
+          confirmText: 'Enable Debug Mode',
+          confirmClassName: 'bg-amber-600 hover:bg-amber-700',
+        }
+      );
+      return;
+    }
+    await persistLogLevel(levelToSet);
   };
 
   const TABS = [
@@ -508,7 +527,7 @@ export default function SuperAdminSettings() {
                     currentBranchStatus === 'Operational' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'
                   }`}
                 />
-                {currentBranchStatus} ({selectedBranch.name})
+                {currentBranchStatus} (Global Platform)
               </span>
             </div>
           </div>
@@ -537,9 +556,13 @@ export default function SuperAdminSettings() {
 
       {/* Main Content Layout */}
       <div className="flex flex-col gap-6">
-        {/* Single Branch Selector Banner governing both branch-scoped sections (Company Info & System Status) */}
         {(activeTab === 'all' || activeTab === 'company' || activeTab === 'status') && (
-          <BranchSelector variant="banner" />
+          <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3 text-xs text-amber-900 flex items-center gap-2.5">
+            <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+            <span>
+              <strong>Global Scope:</strong> Company Information and System Status apply across the <strong>entire platform (all branches)</strong>, not per individual branch.
+            </span>
+          </div>
         )}
 
         {/* =================================================================== */}

@@ -157,8 +157,47 @@ function EmployeePortalGate() {
   return null;
 }
 
+class RootErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('Unhandled application error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-page p-6 text-dark-slate">
+          <div className="max-w-md w-full rounded-2xl border border-border bg-white p-8 text-center shadow-sm space-y-4">
+            <h1 className="text-xl font-bold text-primary">Something went wrong</h1>
+            <p className="text-sm text-muted-slate">
+              An unexpected error occurred while rendering this page. Reload to recover your session.
+            </p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover cursor-pointer"
+            >
+              Reload Page
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function App() {
   return (
+    <RootErrorBoundary>
     <AuthProvider>
       <BranchProvider>
         <ToastProvider>
@@ -237,14 +276,16 @@ function App() {
               />
 
               {/* /superadmin/dev-login — dev-only mock login */}
-              <Route
-                path="/superadmin/dev-login"
-                element={
-                  <GuestRoute>
-                    <SuperAdminDevLogin />
-                  </GuestRoute>
-                }
-              />
+              {import.meta.env.DEV && (
+                <Route
+                  path="/superadmin/dev-login"
+                  element={
+                    <GuestRoute>
+                      <SuperAdminDevLogin />
+                    </GuestRoute>
+                  }
+                />
+              )}
 
               {/* External Customer Feedback (accessible directly via email links or portal) */}
               <Route path="/feedback/:ticketId" element={<ExternalFeedbackPage />} />
@@ -454,7 +495,21 @@ function App() {
               <Route
                 path="*"
                 element={
-                  <div className="p-8 text-center text-red-500 font-bold">404 Page Not Found</div>
+                  <div className="min-h-screen flex items-center justify-center bg-page p-6 text-dark-slate">
+                    <div className="max-w-md w-full rounded-2xl border border-border bg-white p-8 text-center shadow-sm space-y-3">
+                      <div className="text-4xl font-bold text-primary">404</div>
+                      <h1 className="text-lg font-bold text-dark-slate">Page Not Found</h1>
+                      <p className="text-sm text-muted-slate">
+                        The page you requested does not exist or has been moved.
+                      </p>
+                      <a
+                        href={import.meta.env.BASE_URL || '/'}
+                        className="inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover"
+                      >
+                        Return Home
+                      </a>
+                    </div>
+                  </div>
                 }
               />
             </Routes>
@@ -464,6 +519,7 @@ function App() {
         </ToastProvider>
     </BranchProvider>
     </AuthProvider>
+    </RootErrorBoundary>
   );
 }
 

@@ -42,6 +42,7 @@ vi.mock('@/services/ticketService', () => ({
     problem_categories: [],
     ticket_priorities: [],
   })),
+  getAssignableEmployees: vi.fn(() => Promise.resolve([])),
   sendTicketReminder: vi.fn(() => Promise.resolve({ success: true })),
 }));
 

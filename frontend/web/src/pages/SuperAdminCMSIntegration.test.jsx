@@ -76,7 +76,7 @@ describe('SuperAdminCMSIntegration Page Tests', () => {
     });
   });
 
-  it('opens detail modal on clicking a customer row and displays tabs', async () => {
+  it('opens detail modal on clicking a customer row and displays profile and collapsible equipment on one page', async () => {
     renderWithProviders(<SuperAdminCMSIntegration />);
 
     await waitFor(() => {
@@ -87,43 +87,47 @@ describe('SuperAdminCMSIntegration Page Tests', () => {
     const customerButton = screen.getByRole('button', { name: "St. Luke's Medical Center - Global City" });
     fireEvent.click(customerButton);
 
-    // Modal should open
+    // Modal should open with Customer Name, Customer Email, SBSI Branch and Equipment visible on one page
     await waitFor(() => {
-      expect(screen.getByText('CMS CLIENT')).toBeInTheDocument();
-      expect(screen.getByText('Organization Details')).toBeInTheDocument();
+      expect(screen.getByText('Customer Details')).toBeInTheDocument();
+      expect(screen.getByText('Customer Name:')).toBeInTheDocument();
+      expect(screen.getByText('Customer Email:')).toBeInTheDocument();
+      expect(screen.getByText('SBSI Branch:')).toBeInTheDocument();
       expect(screen.getAllByText('Dr. Rafael V. Santos').length).toBeGreaterThan(1);
+      expect(screen.getByText('EQUIPMENT / SOFTWARE MACHINE')).toBeInTheDocument();
+      expect(screen.getByText('Brand and Model')).toBeInTheDocument();
+      expect(screen.getByText('Serial Number')).toBeInTheDocument();
+      expect(screen.getAllByText('Sysmex XN-1000 Automated Hematology Analyzer').length).toBeGreaterThan(0);
     });
 
     // Verify no buttons display the word "View"
     expect(screen.queryByRole('button', { name: /^View$/i })).not.toBeInTheDocument();
     expect(screen.getAllByLabelText(/View details for/i).length).toBeGreaterThan(0);
 
-    // Switch to Contract & SLA tab
-    fireEvent.click(screen.getByRole('button', { name: /Contract & SLA/i }));
+    // Verify removed tabs and footer Close button are not rendered in the viewing modal (only top-right X remains)
+    expect(screen.queryByRole('button', { name: /Contract & SLA/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Ticketing DB/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Raw JSON/i })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /^Close$/i })).toHaveLength(1);
+
+    // Collapse Equipment chevron section
+    const equipmentToggle = screen.getByRole('button', { name: /Equipment \(3\)/i });
+    fireEvent.click(equipmentToggle);
     await waitFor(() => {
-      expect(screen.getAllByText('CMS-CON-2024-0089').length).toBeGreaterThan(1);
-      expect(screen.getByText(/Service Level Agreement \(SLA\) Entitlements/i)).toBeInTheDocument();
+      expect(screen.queryByText('EQUIPMENT / SOFTWARE MACHINE')).not.toBeInTheDocument();
     });
 
-    // Switch to Equipment tab
-    fireEvent.click(screen.getByRole('button', { name: /Equipment/i }));
+    // Expand Equipment chevron section again
+    fireEvent.click(equipmentToggle);
     await waitFor(() => {
-      expect(screen.getByText('Sysmex XN-1000 Automated Hematology Analyzer')).toBeInTheDocument();
-      expect(screen.getByText('Cobas 6000 Clinical Chemistry System')).toBeInTheDocument();
+      expect(screen.getByText('EQUIPMENT / SOFTWARE MACHINE')).toBeInTheDocument();
     });
 
-    // Switch to Raw JSON tab
-    fireEvent.click(screen.getByRole('button', { name: /Raw JSON/i }));
-    await waitFor(() => {
-      expect(screen.getByText(/Payload received from CMS API:/i)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /Copy JSON/i })).toBeInTheDocument();
-    });
-
-    // Close modal via custom top close button
-    const closeBtn = screen.getByRole('button', { name: /Close modal/i });
+    // Close modal via dialog top-right close button
+    const closeBtn = screen.getByRole('button', { name: /^Close$/i });
     fireEvent.click(closeBtn);
     await waitFor(() => {
-      expect(screen.queryByText('CMS CLIENT')).not.toBeInTheDocument();
+      expect(screen.queryByText('Customer Details')).not.toBeInTheDocument();
     });
   });
 
@@ -182,6 +186,47 @@ describe('SuperAdminCMSIntegration Page Tests', () => {
     await waitFor(() => {
       expect(screen.queryByText('CMS API Settings')).not.toBeInTheDocument();
       expect(screen.getByText('https://cms.sandbox.sbsi.com.ph/api/v2')).toBeInTheDocument();
+    });
+  });
+
+  it('opens Create User modal and creates a new customer record', async () => {
+    renderWithProviders(<SuperAdminCMSIntegration />);
+
+    await waitFor(() => {
+      expect(screen.getByText("St. Luke's Medical Center - Global City")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Create User/i }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Equipment Name \/ Machine Name/i)).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText(/Equipment Name \/ Machine Name/i), {
+      target: { value: 'Hematology Analyzer' },
+    });
+    fireEvent.change(screen.getByLabelText(/Brand and Model/i), {
+      target: { value: 'Sysmex XN-550' },
+    });
+    fireEvent.change(screen.getByLabelText(/Serial Number/i), {
+      target: { value: 'SN-TEST-9988' },
+    });
+    fireEvent.change(screen.getByLabelText(/Customer Name/i), {
+      target: { value: 'Makati Medical Center' },
+    });
+    fireEvent.change(screen.getByLabelText(/Customer Email/i), {
+      target: { value: 'lab@makatimed.net.ph' },
+    });
+    fireEvent.change(screen.getByLabelText(/SBSI Branch/i), {
+      target: { value: 'Cebu Regional Branch' },
+    });
+
+    const submitButtons = screen.getAllByRole('button', { name: /^Create User$/i });
+    fireEvent.click(submitButtons[submitButtons.length - 1]);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Makati Medical Center').length).toBeGreaterThan(0);
+      expect(screen.getByText('lab@makatimed.net.ph')).toBeInTheDocument();
     });
   });
 });
