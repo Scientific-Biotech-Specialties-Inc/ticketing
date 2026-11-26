@@ -367,7 +367,7 @@ export default function AdminDashboard({ initialTab = 'overview' }) {
   const analyticsRequestSeq = useRef(0);
 
   // Fetch live operational and performance records in a single unified request
-  const fetchAnalytics = async (fromDate = globalDateFrom, toDate = globalDateTo) => {
+  const fetchAnalytics = async (fromDate = globalDateFrom, toDate = globalDateTo, { forceRefresh = false } = {}) => {
     if (selectedPreset === 'Custom Range' && !isDateRangeValid(fromDate, toDate)) {
       setDateRangeError(DATE_RANGE_ERROR_MESSAGE);
       return;
@@ -384,6 +384,8 @@ export default function AdminDashboard({ initialTab = 'overview' }) {
       if (isSuperAdmin) {
         params.branch_id = selectedBranchId ?? 'all';
       }
+      // Bypass the server's dashboard cache (used after an ETL sync, which no longer clears it: spec 0050 AC-5).
+      if (forceRefresh) params.forceRefresh = true;
 
       const dashRes = await getAdminDashboard(params).catch((err) => {
         console.warn('Admin dashboard live fetch error:', err);
@@ -510,7 +512,8 @@ export default function AdminDashboard({ initialTab = 'overview' }) {
         const count = data.records_processed ?? 0;
         const duration = data.duration_ms ?? 0;
         setSyncStatusMsg(`ETL Complete! Processed ${count} records (${duration}ms).`);
-        await Promise.all([fetchAnalytics(), fetchPredictiveInsights()]);
+        // The sync runs in analytics-service and clears only its own caches, so reload the dashboard fresh (spec 0050 AC-5).
+        await Promise.all([fetchAnalytics(globalDateFrom, globalDateTo, { forceRefresh: true }), fetchPredictiveInsights()]);
       } else {
         setSyncStatusMsg(`ETL: ${data?.message || 'Sync failed'}`);
       }

@@ -4,7 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class BranchRecurringIssueTrend extends Model
 {
@@ -31,10 +30,4 @@ class BranchRecurringIssueTrend extends Model
         'change_percentage' => 'float',
         'calculated_at' => 'datetime',
     ];
-
-    public function branch(): BelongsTo
-    {
-        return $this->belongsTo(Branch::class, 'branch_id', 'id');
-    }
 }
-

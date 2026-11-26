@@ -4,9 +4,6 @@ namespace Tests\Feature;
 
 use App\Models\Branch;
 use App\Models\Employee;
-use App\Models\BranchTicketForecast;
-use App\Models\BranchRecurringIssueTrend;
-use App\Models\ForecastJobRun;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Cache;
@@ -505,146 +502,67 @@ class AdminReportsTest extends TestCase
     }
 
     /**
-     * AC-13, AC-15: Predictive insights fallback with insufficient_data when below 14 days of history.
+     * Spec 0050 AC-1a: forecasts are computed by analytics-service now. The predictive_risk report reads the
+     * stored rows through ForecastReader, read only: with 7 future rows it lists all 7.
      */
-    public function test_predictive_insights_returns_insufficient_data_when_below_14_days(): void
+    public function test_predictive_risk_report_lists_the_stored_forecast_rows(): void
     {
-        // Branch 901 currently has only a few days of tickets, well below 14 days
-        $response = $this->actingAs($this->admin, 'api')
-            ->getJson('/api/admin-reports/predictive-insights?force_refresh=true')
-            ->assertOk()
-            ->assertJson([
-                'status' => 'insufficient_data',
-                'historical_basis' => [
-                    'minimum_days_required' => 14,
-                ],
-            ]);
+        $this->seedFutureForecastRows(901, 7);
 
-        $this->assertEmpty($response->json('volume_forecast'));
-        $this->assertStringContainsString('Insufficient historical data', $response->json('message'));
+        $rows = $this->predictiveRiskForecastRows(901);
+
+        $this->assertCount(7, $rows);
+        $this->assertSame(Carbon::today()->toDateString() . ' (' . Carbon::today()->format('D') . ')', $rows[0]['Forecast Date / Period']);
+        $this->assertSame('8 tickets', $rows[0]['Predicted Value']);
     }
 
     /**
-     * AC-14, AC-16, AC-17, AC-18: Batch forecasting calculation and job health tracking.
+     * Spec 0050 AC-1, AC-1a: with only 3 future rows stored, the report lists those 3 and never tops up:
+     * ticket-service no longer writes branch_ticket_forecasts or forecast_job_runs.
      */
-    public function test_predictive_insights_forecast_calculation_and_job_logging(): void
+    public function test_predictive_risk_report_never_tops_up_or_writes_forecast_rows(): void
     {
-        $now = Carbon::now();
+        $this->seedFutureForecastRows(901, 3);
+        $forecastRows = DB::table('branch_ticket_forecasts')->count();
+        $jobRuns = DB::table('forecast_job_runs')->count();
 
-        // Seed 15 distinct days of tickets in branch 901 to cross the 14-day threshold
-        for ($i = 1; $i <= 15; $i++) {
-            DB::table('tickets')->insert([
-                'ticket_number' => "TCK-HIST-{$i}",
-                'title' => "Historical Ticket Day {$i}",
-                'description' => "Test history",
-                'problem_category_ID' => 1,
-                'machine_ID' => null,
-                'created_by' => 1,
-                'assigned_to' => $this->technician->emp_id,
-                'branch_id' => 901,
-                'ticket_type_ID' => 1,
-                'ticket_status_ID' => 3,
-                'priority_ID' => 1,
-                'created_at' => $now->copy()->subDays($i)->setHour(10),
-                'resolved_at' => $now->copy()->subDays($i)->setHour(12),
-                'updated_at' => $now,
+        $rows = $this->predictiveRiskForecastRows(901);
+
+        $this->assertCount(3, $rows);
+        $this->assertSame($forecastRows, DB::table('branch_ticket_forecasts')->count());
+        $this->assertSame($jobRuns, DB::table('forecast_job_runs')->count());
+    }
+
+    private function seedFutureForecastRows(int $branchId, int $days): void
+    {
+        for ($d = 0; $d < $days; $d++) {
+            DB::table('branch_ticket_forecasts')->insert([
+                'branch_id' => $branchId,
+                'forecast_date' => Carbon::today()->addDays($d)->toDateString(),
+                'predicted_volume' => 8,
+                'lower_bound' => 6,
+                'upper_bound' => 10,
+                'historical_days_used' => 30,
+                'calculation_status' => 'success',
+                'calculated_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
         }
-
-        // Run Artisan calculation command
-        $this->artisan('tickets:calculate-forecasts', ['--horizon' => 7])
-            ->assertExitCode(0);
-
-        // Verify forecast records exist
-        $forecastCount = BranchTicketForecast::where('branch_id', 901)
-            ->where('calculation_status', 'success')
-            ->count();
-        $this->assertGreaterThanOrEqual(7, $forecastCount);
-
-        // Verify job execution health log exists
-        $jobRun = ForecastJobRun::where('branch_id', 901)->latest('id')->first();
-        $this->assertNotNull($jobRun);
-        $this->assertSame('success', $jobRun->status);
-        $this->assertGreaterThanOrEqual(15, $jobRun->records_processed);
-        $this->assertGreaterThan(0, $jobRun->duration_ms);
-
-        // Verify API endpoint returns projected volume
-        $apiResponse = $this->actingAs($this->admin, 'api')
-            ->getJson('/api/admin-reports/predictive-insights')
-            ->assertOk()
-            ->assertJson([
-                'status' => 'success',
-                'historical_basis' => [
-                    'minimum_days_required' => 14,
-                ],
-            ]);
-
-        $this->assertNotEmpty($apiResponse->json('volume_forecast'));
-        $this->assertCount(7, $apiResponse->json('volume_forecast'));
     }
 
-    /**
-     * Spec 0029 AC-10: the nightly job stores 7 days, so a 30 day request must top the horizon up
-     * instead of returning the 7 stored rows.
-     */
-    public function test_thirty_day_horizon_is_served_after_the_nightly_seven_day_run(): void
+    /** The Ticket Volume Forecast rows of the predictive_risk report for one branch, as a SuperAdmin. */
+    private function predictiveRiskForecastRows(int $branchId): array
     {
-        $now = Carbon::now();
-        for ($i = 1; $i <= 15; $i++) {
-            DB::table('tickets')->insert([
-                'ticket_number' => "TCK-H30-{$i}", 'title' => "History {$i}", 'description' => 'x',
-                'problem_category_ID' => 1, 'machine_ID' => null, 'created_by' => 1,
-                'assigned_to' => $this->technician->emp_id, 'branch_id' => 901, 'ticket_type_ID' => 1,
-                'ticket_status_ID' => 3, 'priority_ID' => 1,
-                'created_at' => $now->copy()->subDays($i)->setHour(10), 'updated_at' => $now,
-            ]);
-        }
-        $this->artisan('tickets:calculate-forecasts', ['--horizon' => 7])->assertExitCode(0);
-
-        $response = $this->actingAs($this->admin, 'api')
-            ->getJson('/api/admin-reports/predictive-insights?horizon_days=30')
+        $response = $this->actingAs($this->superAdmin, 'api')
+            ->getJson("/api/admin/reports?report_type=predictive_risk&branch_id={$branchId}&force_refresh=true")
             ->assertOk()
-            ->assertJsonPath('status', 'success');
+            ->assertJsonPath('report_type', 'predictive_risk');
 
-        $this->assertCount(30, $response->json('volume_forecast'));
-    }
-
-    /**
-     * Spec 0029 AC-12: the All Branches view must not claim a successful 60 day basis when no branch
-     * has enough history; it reports insufficient data, and otherwise the real days used.
-     */
-    public function test_all_branches_forecast_reports_true_status_and_basis(): void
-    {
-        // Forecast rows are a derived cache, so the future window is reset to a known state.
-        DB::table('branch_ticket_forecasts')->where('forecast_date', '>=', Carbon::today()->toDateString())->delete();
-        $seed = function (int $branchId, string $status, int $days, int $volume) {
-            for ($d = 0; $d < 7; $d++) {
-                BranchTicketForecast::updateOrCreate(
-                    ['branch_id' => $branchId, 'forecast_date' => Carbon::today()->addDays($d)->toDateString()],
-                    ['predicted_volume' => $volume, 'lower_bound' => 0, 'upper_bound' => $volume,
-                     'historical_days_used' => $days, 'calculation_status' => $status, 'calculated_at' => now()]
-                );
-            }
-        };
-        $seed(901, 'insufficient_data', 4, 0);
-        $seed(902, 'insufficient_data', 3, 0);
-
-        $insufficient = $this->actingAs($this->superAdmin, 'api')
-            ->getJson('/api/admin-reports/predictive-insights?branch_id=all&horizon_days=7')
-            ->assertOk()
-            ->assertJsonPath('status', 'insufficient_data')
-            ->assertJsonPath('historical_basis.days_used', 4);
-        $this->assertSame([], $insufficient->json('volume_forecast'));
-
-        Cache::flush();
-        $seed(902, 'success', 20, 5);
-
-        $this->actingAs($this->superAdmin, 'api')
-            ->getJson('/api/admin-reports/predictive-insights?branch_id=all&horizon_days=7')
-            ->assertOk()
-            ->assertJsonPath('status', 'success')
-            ->assertJsonPath('historical_basis.days_used', 20)
-            ->assertJsonCount(7, 'volume_forecast');
+        return array_values(array_filter(
+            $response->json('rows'),
+            fn (array $row) => ($row['Metric Type'] ?? null) === 'Ticket Volume Forecast'
+        ));
     }
 
     /**
@@ -720,39 +638,6 @@ class AdminReportsTest extends TestCase
         // Admin attempting to query departments performance with branch=all
         $this->actingAs($this->admin, 'api')
             ->getJson('/api/admin-reports/departments?branch=all')
-            ->assertForbidden();
-    }
-
-    /**
-     * AC-7, AC-8: Synchronous ETL trigger executes calculations and clears caches.
-     */
-    public function test_synchronous_etl_trigger_endpoint_executes_and_invalidates_cache(): void
-    {
-        $response = $this->actingAs($this->superAdmin, 'api')
-            ->postJson('/api/etl/trigger', [
-                'full_sync' => true,
-                'branch_id' => 'all',
-            ])
-            ->assertOk()
-            ->assertJson([
-                'status' => 'success',
-                'message' => 'ETL synchronization completed successfully.',
-            ]);
-
-        $this->assertArrayHasKey('records_processed', $response->json());
-        $this->assertArrayHasKey('duration_ms', $response->json());
-        $this->assertArrayHasKey('timestamp', $response->json());
-    }
-
-    /**
-     * AC-7: Non-superadmin Admin cannot trigger ETL for other branches.
-     */
-    public function test_regular_admin_cannot_trigger_etl_for_other_branches(): void
-    {
-        $this->actingAs($this->admin, 'api')
-            ->postJson('/api/etl/trigger', [
-                'branch_id' => 902,
-            ])
             ->assertForbidden();
     }
 

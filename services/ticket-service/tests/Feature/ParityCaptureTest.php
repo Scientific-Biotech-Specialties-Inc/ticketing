@@ -92,13 +92,12 @@ class ParityCaptureTest extends TestCase
         parent::tearDown();
     }
 
-    /** Slice 1: predictive insights. */
-    public function test_capture_slice_1(): void
-    {
-        foreach (array_keys(self::ACTORS) as $actor) {
-            $this->writeJsonGolden("predictive-insights.{$actor}", $this->as($actor)->getJson('/api/admin-reports/predictive-insights?force_refresh=true'));
-        }
-    }
+    /*
+     * Slice 1 (predictive insights) was captured before slice 1 removed /admin-reports/predictive-insights:
+     * golden/predictive-insights.{actor}.json (force_refresh on parity_seed.sql, the insufficient_data shape) and
+     * golden/predictive-insights-stored.{actor}.json (fixtures/forecast_seed.sql loaded on top, horizon_days=7,
+     * the success shape with trends). The capture methods went with the old endpoint.
+     */
 
     /** Slice 2: employee and department performance, and the three Admin dashboard keys that move. */
     public function test_capture_slice_2(): void

@@ -1,11 +1,23 @@
 import axios from 'axios';
 import axiosInstance from '@/api/axiosInstance';
-import { TICKET_API_URL, EMPLOYEE_API_URL, AUTH_ENDPOINTS, AI_API_URL, NOTIFICATION_API_URL } from '@/config/api.config';
+import { TICKET_API_URL, EMPLOYEE_API_URL, AUTH_ENDPOINTS, AI_API_URL, NOTIFICATION_API_URL, ANALYTICS_API_URL } from '@/config/api.config';
 import tokenStore from '@/auth/tokenStore';
 import { refreshAccessToken } from '@/auth/refreshSession';
 
 const ticketClient = axios.create({
   baseURL: TICKET_API_URL,
+  withCredentials: true,
+  headers: {
+    'X-Requested-With': 'XMLHttpRequest',
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+  },
+});
+
+// Spec 0050: reporting endpoints (predictive insights, ETL sync, and later performance and reports) live in
+// analytics-service. Same headers and the same token, refresh and error handling as ticketClient.
+const analyticsClient = axios.create({
+  baseURL: ANALYTICS_API_URL,
   withCredentials: true,
   headers: {
     'X-Requested-With': 'XMLHttpRequest',
@@ -31,42 +43,48 @@ const getStoredClientId = () => {
   return null;
 };
 
-ticketClient.interceptors.request.use((config) => {
-  const token = tokenStore.getToken();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  // Spec 0034: identity comes only from the verified token. No X-Client-Id or X-User-Id headers.
-  return config;
-});
-
-ticketClient.interceptors.response.use(
-  (response) => response,
-  async (error) => {
-    const originalRequest = error.config;
-    if (
-      error.response?.status === 401 &&
-      originalRequest &&
-      !originalRequest._retry
-    ) {
-      originalRequest._retry = true;
-      const refreshed = await refreshAccessToken();
-      const currentToken = tokenStore.getToken();
-      if (refreshed && currentToken) {
-        originalRequest.headers.Authorization = `Bearer ${currentToken}`;
-        return ticketClient(originalRequest);
-      }
-
-      tokenStore.clearToken();
-      sessionStorage.removeItem('user');
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('auth:unauthorized'));
-      }
+/** Bearer token on every request; on a 401, refresh once and retry, else sign out (shared by ticketClient and analyticsClient). */
+const attachTicketInterceptors = (client) => {
+  client.interceptors.request.use((config) => {
+    const token = tokenStore.getToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
+    // Spec 0034: identity comes only from the verified token. No X-Client-Id or X-User-Id headers.
+    return config;
+  });
 
-    return Promise.reject(error);
-  }
-);
+  client.interceptors.response.use(
+    (response) => response,
+    async (error) => {
+      const originalRequest = error.config;
+      if (
+        error.response?.status === 401 &&
+        originalRequest &&
+        !originalRequest._retry
+      ) {
+        originalRequest._retry = true;
+        const refreshed = await refreshAccessToken();
+        const currentToken = tokenStore.getToken();
+        if (refreshed && currentToken) {
+          originalRequest.headers.Authorization = `Bearer ${currentToken}`;
+          return client(originalRequest);
+        }
+
+        tokenStore.clearToken();
+        sessionStorage.removeItem('user');
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('auth:unauthorized'));
+        }
+      }
+
+      return Promise.reject(error);
+    }
+  );
+};
+
+attachTicketInterceptors(ticketClient);
+attachTicketInterceptors(analyticsClient);
 
 const employeeClient = axios.create({
   baseURL: EMPLOYEE_API_URL || '/api/ticketing/employee',
@@ -1811,13 +1829,13 @@ export const getSecurityIncidentDetail = async (incidentId) => {
 // request instead of each hitting the server. The entry is dropped when the request ends, so nothing is cached.
 const reportRequestsInFlight = new Map();
 
-const getSharedReport = (path, params = {}) => {
-  const key = `${path}?${JSON.stringify(Object.keys(params).sort().map((k) => [k, params[k]]))}`;
+const getSharedReport = (path, params = {}, client = ticketClient) => {
+  const key = `${client.defaults.baseURL}${path}?${JSON.stringify(Object.keys(params).sort().map((k) => [k, params[k]]))}`;
   if (reportRequestsInFlight.has(key)) {
     return reportRequestsInFlight.get(key);
   }
 
-  const request = ticketClient
+  const request = client
     .get(path, { params })
     .then((response) => response.data)
     .finally(() => reportRequestsInFlight.delete(key));
@@ -1872,7 +1890,8 @@ export const getAdminDepartmentPerformance = async (params = {}) => {
   return response.data;
 };
 
-export const getAdminPredictiveInsights = (params = {}) => getSharedReport('/admin-reports/predictive-insights', params);
+// Spec 0050 AC-3: served by analytics-service now, same JSON as the old ticket-service endpoint.
+export const getAdminPredictiveInsights = (params = {}) => getSharedReport('/insights/predictive', params, analyticsClient);
 
 export const getTicketTimeline = async (ticketId, params = {}) => {
   const response = await ticketClient.get(`/tickets/${ticketId}/timeline`, { params });
@@ -1884,8 +1903,10 @@ export const getSystemDashboard = async (params = {}) => {
   return response.data;
 };
 
+// Spec 0050 AC-4: analytics-service runs the sync and clears only its own caches, so callers reload their
+// dashboard with its force refresh option afterwards (AC-5).
 export const triggerEtlSync = async (payload = {}) => {
-  const response = await ticketClient.post('/etl/trigger', payload);
+  const response = await analyticsClient.post('/etl/sync', payload);
   return response.data;
 };
 

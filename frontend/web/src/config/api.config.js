@@ -5,6 +5,8 @@ export const TICKET_API_URL = import.meta.env.VITE_TICKET_API_URL;
 export const EMPLOYEE_API_URL = import.meta.env.VITE_EMPLOYEE_API_URL || '/api/ticketing/employee';
 export const AI_API_URL = import.meta.env.VITE_AI_API_URL || '/api/ticketing/ai';
 export const NOTIFICATION_API_URL = import.meta.env.VITE_NOTIFICATION_API_URL || '/api/ticketing/notification';
+// Reporting endpoints moved from ticket-service to analytics-service (spec 0050).
+export const ANALYTICS_API_URL = import.meta.env.VITE_ANALYTICS_API_URL || '/api/ticketing/analytics';
 
 export const KB_API_URL = import.meta.env.VITE_KB_API_URL || '/api/ticketing/ai';
 export const CONFIGURATION_API_URL = import.meta.env.VITE_CONFIGURATION_API_URL || '/api/ticketing/configuration';

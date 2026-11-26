@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Ticketing\Reporting\BranchScope;
 use Ticketing\Reporting\BranchEmployees;
+use Ticketing\Reporting\ForecastReader;
 use Ticketing\Reporting\SlaOutcomeService;
 
 class TicketDashboardService
@@ -1975,13 +1976,13 @@ class TicketDashboardService
                 'Recommended Action',
             ];
 
-            $forecastService = app(TicketForecastService::class);
-            $insights = $forecastService->getPredictiveInsights(
-                (object) ['role' => 'superadmin'],
-                [
+            // Spec 0050 AC-1a: forecasts are computed by analytics-service now. Until slice 3 moves this report,
+            // it reads the stored rows read only, with no top up: if fewer than 7 future rows exist, it lists those.
+            $insights = ForecastReader::insights(
+                BranchScope::resolve((object) ['role' => 'superadmin'], [
                     'branch_id' => $branch->id ?? $branch->slug ?? 'all',
-                    'horizon_days' => 7,
-                ]
+                ]),
+                7
             );
 
             $volList = $insights['volume_forecast']['daily_predictions'] ?? $insights['volume_forecast'] ?? [];

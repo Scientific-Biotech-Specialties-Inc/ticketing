@@ -446,6 +446,38 @@ services:
         aliases:
           - analytics-service
 
+  # Spec 0050 AC-2: analytics-service's scheduler (the nightly tickets:calculate-forecasts at 02:00). Same
+  # image and env as analytics-service, no port. Deploy order: ticket-service and ticket-scheduler first
+  # (forecast schedule entry removed), then this container, so the job never runs in both places.
+  analytics-scheduler:
+    build:
+      context: ./services/analytics-service
+    container_name: analytics-scheduler-prod
+    restart: always
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_DATABASE: ${MYSQL_DATABASE}
+      DB_USERNAME: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      CACHE_DRIVER: redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      TICKETING_TECHNICAL_DEPARTMENTS: ${TICKETING_TECHNICAL_DEPARTMENTS:-}
+    command: php artisan schedule:work
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      analytics-service:
+        condition: service_started
+    networks:
+      - default
+
   # 13. ClamAV Antivirus Daemon (Port 3310)
   clamav:
     image: clamav/clamav:stable

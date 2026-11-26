@@ -9,191 +9,39 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Ticketing\Reporting\BranchScope;
+use Ticketing\Reporting\ForecastReader;
 
+/**
+ * Ticket volume forecasts and recurring issue trends per branch (moved from ticket-service, spec 0050 slice 1).
+ *
+ * analytics-service owns branch_ticket_forecasts, branch_recurring_issue_trends and forecast_job_runs and is
+ * the only writer. It reads tickets, ticket_statuses, problem_categories, machines and branches read only.
+ */
 class TicketForecastService
 {
-    const MINIMUM_HISTORICAL_DAYS = 14;
+    const MINIMUM_HISTORICAL_DAYS = ForecastReader::MINIMUM_HISTORICAL_DAYS;
 
     /**
      * Get predictive insights for branch (volume forecast and recurring issue trends).
+     *
+     * Tops the stored rows up first when asked to (forceRefresh) or when fewer than horizon_days future rows
+     * exist, then returns ForecastReader's payload (spec 0050 AC-1a).
      */
     public function getPredictiveInsights($user, array $filters = [], bool $forceRefresh = false): array
     {
         $branch = BranchScope::resolve($user, $filters);
-        $horizonDays = max(1, min((int) ($filters['horizon_days'] ?? 7), 30));
+        $horizonDays = ForecastReader::clampHorizon($filters['horizon_days'] ?? 7);
 
-        $isAllBranches = ($branch->slug === 'all' || (string)($branch->id ?? '') === 'all');
-        if ($isAllBranches) {
-            // Statuses are 'success' or 'insufficient_data', so MAX() is 'success' whenever at least one branch has a real forecast.
-            $loadAllBranches = fn () => BranchTicketForecast::where('forecast_date', '>=', Carbon::today()->toDateString())
-                ->select(
-                    'forecast_date',
-                    DB::raw('SUM(predicted_volume) as predicted_volume'),
-                    DB::raw('SUM(lower_bound) as lower_bound'),
-                    DB::raw('SUM(upper_bound) as upper_bound'),
-                    DB::raw('MAX(calculation_status) as calculation_status'),
-                    DB::raw('MAX(historical_days_used) as max_days_used'),
-                    DB::raw("MAX(CASE WHEN calculation_status = 'success' THEN historical_days_used END) as success_days_used")
-                )
-                ->groupBy('forecast_date')
-                ->orderBy('forecast_date', 'asc')
-                ->limit($horizonDays)
-                ->get();
-
-            $existingForecasts = $loadAllBranches();
-
-            // The nightly job stores a shorter horizon than a 30 day request needs, so top up instead of serving a short window.
-            if ($forceRefresh || $existingForecasts->count() < $horizonDays) {
+        // The nightly job stores a shorter horizon than a 30 day request needs, so top up instead of serving a short window.
+        if ($forceRefresh || ForecastReader::futureRowCount($branch, $horizonDays) < $horizonDays) {
+            if (ForecastReader::isAllBranches($branch)) {
                 $this->calculateAndPersistAllBranches($horizonDays);
-                $existingForecasts = $loadAllBranches();
+            } else {
+                $this->calculateAndPersistBranchForecasts($branch, $horizonDays);
             }
-
-            $firstAggregate = $existingForecasts->first();
-            if ($firstAggregate && $firstAggregate->calculation_status === 'insufficient_data') {
-                return [
-                    'status' => 'insufficient_data',
-                    'branch' => [
-                        'id' => 'all',
-                        'name' => 'All Branches',
-                        'slug' => 'all',
-                    ],
-                    'historical_basis' => [
-                        'days_used' => (int) $firstAggregate->max_days_used,
-                        'minimum_days_required' => self::MINIMUM_HISTORICAL_DAYS,
-                    ],
-                    'message' => 'Insufficient historical data for reliable projection in any branch. Minimum ' . self::MINIMUM_HISTORICAL_DAYS . ' days required.',
-                    'volume_forecast' => [],
-                    'recurring_issues' => [
-                        'categories' => [],
-                        'machines' => [],
-                    ],
-                ];
-            }
-
-            $trends = BranchRecurringIssueTrend::select(
-                    'issue_type',
-                    'item_id',
-                    'item_name',
-                    DB::raw('AVG(change_percentage) as change_percentage'),
-                    DB::raw('SUM(recent_frequency) as recent_frequency'),
-                    DB::raw('SUM(baseline_frequency) as baseline_frequency')
-                )
-                ->groupBy('issue_type', 'item_id', 'item_name')
-                ->orderBy('change_percentage', 'desc')
-                ->get();
-
-            $categoryTrends = $trends->where('issue_type', 'category')->values();
-            $machineTrends = $trends->where('issue_type', 'machine')->values();
-
-            $forecastList = $existingForecasts->map(function ($f) {
-                $fDate = Carbon::parse($f->forecast_date);
-                return [
-                    'date' => $fDate->toDateString(),
-                    'day_of_week' => $fDate->format('D'),
-                    'predicted_volume' => (int) $f->predicted_volume,
-                    'lower_bound' => (int) $f->lower_bound,
-                    'upper_bound' => (int) $f->upper_bound,
-                ];
-            })->all();
-
-            return [
-                'status' => 'success',
-                'branch' => [
-                    'id' => 'all',
-                    'name' => 'All Branches',
-                    'slug' => 'all',
-                ],
-                'historical_basis' => [
-                    'days_used' => (int) ($firstAggregate->success_days_used ?? 0),
-                    'minimum_days_required' => self::MINIMUM_HISTORICAL_DAYS,
-                    'model' => '7-day Weighted Moving Average with Day-of-Week Seasonality (Global)',
-                ],
-                'volume_forecast' => $forecastList,
-                'recurring_issues' => [
-                    'categories' => $categoryTrends,
-                    'machines' => $machineTrends,
-                ],
-            ];
         }
 
-        $branchId = (int) ($branch->id ?? 1);
-
-        // Check if cached/persisted forecasts exist
-        $existingForecasts = BranchTicketForecast::where('branch_id', $branchId)
-            ->where('forecast_date', '>=', Carbon::today()->toDateString())
-            ->orderBy('forecast_date', 'asc')
-            ->limit($horizonDays)
-            ->get();
-
-        if ($forceRefresh || $existingForecasts->count() < $horizonDays) {
-            $this->calculateAndPersistBranchForecasts($branch, $horizonDays);
-            $existingForecasts = BranchTicketForecast::where('branch_id', $branchId)
-                ->where('forecast_date', '>=', Carbon::today()->toDateString())
-                ->orderBy('forecast_date', 'asc')
-                ->limit($horizonDays)
-                ->get();
-        }
-
-        // Check if historical data was insufficient
-        $firstRecord = $existingForecasts->first();
-        if ($firstRecord && $firstRecord->calculation_status === 'insufficient_data') {
-            return [
-                'status' => 'insufficient_data',
-                'branch' => [
-                    'id' => $branch->id ?? 1,
-                    'name' => $branch->name ?? 'Main Branch',
-                    'slug' => $branch->slug ?? 'main',
-                ],
-                'historical_basis' => [
-                    'days_used' => $firstRecord->historical_days_used,
-                    'minimum_days_required' => self::MINIMUM_HISTORICAL_DAYS,
-                ],
-                'message' => 'Insufficient historical data for reliable projection. Minimum ' . self::MINIMUM_HISTORICAL_DAYS . ' days required.',
-                'volume_forecast' => [],
-                'recurring_issues' => [
-                    'categories' => [],
-                    'machines' => [],
-                ],
-            ];
-        }
-
-        // Fetch recurring issue trends
-        $trends = BranchRecurringIssueTrend::where('branch_id', $branchId)
-            ->orderBy('change_percentage', 'desc')
-            ->get();
-
-        $categoryTrends = $trends->where('issue_type', 'category')->values();
-        $machineTrends = $trends->where('issue_type', 'machine')->values();
-
-        $forecastList = $existingForecasts->map(function ($f) {
-            $fDate = Carbon::parse($f->forecast_date);
-            return [
-                'date' => $f->forecast_date->toDateString(),
-                'day_of_week' => $fDate->format('D'),
-                'predicted_volume' => (int) $f->predicted_volume,
-                'lower_bound' => (int) $f->lower_bound,
-                'upper_bound' => (int) $f->upper_bound,
-            ];
-        })->all();
-
-        return [
-            'status' => 'success',
-            'branch' => [
-                'id' => $branch->id ?? 1,
-                'name' => $branch->name ?? 'Main Branch',
-                'slug' => $branch->slug ?? 'main',
-            ],
-            'historical_basis' => [
-                'days_used' => $firstRecord->historical_days_used ?? 14,
-                'minimum_days_required' => self::MINIMUM_HISTORICAL_DAYS,
-                'model' => '7-day Weighted Moving Average with Day-of-Week Seasonality',
-            ],
-            'volume_forecast' => $forecastList,
-            'recurring_issues' => [
-                'categories' => $categoryTrends,
-                'machines' => $machineTrends,
-            ],
-        ];
+        return ForecastReader::insights($branch, $horizonDays);
     }
 
     /**
@@ -500,4 +348,3 @@ class TicketForecastService
         return $results;
     }
 }
-

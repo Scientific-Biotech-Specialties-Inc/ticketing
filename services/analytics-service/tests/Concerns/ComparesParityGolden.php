@@ -4,7 +4,9 @@ namespace Tests\Concerns;
 
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Testing\TestResponse;
+use Ticketing\Auth\Dto\AuthenticatedUserDto;
 
 /**
  * Parity checks for endpoints moved from ticket-service (spec 0050 AC-16).
@@ -24,6 +26,18 @@ trait ComparesParityGolden
 
         Carbon::setTestNow(Carbon::parse('2026-11-20 10:00:00'));
         Cache::flush();
+    }
+
+    /**
+     * The verified identity of a seeded parity actor, built from its employees row the way the token carries
+     * it: 'superadmin' (parity.super@example.test) or 'admin' (parity.admin@example.test), both Main Branch.
+     */
+    protected function parityActor(string $actor): AuthenticatedUserDto
+    {
+        $email = ['superadmin' => 'parity.super@example.test', 'admin' => 'parity.admin@example.test'][$actor];
+        $row = (array) DB::table('employees')->where('email', $email)->first();
+
+        return new AuthenticatedUserDto($row);
     }
 
     protected function tearDownComparesParityGolden(): void

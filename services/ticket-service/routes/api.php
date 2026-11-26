@@ -94,10 +94,8 @@ Route::middleware('auth.subsystem')->group(function () {
     Route::get('/admin/reports/employees', [AdminReportController::class, 'employeePerformance'])->middleware('no-cache');
     Route::get('/admin-reports/departments', [AdminReportController::class, 'departmentPerformance'])->middleware('no-cache');
     Route::get('/admin/reports/departments', [AdminReportController::class, 'departmentPerformance'])->middleware('no-cache');
-    Route::get('/admin-reports/predictive-insights', [AdminReportController::class, 'predictiveInsights'])->middleware('no-cache');
-    Route::get('/admin/reports/predictive-insights', [AdminReportController::class, 'predictiveInsights'])->middleware('no-cache');
-    Route::post('/etl/trigger', [TicketDashboardController::class, 'triggerEtl'])->middleware('no-cache');
-    Route::post('/admin/etl/trigger', [TicketDashboardController::class, 'triggerEtl'])->middleware('no-cache');
+    // Predictive insights and the ETL trigger moved to analytics-service (spec 0050 slice 1):
+    // /api/ticketing/analytics/insights/predictive and /api/ticketing/analytics/etl/sync.
     Route::get('/superadmin/system-dashboard', [SuperAdminDashboardController::class, 'systemDashboard'])->middleware('no-cache');
     Route::get('/super-admin/system-dashboard', [SuperAdminDashboardController::class, 'systemDashboard'])->middleware('no-cache');
     Route::get('/employee/dashboard', [EmployeeDashboardController::class, 'dashboard'])->middleware('no-cache');

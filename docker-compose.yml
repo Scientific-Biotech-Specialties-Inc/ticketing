@@ -468,6 +468,46 @@ services:
       db:
         condition: service_healthy
 
+  analytics-scheduler:
+    # Spec 0050 AC-2: runs analytics-service's scheduler (the nightly tickets:calculate-forecasts at 02:00).
+    # Shares the image built for analytics-service, its volumes, env and .env (APP_KEY). No port.
+    # Deploy order: redeploy ticket-service and ticket-scheduler first (their forecast schedule entry is
+    # removed), then start this container, so the job never runs in both places.
+    image: ${COMPOSE_PROJECT_NAME:-enterprise-ticketing-system}-analytics-service
+    build:
+      context: ./services/analytics-service
+    container_name: analytics-scheduler
+    volumes:
+      - ./services/analytics-service:/var/www
+      - ./packages/ticketing-auth:/var/www/packages/ticketing-auth
+      - ./packages/ticketing-reporting:/var/www/packages/ticketing-reporting
+      - analytics-service-vendor:/var/www/vendor
+    networks:
+      - default
+      - shared-capstone-network
+    environment:
+      CACHE_DRIVER: redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_DATABASE: ${MYSQL_DATABASE}
+      DB_USERNAME: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      TICKETING_TECHNICAL_DEPARTMENTS: ${TICKETING_TECHNICAL_DEPARTMENTS:-}
+    # analytics-service installs vendor/ into the shared volume and writes .env on first start; wait for both.
+    command: >
+      sh -lc "while [ ! -f vendor/autoload.php ] || [ ! -f .env ]; do sleep 5; done && php artisan schedule:work"
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      analytics-service:
+        condition: service_started
+
   configuration-service:
     build:
       context: ./services/configuration-service

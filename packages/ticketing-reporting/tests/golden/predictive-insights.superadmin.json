@@ -1,0 +1,18 @@
+{
+    "status": "insufficient_data",
+    "branch": {
+        "id": "all",
+        "name": "All Branches",
+        "slug": "all"
+    },
+    "historical_basis": {
+        "days_used": 7,
+        "minimum_days_required": 14
+    },
+    "message": "Insufficient historical data for reliable projection in any branch. Minimum 14 days required.",
+    "volume_forecast": [],
+    "recurring_issues": {
+        "categories": [],
+        "machines": []
+    }
+}

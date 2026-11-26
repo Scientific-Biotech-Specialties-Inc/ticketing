@@ -4,7 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class BranchTicketForecast extends Model
 {
@@ -31,10 +30,4 @@ class BranchTicketForecast extends Model
         'historical_days_used' => 'integer',
         'calculated_at' => 'datetime',
     ];
-
-    public function branch(): BelongsTo
-    {
-        return $this->belongsTo(Branch::class, 'branch_id', 'id');
-    }
 }
-

@@ -4,7 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ForecastJobRun extends Model
 {
@@ -27,10 +26,4 @@ class ForecastJobRun extends Model
         'duration_ms' => 'integer',
         'completed_at' => 'datetime',
     ];
-
-    public function branch(): BelongsTo
-    {
-        return $this->belongsTo(Branch::class, 'branch_id', 'id');
-    }
 }
-

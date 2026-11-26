@@ -246,6 +246,33 @@ describe('AdminDashboard (Live Data, Scoping, and ETL Sync)', () => {
     });
   });
 
+  it('reloads the dashboard with forceRefresh and predictive insights after a successful ETL sync (spec 0050 AC-5)', async () => {
+    vi.spyOn(authContextModule, 'useAuth').mockReturnValue({
+      user: { id: 8, role: 'admin', email: 'admin@example.com', branch_id: 1, branch: 'Main Branch' },
+    });
+    ticketService.triggerEtlSync.mockResolvedValue({ status: 'success', records_processed: 5, duration_ms: 10 });
+
+    render(
+      <BranchProvider>
+        <AdminDashboard />
+      </BranchProvider>
+    );
+
+    await waitFor(() => expect(ticketService.getAdminDashboard).toHaveBeenCalled());
+    expect(ticketService.getAdminDashboard).not.toHaveBeenCalledWith(expect.objectContaining({ forceRefresh: true }));
+    const insightCallsBefore = ticketService.getAdminPredictiveInsights.mock.calls.length;
+
+    fireEvent.click(screen.getByText('ETL Pipeline'));
+    await waitFor(() => expect(screen.getByText('Run Incremental ETL')).toBeDefined());
+    fireEvent.click(screen.getByText('Run Incremental ETL'));
+
+    await waitFor(() => {
+      expect(ticketService.triggerEtlSync).toHaveBeenCalledWith({ full_sync: false, branch_id: 'current' });
+      expect(ticketService.getAdminDashboard).toHaveBeenLastCalledWith(expect.objectContaining({ forceRefresh: true }));
+      expect(ticketService.getAdminPredictiveInsights.mock.calls.length).toBeGreaterThan(insightCallsBefore);
+    });
+  });
+
   it('renders workload and employee performance charts when backend returns object shape with labels and data arrays', async () => {
     vi.spyOn(authContextModule, 'useAuth').mockReturnValue({
       user: { id: 8, role: 'admin', email: 'admin@example.com', branch_id: 1, branch: 'Main Branch' },
