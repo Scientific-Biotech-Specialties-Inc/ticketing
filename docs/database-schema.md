@@ -33,6 +33,7 @@ This document details the multi-database data architecture powering the **Enterp
 * `ticket_assignments.employee_id` $\rightarrow$ `employees.id`
 * `proof_of_completion.ticket_id` $\rightarrow$ `tickets.id`
 * `ticket_audit_logs.ticket_id` $\rightarrow$ `tickets.id` (Nullable, Non-cascading)
+* `ticket_sla_alerts.ticket_id` $\rightarrow$ `tickets.ticket_ID` (Primary key, Cascade Delete)
 
 ---
 
@@ -89,7 +90,21 @@ SLA deadlines and pause time are stored on `tickets`: `response_due_at`, `resolu
 `first_response_at`, `response_sla_status`, `resolution_sla_status`, `sla_status`, `sla_started_at`,
 `sla_paused_at`, `sla_paused_total_seconds`. Per-assignment timing is in `ticket_assignment_periods`.
 The old `sla_trackings` table was never used and was dropped
-(see `docs/database-cleanup-plan.md`).
+(see `docs/database-cleanup-plan.md`). The SLA checker's own alert bookkeeping is the one exception:
+it lives in `ticket_sla_alerts` (below).
+
+#### `ticket_sla_alerts`
+Records which SLA alerts the checker (`tickets:check-sla-alerts`) already sent, one row per alerted ticket
+(spec 0049). A ticket with no row has never been alerted. Written only by ticket-service (`SLAService`);
+not exposed through any API.
+* `ticket_id` (`BIGINT UNSIGNED`, PK, FK to `tickets.ticket_ID`, Cascade Delete)
+* `sla_risk_notified_at` (`DATETIME`, Nullable, when the "at risk" alert was sent)
+* `sla_breach_notified_at` (`DATETIME`, Nullable, when the first breach alert was sent)
+* `last_sla_breach_alert_at` (`DATETIME`, Nullable, when the latest breach alert was sent)
+* `created_at`, `updated_at` (`TIMESTAMP`)
+
+These three columns used to sit on `tickets`, and the unused `tickets.first_cs_response_at` is
+dropped with them in release 2 of spec 0049.
 
 #### `ticket_audit_logs`
 Immutable compliance and change-tracking ledger.

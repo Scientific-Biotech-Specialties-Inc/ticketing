@@ -63,7 +63,7 @@ Reader: ticket-service `GET /api/notifications` (plus the two mark-read routes).
 | 3 | Drop dead tables (finding 5, plus `daily_employee_performance`) | Done: 5 tables dropped (local dev 75 to 70 tables), uncommitted |
 | 4 | Merge duplicates (findings 6, 7, 8) | Investigated: no merge is worth doing (see Phase 4 notes) |
 | 5a | Drop unused `tickets` indexes | Done: 32 to 26 indexes, uncommitted |
-| 5b | Move SLA timing and alert columns from `tickets` into `ticket_sla_states` (1:1); keep one SLA foreign key | Not started |
+| 5b | Move the 3 SLA alert timestamps from `tickets` into `ticket_sla_alerts`; drop unused `first_cs_response_at` (the full SLA split was rejected: about 360 references for no measurable gain) | Built, uncommitted ([spec 0049](specs/0049-ticket-sla-alerts-table/index.md)): release 1 (new table, checker switch) is applied on local dev; release 2 (backfill, then drop the 4 columns) is tested on the test DB only. Ship release 2 in its own PR after the spec's go/no go checklist passes |
 
 ### Phase 1 changes
 

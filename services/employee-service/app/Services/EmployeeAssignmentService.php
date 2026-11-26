@@ -291,11 +291,6 @@ class EmployeeAssignmentService
                     'created_at' => now(),
                 ]);
             }
-
-            DB::table('tickets')
-                ->where('ticket_ID', $ticketId)
-                ->whereNull('first_cs_response_at')
-                ->update(['first_cs_response_at' => now()]);
         });
 
         $ticket = DB::table('tickets')->where('ticket_ID', $ticketId)->first();
