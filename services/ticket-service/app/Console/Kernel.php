@@ -37,8 +37,7 @@ class Kernel extends ConsoleKernel
 
         $schedule->command('tickets:purge-expired-audit-logs')->cron($purgeCron);
 
-        // Database cleanup, phase 1: keep the shared notifications table bounded.
-        $schedule->command('notifications:purge')->dailyAt('03:00')->onOneServer()->withoutOverlapping();
+        // notifications:purge moved to notification-service, which owns the notifications table.
     }
 
     /**

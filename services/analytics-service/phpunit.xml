@@ -19,11 +19,18 @@
     </source>
     <php>
         <env name="APP_ENV" value="testing"/>
-        <!-- Tests must never touch the shared dev database (ticketing_system). -->
-        <env name="DB_CONNECTION" value="sqlite" force="true"/>
-        <env name="DB_DATABASE" value=":memory:" force="true"/>
+        <!-- Tests must never touch the shared dev database (ticketing_system). They run on the isolated
+             MySQL database analytics_service_test (spec 0050), created by scripts/create-test-databases.sh,
+             because the reporting queries use MySQL functions. tests/TestCase.php aborts before migrating
+             when the database name does not end in _test. -->
+        <env name="DB_CONNECTION" value="mysql" force="true"/>
+        <env name="DB_DATABASE" value="analytics_service_test" force="true"/>
+        <server name="DB_CONNECTION" value="mysql" force="true"/>
+        <server name="DB_DATABASE" value="analytics_service_test" force="true"/>
         <env name="BCRYPT_ROUNDS" value="4"/>
-        <env name="CACHE_DRIVER" value="array"/>
+        <!-- Forced: the container sets CACHE_DRIVER=redis, which would point tests at the shared dev Redis. -->
+        <env name="CACHE_DRIVER" value="array" force="true"/>
+        <server name="CACHE_DRIVER" value="array" force="true"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="QUEUE_CONNECTION" value="sync"/>

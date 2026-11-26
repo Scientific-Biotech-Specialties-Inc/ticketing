@@ -4,7 +4,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TicketDashboardController;
-use App\Http\Controllers\TicketNotificationController;
 use App\Http\Controllers\SuperAdminConfigController;
 use App\Http\Controllers\BranchPriorityController;
 use App\Http\Controllers\BranchCategoryController;
@@ -148,10 +147,7 @@ Route::middleware('auth.subsystem')->group(function () {
         return response()->json(['message' => 'Internal notes cannot be deleted to preserve collaboration history integrity.'], 405);
     });
 
-    // ─── Notifications ────────────────────────────────────────────────────────
-    Route::get('/notifications', [TicketNotificationController::class, 'getNotifications']);
-    Route::patch('/notifications/read-all', [TicketNotificationController::class, 'markNotificationsRead']);
-    Route::patch('/notifications/{id}/read', [TicketNotificationController::class, 'markNotificationRead']);
+    // Notification bell routes (GET /notifications, mark read) live in notification-service.
 
     // ─── SuperAdmin Configuration & Audit Logs ────────────────────────────────
     Route::get('/superadmin/config', [SuperAdminConfigController::class, 'getSuperAdminConfig']);

@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Services;
+namespace Ticketing\Reporting;
 
 use Carbon\Carbon;
 
@@ -23,13 +23,6 @@ class SlaOutcomeService
     private const FINISHED_STATUSES = ['resolved', 'closed'];
     private const DROPPED_STATUSES = ['discarded', 'cancelled'];
 
-    protected SLAService $slaService;
-
-    public function __construct(?SLAService $slaService = null)
-    {
-        $this->slaService = $slaService ?? app(SLAService::class);
-    }
-
     /**
      * Classify one ticket row. Needs status_name (or ticket_status_ID for on hold), resolution_due_at,
      * resolved_at, closed_at, sla_status and created_at. Returns 'met', 'breached', or null (excluded).
@@ -44,7 +37,7 @@ class SlaOutcomeService
         }
 
         try {
-            $metrics = $this->slaService->computeTicketSlaMetrics($ticket);
+            $metrics = SlaMetrics::compute($ticket);
         } catch (\Throwable $e) {
             return null;
         }

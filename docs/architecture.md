@@ -100,7 +100,8 @@ The **Enterprise Ticketing System** is engineered as a distributed, event-driven
 * **Internal Port**: 8000 (FastCGI 9000) | **Host Port**: 8003
 * **Primary Responsibilities**:
   * Dedicated event consumer for dispatching asynchronous email notifications, SMS alerts, and browser push alerts across ticket updates and SLA warning events.
-* **Storage**: MySQL / Redis queue.
+  * Owns the in-app notification bell: the `notifications` table schema, `GET /api/notifications` plus the mark-read routes, and the daily `notifications:purge` retention job (`notification-scheduler`).
+* **Storage**: MySQL (`notifications`) / Redis queue.
 
 ### 7. `AI-service` (Automated Triage & Knowledge Base)
 * **Code Location**: [services/AI-service/](file:///c:/Users/Shelley/Desktop/projects/php/enterprise-ticketing-system/services/AI-service)

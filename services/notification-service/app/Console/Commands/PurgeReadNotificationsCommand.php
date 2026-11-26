@@ -24,7 +24,7 @@ class PurgeReadNotificationsCommand extends Command
      * @var string
      */
     protected $signature = 'notifications:purge
-        {--days= : Override ticketing.notifications.retention_days}
+        {--days= : Override notifications.retention_days}
         {--dry-run : Report how many rows would be deleted without deleting them}';
 
     /**
@@ -39,7 +39,7 @@ class PurgeReadNotificationsCommand extends Command
      */
     public function handle(): int
     {
-        $days = (int) ($this->option('days') ?? config('ticketing.notifications.retention_days', 90));
+        $days = (int) ($this->option('days') ?? config('notifications.retention_days', 90));
 
         if ($days < self::MIN_RETENTION_DAYS) {
             $this->error('Retention must be at least ' . self::MIN_RETENTION_DAYS . " days (got {$days}). Nothing was deleted.");

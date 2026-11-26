@@ -2,10 +2,13 @@
 
 namespace App\Services;
 
-use App\Support\TechnicalDepartments;
+use Ticketing\Reporting\TechnicalDepartments;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Ticketing\Reporting\BranchScope;
+use Ticketing\Reporting\BranchEmployees;
+use Ticketing\Reporting\SlaOutcomeService;
 
 class TicketDashboardService
 {
@@ -978,141 +981,15 @@ class TicketDashboardService
     }
 
     /**
-     * Resolve branch record for the given user, enforcing server-side branch restriction for non-SuperAdmin.
-     */
-    public function resolveBranchScope($user, array $filters = []): object
-    {
-        $role = strtolower(trim((string) ($user->role ?? '')));
-        $isSuperAdmin = in_array($role, ['superadmin', 'super admin'], true);
-
-        $branch = null;
-
-        if (!$isSuperAdmin && $user) {
-            // Non-SuperAdmin Admin must be strictly locked to their branch
-            if (!empty($user->branch_id)) {
-                $branch = is_numeric($user->branch_id)
-                    ? DB::table('branches')->where('id', (int) $user->branch_id)->first()
-                    : DB::table('branches')->where('slug', (string) $user->branch_id)->first();
-            }
-            if (!$branch && !empty($user->branch)) {
-                $branch = DB::table('branches')
-                    ->where('slug', strtolower(trim($user->branch)))
-                    ->orWhereRaw('LOWER(name) = ?', [strtolower(trim($user->branch))])
-                    ->orWhereRaw('LOWER(code) = ?', [strtolower(trim($user->branch))])
-                    ->first();
-            }
-
-            // Check if non-superadmin provided an explicit branch filter to attempt cross-branch access
-            $target = trim((string) ($filters['branch'] ?? $filters['branch_id'] ?? ''));
-            if ($target !== '' && strtolower($target) !== 'current' && strtolower($target) !== 'assigned') {
-                $targetLower = strtolower($target);
-                $userBranchId = (string) ($user->branch_id ?? '');
-                $userBranchActualId = $branch ? (string) $branch->id : $userBranchId;
-                $userBranchSlug = $branch ? strtolower((string) $branch->slug) : '';
-                $userBranchCode = $branch ? strtolower((string) $branch->code) : '';
-                $userBranchName = $branch ? strtolower((string) $branch->name) : strtolower(trim((string) ($user->branch ?? '')));
-
-                $isMatch = (
-                    $target === $userBranchId ||
-                    $target === $userBranchActualId ||
-                    $targetLower === $userBranchSlug ||
-                    $targetLower === $userBranchCode ||
-                    $targetLower === $userBranchName
-                );
-
-                if (!$isMatch) {
-                    abort(403, 'Access denied: You are restricted to your assigned branch scope.');
-                }
-            }
-        } else {
-            // SuperAdmin can view 'all' (global scope) or a specified branch or default to 'all' or 'main'
-            $target = trim((string) ($filters['branch'] ?? $filters['branch_id'] ?? ''));
-            if (strtolower($target) === 'all') {
-                return (object) [
-                    'id' => 'all',
-                    'slug' => 'all',
-                    'name' => 'All Branches',
-                    'code' => 'ALL',
-                    'region' => 'Global',
-                ];
-            }
-            if ($target !== '') {
-                $branch = DB::table('branches')
-                    ->where('slug', $target)
-                    ->orWhere('id', is_numeric($target) ? (int)$target : -1)
-                    ->orWhereRaw('LOWER(code) = ?', [strtolower($target)])
-                    ->first();
-            } else {
-                // No branch picked means All Branches. The superadmin is global, so a branch that happens to sit
-                // on their employee row (admin@example.com carries Main Branch) must not narrow their view.
-                return (object) [
-                    'id' => 'all',
-                    'slug' => 'all',
-                    'name' => 'All Branches',
-                    'code' => 'ALL',
-                    'region' => 'Global',
-                ];
-            }
-        }
-
-        if (!$branch) {
-            $branch = DB::table('branches')->where('slug', 'main')->orWhere('id', 1)->first();
-        }
-
-        if (!$branch) {
-            $branch = (object) [
-                'id' => 1,
-                'slug' => 'main',
-                'name' => 'Main Branch',
-                'code' => 'MAIN',
-                'region' => 'NCR',
-            ];
-        }
-
-        return $branch;
-    }
-
-    /**
-     * Apply server-side branch filter to tickets table query.
-     */
-    public function applyBranchTicketFilter($query, object $branch)
-    {
-        $branchId = (string) ($branch->id ?? '1');
-        $branchSlug = (string) ($branch->slug ?? 'main');
-
-        // AC-3: When SuperAdmin selects All Branches, do not apply branch filter
-        if ($branchSlug === 'all' || $branchId === 'all') {
-            return;
-        }
-
-        $branchCode = (string) ($branch->code ?? 'MAIN');
-        $isMainBranch = ($branchId === '1' || $branchSlug === 'main' || $branchSlug === 'main-office' || $branchCode === 'MAIN');
-
-        $query->where(function ($q) use ($branchId, $branchSlug, $branchCode, $isMainBranch) {
-            $q->where('t.branch_id', $branchId)
-              ->orWhere('t.branch_id', $branchSlug)
-              ->orWhere('t.branch_id', $branchCode);
-
-            if ($isMainBranch) {
-                $q->orWhereNull('t.branch_id')
-                  ->orWhere('t.branch_id', '')
-                  ->orWhere('t.branch_id', 'main')
-                  ->orWhere('t.branch_id', 'main-office')
-                  ->orWhere('t.branch_id', '1');
-            }
-        });
-    }
-
-    /**
      * Get branch-scoped dashboard metrics and trends for Admin users.
      */
     public function getAdminDashboard($user, array $filters = [], bool $forceRefresh = false): array
     {
-        $branch = $this->resolveBranchScope($user, $filters);
+        $branch = BranchScope::resolve($user, $filters);
         $branchSlug = $branch->slug;
 
         // Parse date range
-        [$preset, $dateFrom, $dateTo] = \App\Support\ReportPeriod::resolve($filters, 'Last 7 Days');
+        [$preset, $dateFrom, $dateTo] = \Ticketing\Reporting\ReportPeriod::resolve($filters, 'Last 7 Days');
 
         $cacheKey = "admin_dashboard_metrics_v2_{$branchSlug}_" . md5(json_encode([
             'branch' => $branchSlug,
@@ -1150,7 +1027,7 @@ class TicketDashboardService
             ->leftJoin('employees as e', 'e.emp_id', '=', 't.assigned_to')
             ->where('ts.status_name', '!=', 'Discarded');
 
-        $this->applyBranchTicketFilter($ticketQuery, $branch);
+        BranchScope::applyTicketFilter($ticketQuery, $branch);
 
         $tickets = (clone $ticketQuery)
             ->whereBetween('t.created_at', [$dateFrom, $dateTo])
@@ -1286,7 +1163,7 @@ class TicketDashboardService
             $slaRateByEmp[$record['employee_id']] = $record['sla_compliance_rate'];
         }
 
-        $branchEmployees = $this->getBranchEmployees($branch);
+        $branchEmployees = BranchEmployees::for($branch);
         $empWorkloads = $this->computeEmployeeWorkloads($branchEmployees, $dateFrom, $dateTo, $slaRateByEmp);
 
         $unifiedEmpPerf = $empWorkloads['performance'];
@@ -1395,7 +1272,7 @@ class TicketDashboardService
             ->where('ts.status_name', '!=', 'Discarded')
             ->whereNotNull('t.resolution_due_at');
 
-        $this->applyBranchTicketFilter($query, $branch);
+        BranchScope::applyTicketFilter($query, $branch);
         app(SlaOutcomeService::class)->applyOutcomeWindow($query, $dateFrom, $dateTo);
 
         return $query->select(
@@ -1410,48 +1287,6 @@ class TicketDashboardService
             't.sla_status',
             't.created_at'
         )->get();
-    }
-
-    /**
-     * Get active technical department employees (Service and IT by default) belonging to the target branch.
-     */
-    protected function getBranchEmployees(object $branch): array
-    {
-        $branchId = (string) ($branch->id ?? '1');
-        $branchSlug = (string) ($branch->slug ?? 'main');
-        $branchName = (string) ($branch->name ?? 'Main Branch');
-        $isMainBranch = ($branchId === '1' || $branchSlug === 'main' || $branchSlug === 'main-office');
-
-        $query = DB::table('employees as e')
-            ->where('e.is_active', true)
-            ->whereRaw('LOWER(TRIM(COALESCE(e.role, ""))) NOT IN (?, ?, ?, ?, ?, ?, ?)', [
-                'superadmin',
-                'super admin',
-                'admin',
-                'it admin',
-                'customer service',
-                'head of cs',
-                'head of customer service',
-            ]);
-
-        TechnicalDepartments::applyEmployeeFilter($query, 'e');
-
-        if ($branchSlug !== 'all' && $branchId !== 'all') {
-            $query->where(function ($q) use ($branchId, $branchSlug, $branchName, $isMainBranch) {
-                $q->where('e.branch_id', $branchId)
-                  ->orWhere('e.branch', $branchSlug)
-                  ->orWhere('e.branch', $branchName);
-
-                if ($isMainBranch) {
-                    $q->orWhereNull('e.branch_id')
-                      ->orWhereNull('e.branch')
-                      ->orWhere('e.branch', 'Main')
-                      ->orWhere('e.branch', 'Main Branch');
-                }
-            });
-        }
-
-        return $query->select('e.emp_id', 'e.first_name', 'e.last_name', 'e.email', 'e.department', 'e.role')->get()->all();
     }
 
     /**
@@ -1644,7 +1479,7 @@ class TicketDashboardService
             ->where('ts.status_name', '!=', 'Discarded')
             ->whereBetween('t.created_at', [$dateFrom, $dateTo]);
 
-        $this->applyBranchTicketFilter($query, $branch);
+        BranchScope::applyTicketFilter($query, $branch);
 
         $results = $query
             ->select(DB::raw("COALESCE(pc.category_name, 'Unclassified') as name"), DB::raw('COUNT(*) as count'))
@@ -1673,7 +1508,7 @@ class TicketDashboardService
             ->where('ts.status_name', '!=', 'Discarded')
             ->whereBetween('t.created_at', [$dateFrom, $dateTo]);
 
-        $this->applyBranchTicketFilter($query, $branch);
+        BranchScope::applyTicketFilter($query, $branch);
 
         $results = $query
             ->select('m.machine_name as name', 'm.serial_number', DB::raw('COUNT(*) as count'))
@@ -1853,10 +1688,10 @@ class TicketDashboardService
             return $this->getAdminDashboard($user, $filters, $forceRefresh);
         }
 
-        $branch = $this->resolveBranchScope($user, $filters);
+        $branch = BranchScope::resolve($user, $filters);
 
         // Parse date range
-        [$preset, $dateFrom, $dateTo] = \App\Support\ReportPeriod::resolve($filters, 'Last 30 Days');
+        [$preset, $dateFrom, $dateTo] = \Ticketing\Reporting\ReportPeriod::resolve($filters, 'Last 30 Days');
 
         $departmentFilter = trim((string) ($filters['department'] ?? ''));
         if ($departmentFilter === '' || strtolower($departmentFilter) === 'all' || strtolower($departmentFilter) === 'all departments') {
@@ -2067,7 +1902,7 @@ class TicketDashboardService
                 ->where('ts.status_name', '!=', 'Discarded')
                 ->whereBetween('t.created_at', [$dateFrom, $dateTo]);
 
-            $this->applyBranchTicketFilter($eqQuery, $branch);
+            BranchScope::applyTicketFilter($eqQuery, $branch);
 
             if ($departmentFilter) {
                 $eqQuery->where('e.department', $departmentFilter);
@@ -2217,7 +2052,7 @@ class TicketDashboardService
                 $tQuery->whereBetween('t.created_at', [$dateFrom, $dateTo]);
             }
 
-            $this->applyBranchTicketFilter($tQuery, $branch);
+            BranchScope::applyTicketFilter($tQuery, $branch);
 
             if ($departmentFilter) {
                 $tQuery->where('e.department', $departmentFilter);

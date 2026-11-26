@@ -561,7 +561,7 @@ class SuperAdminConfigController extends Controller
             $branch = DB::table('branches')->where('id', (int) $request->query('branch_id'))->first();
             $query->whereNotNull('t.ticket_ID');
             if ($branch) {
-                app(\App\Services\TicketDashboardService::class)->applyBranchTicketFilter($query, $branch);
+                \Ticketing\Reporting\BranchScope::applyTicketFilter($query, $branch);
             } else {
                 $query->whereRaw('1 = 0');
             }

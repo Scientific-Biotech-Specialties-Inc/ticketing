@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Events\TicketChanged;
 use App\Mail\TicketNotificationMail;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -12,21 +11,6 @@ use Illuminate\Support\Facades\Mail;
 
 class TicketNotificationService
 {
-    /**
-     * Get user ID and user type (client or employee) from the incoming request.
-     */
-    public function getRecipientInfo(Request $request): array
-    {
-        $user = $request->user();
-        if (!$user) {
-            return [null, null];
-        }
-        if ($user instanceof \App\Models\Client) {
-            return [$user->id, 'client'];
-        }
-        return [$user->emp_id, 'employee'];
-    }
-
     /**
      * Maps subject/title to an alert type key for channel lookup.
      */

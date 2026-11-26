@@ -3,7 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Employee;
-use App\Support\TechnicalDepartments;
+use Ticketing\Reporting\TechnicalDepartments;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;

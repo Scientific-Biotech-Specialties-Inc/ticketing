@@ -3,11 +3,11 @@
 namespace Tests\Feature;
 
 use App\Models\CustomerFeedback;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use Ticketing\Auth\Dto\AuthenticatedUserDto;
+use Tests\RefreshReportingDatabase;
 use Tests\TestCase;
 
 /**
@@ -15,7 +15,7 @@ use Tests\TestCase;
  */
 class FeedbackVerifiedIdentityTest extends TestCase
 {
-    use DatabaseTransactions;
+    use RefreshReportingDatabase;
 
     protected function setUp(): void
     {

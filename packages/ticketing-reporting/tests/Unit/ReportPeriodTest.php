@@ -1,8 +1,8 @@
 <?php
 
-namespace Tests\Unit;
+namespace Ticketing\Reporting\Tests\Unit;
 
-use App\Support\ReportPeriod;
+use Ticketing\Reporting\ReportPeriod;
 use Carbon\Carbon;
 use PHPUnit\Framework\TestCase;
 

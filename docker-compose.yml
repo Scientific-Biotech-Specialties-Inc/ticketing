@@ -173,6 +173,7 @@ services:
     volumes:
       - ./services/ticket-service:/var/www
       - ./packages/ticketing-auth:/var/www/packages/ticketing-auth
+      - ./packages/ticketing-reporting:/var/www/packages/ticketing-reporting
       - ticket-service-vendor:/var/www/vendor
     networks:
       - default
@@ -214,6 +215,7 @@ services:
     volumes:
       - ./services/ticket-service:/var/www
       - ./packages/ticketing-auth:/var/www/packages/ticketing-auth
+      - ./packages/ticketing-reporting:/var/www/packages/ticketing-reporting
       - ticket-service-vendor:/var/www/vendor
     ports:
       - "8002:8000"
@@ -269,6 +271,7 @@ services:
     volumes:
       - ./services/ticket-service:/var/www
       - ./packages/ticketing-auth:/var/www/packages/ticketing-auth
+      - ./packages/ticketing-reporting:/var/www/packages/ticketing-reporting
       - ticket-service-vendor:/var/www/vendor
     environment:
       DB_CONNECTION: mysql
@@ -356,11 +359,15 @@ services:
     container_name: notification-service
     volumes:
       - ./services/notification-service:/var/www
+      - ./packages/ticketing-auth:/var/www/packages/ticketing-auth
       # Keep vendor/ off the Windows bind mount (as every other service does). Without it,
       # each request read hundreds of library files over the host share: 15 to 28 seconds per request.
       - notification-service-vendor:/var/www/vendor
     ports:
       - "8003:8000"
+    networks:
+      - default
+      - shared-capstone-network
     environment:
       PHP_CLI_SERVER_WORKERS: 4
       DB_CONNECTION: mysql
@@ -369,12 +376,56 @@ services:
       DB_DATABASE: ${MYSQL_DATABASE}
       DB_USERNAME: root
       DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      # Owns the notifications table and serves the bell API (staff SSO + customer Passport tokens).
+      CACHE_DRIVER: redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      AUTH_REDIS_HOST: auth-redis
+      AUTH_SERVICE_URL: http://auth-service:8000
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN}
     # The image ships vendor/ without dev packages, but the bind mounted bootstrap cache expects them,
     # so install them once into the volume. opcache for the CLI server keeps compiled files between requests.
-    command: sh -lc "if [ ! -f .env ] && [ -f .env.example ]; then cp .env.example .env; fi && if [ ! -d vendor/nunomaduro/collision ]; then composer install --no-interaction --prefer-dist --optimize-autoloader; fi && if grep -q '^APP_KEY=$$' .env; then php artisan key:generate --force; fi && echo opcache.enable_cli=1 > /usr/local/etc/php/conf.d/zz-opcache-cli.ini && php artisan serve --host=0.0.0.0 --port=8000"
+    # migrate applies this service's notifications migrations (it owns that table's schema).
+    command: sh -lc "if [ ! -f .env ] && [ -f .env.example ]; then cp .env.example .env; fi && if [ ! -d vendor/nunomaduro/collision ]; then composer install --no-interaction --prefer-dist --optimize-autoloader; fi && if grep -q '^APP_KEY=$$' .env; then php artisan key:generate --force; fi && (php artisan migrate --force || true) && echo opcache.enable_cli=1 > /usr/local/etc/php/conf.d/zz-opcache-cli.ini && php artisan serve --host=0.0.0.0 --port=8000"
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_started
+
+  # Runs the Laravel scheduler for notification-service (notifications:purge, daily 03:00).
+  notification-scheduler:
+    # Shares the image already built for notification-service, so no second build is needed.
+    image: ${COMPOSE_PROJECT_NAME:-enterprise-ticketing-system}-notification-service
+    build:
+      context: ./services/notification-service
+    container_name: notification-scheduler
+    volumes:
+      - ./services/notification-service:/var/www
+      - ./packages/ticketing-auth:/var/www/packages/ticketing-auth
+      - notification-service-vendor:/var/www/vendor
+    networks:
+      - default
+    environment:
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_DATABASE: ${MYSQL_DATABASE}
+      DB_USERNAME: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      CACHE_DRIVER: redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    command: >
+      sh -lc "while [ ! -f vendor/autoload.php ] || [ ! -f .env ]; do sleep 5; done && php artisan schedule:work"
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      notification-service:
+        condition: service_started
 
   analytics-service:
     build:
@@ -385,6 +436,7 @@ services:
       - ./services/analytics-service:/var/www
       # Shared token verification package used by AuthenticateSubsystem (spec 0034).
       - ./packages/ticketing-auth:/var/www/packages/ticketing-auth
+      - ./packages/ticketing-reporting:/var/www/packages/ticketing-reporting
       # Keep vendor/ off the Windows bind mount. Without this every request booted Laravel over the host
       # filesystem (about 24 s), so /api/csat-stats never answered within any timeout (spec 0031 AC-16).
       - analytics-service-vendor:/var/www/vendor
@@ -410,6 +462,8 @@ services:
       DB_DATABASE: ${MYSQL_DATABASE}
       DB_USERNAME: root
       DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      # Same technical department override as ticket-service (spec 0050). Empty means the departments table.
+      TICKETING_TECHNICAL_DEPARTMENTS: ${TICKETING_TECHNICAL_DEPARTMENTS:-}
     depends_on:
       db:
         condition: service_healthy
@@ -675,6 +729,7 @@ services:
       VITE_TICKET_SERVICE_URL: "http://ticket-service:8000"
       VITE_ATTACHMENT_SERVICE_URL: "http://attachment-service:8000"
       VITE_MESSAGING_SERVICE_URL: "http://messaging-service:8000"
+      VITE_NOTIFICATION_SERVICE_URL: "http://notification-service:8000"
       VITE_AI_SERVICE_URL: "http://ai-service:8000"
       VITE_ANALYTICS_SERVICE_URL: "http://analytics-service:8000"
       VITE_CONFIGURATION_SERVICE_URL: "http://configuration-service:8000"
@@ -703,6 +758,7 @@ services:
       VITE_TICKET_SERVICE_URL: "http://ticket-service:8000"
       VITE_ATTACHMENT_SERVICE_URL: "http://attachment-service:8000"
       VITE_MESSAGING_SERVICE_URL: "http://messaging-service:8000"
+      VITE_NOTIFICATION_SERVICE_URL: "http://notification-service:8000"
       VITE_AI_SERVICE_URL: "http://ai-service:8000"
       VITE_ANALYTICS_SERVICE_URL: "http://analytics-service:8000"
       VITE_CONFIGURATION_SERVICE_URL: "http://configuration-service:8000"

@@ -213,6 +213,15 @@ jobs:
           mkdir -p "${{ matrix.context }}/packages"
           cp -r ./packages/ticketing-auth "${{ matrix.context }}/packages/ticketing-auth"
 
+      # Spec 0050: shared reporting rules for ticket-service and analytics-service. Only src/ and
+      # composer.json go into the image; the package tests, fixtures and golden files stay out.
+      - name: Copy shared ticketing-reporting package into build context
+        run: |
+          rm -rf "${{ matrix.context }}/packages/ticketing-reporting"
+          mkdir -p "${{ matrix.context }}/packages/ticketing-reporting"
+          cp -r ./packages/ticketing-reporting/src "${{ matrix.context }}/packages/ticketing-reporting/src"
+          cp ./packages/ticketing-reporting/composer.json "${{ matrix.context }}/packages/ticketing-reporting/composer.json"
+
       - name: Build and push ${{ matrix.name }}
         uses: docker/build-push-action@v5
         with:

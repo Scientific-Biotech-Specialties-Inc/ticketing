@@ -33,25 +33,31 @@ Inventory taken 2026-11-24 from the local `capstone-db` container (read-only
 
 ## Notifications
 
-`notifications` lives in the shared database. Its schema history is in ticket-service
-migrations (`2026_05_28_000030`, `2026_06_08_000003`, `2026_06_11_000001`,
-`2026_11_24_000001`), so new schema changes for it go in ticket-service.
-Notification-service does not own the schema because:
+`notifications` lives in the shared database and is owned by **notification-service** (phase 1b).
+New schema changes go in notification-service migrations. The table's earlier history is in
+ticket-service (`2026_05_28_000030`, `2026_06_08_000003`, `2026_06_11_000001`, `2026_11_24_000001`);
+those migrations now skip whatever already exists, so either service can migrate first on a
+fresh database.
 
-- the table has a foreign key to `tickets`, so it must be created after ticket-service migrates;
-- the local `notification-service` container does not run `php artisan migrate`.
+| Piece | Where |
+|---|---|
+| Schema | notification-service `2026_11_26_000002_take_ownership_of_notifications_table` |
+| Read API | notification-service `GET /api/notifications`, `PATCH /api/notifications/read-all`, `PATCH /api/notifications/{id}/read` (gateway `/api/ticketing/notification/...`) |
+| Retention purge | notification-service `php artisan notifications:purge`, daily 03:00 on `notification-scheduler` |
 
-Writers (all insert directly into the shared table):
+Writers (all still insert directly into the shared table):
 
 | Service | Where |
 |---|---|
-| ticket-service | `TicketNotificationService::notifyRecipient`, `TicketReminderController`, `TicketNotificationController` |
+| ticket-service | `TicketNotificationService::notifyRecipient`, `TicketReminderController` |
 | employee-service | `TicketNotificationService::notifyRecipient` |
 | messaging-service | `MessageController` (new chat message) |
 | attachment-service | `AttachmentController` (malware detected) |
 | notification-service | `SystemAlertController` (system alerts to Super Admin) |
 
-Reader: ticket-service `GET /api/notifications` (plus the two mark-read routes).
+Sending these writes through a notification-service REST endpoint instead is a possible later step.
+It is not done: it would add a network call to every ticket action, and a notification-service
+outage would then lose notifications.
 
 ## Phases
 
@@ -59,6 +65,7 @@ Reader: ticket-service `GET /api/notifications` (plus the two mark-read routes).
 |---|---|---|
 | 0 | Backup, read-only inventory | Inventory done (above) |
 | 1 | Notifications: `type` column, indexes, retention purge, remove broken legacy route | Done on `chore/db-cleanup-notifications` |
+| 1b | Move `notifications` ownership (schema, read API, purge) from ticket-service to notification-service | Done, uncommitted (see Phase 1b changes) |
 | 2 | One owning service per table | Ownership recorded below; duplicate migration files kept on purpose (see Phase 2 notes) |
 | 3 | Drop dead tables (finding 5, plus `daily_employee_performance`) | Done: 5 tables dropped (local dev 75 to 70 tables), uncommitted |
 | 4 | Merge duplicates (findings 6, 7, 8) | Investigated: no merge is worth doing (see Phase 4 notes) |
@@ -75,6 +82,18 @@ Reader: ticket-service `GET /api/notifications` (plus the two mark-read routes).
 | Retention | `php artisan notifications:purge` (daily 03:00) deletes read notifications older than `NOTIFICATION_RETENTION_DAYS` (default 90, minimum 7) in batches of 1000. Unread rows are kept. Supports `--dry-run` and `--days` |
 | Removed route | `GET /api/security-incidents/{id}` queried a non-existent `notification_ID` column. Replaced long ago by `GET /api/superadmin/security-incidents/{incidentId}` |
 
+### Phase 1b changes
+
+| Change | Detail |
+|---|---|
+| Ownership migration | notification-service `2026_11_26_000002`: creates the table in its final shape when missing; otherwise drops the foreign key to `tickets`. The key only cascaded hard ticket deletes, which only the seeders do, and they delete notifications first. Its index stays. `down()` is a no-op |
+| ticket-service migrations | `2026_05_28_000030` creates `notifications` only if missing and no longer drops it on rollback; `2026_06_08_000003` and `2026_06_11_000001` skip the column and index if present |
+| Read API | Moved from ticket-service `TicketNotificationController` (deleted, with its routes and the dead `TicketController` proxies) to notification-service `NotificationController` + `NotificationInboxService`. Same response shape. Mark-one-read no longer returns another user's notification. The `notifications_read` Reverb broadcast was dropped: the frontend never listened for it |
+| Auth | notification-service gained `AuthenticateSubsystem` and the shared `VerifyEmployeeJwt` (staff SSO tokens) next to its existing Passport guard (customer tokens), plus the `auth` Redis connection for the JWT blacklist |
+| Purge | `PurgeReadNotificationsCommand` moved; config is now `notifications.retention_days` (same `NOTIFICATION_RETENTION_DAYS` env). New `notification-scheduler` container in both compose files. Azure runs no scheduler for any service |
+| Frontend | `getNotifications` / `markNotificationsRead` / `markNotificationRead` call `/api/ticketing/notification` (`VITE_NOTIFICATION_API_URL`); vite dev proxy entry added |
+| Gateways | `nginx.prod.conf` (staff and customer servers) and `frontend/web/nginx.customer.template.conf` gained the notification route; `nginx.gateway.conf(.template)` already had it. Azure customer portal needs `NOTIFICATION_SERVICE_URL` (capstone-azure-infra `ticketing.bicep`, local edit) before an image using the customer template ships |
+
 ### Phase 2 notes: why the duplicate migration files stay
 
 | Fact | Consequence |
@@ -90,11 +109,12 @@ Owner = the service whose migrations must change a table's schema from now on.
 |---|---|
 | customer-service | `clients`, `clients_credentials`, `refresh_tokens`, `password_reset_otps`, `password_reset_tokens`, `oauth_*` |
 | employee-service | `employees`, `departments`, `reassignment_requests`, `work_logs`, `ticketing_handler_departments` |
-| ticket-service | `tickets` and all `ticket_*` tables, `notifications`, `internal_notes`, `ticket_remarks`, SLA tables, `branches`, `branch_priority_overrides`, `branch_sla_policies`, `branch_categories`, `machines`, `machine_categories`, `problem_categories`, `workflow_statuses`, `escalation_rules`, `hold_requests`, `prs_ticket_requests`, `audit_*`, `users`, `failed_jobs` |
+| ticket-service | `tickets` and all `ticket_*` tables, `internal_notes`, `ticket_remarks`, SLA tables, `branches`, `branch_priority_overrides`, `branch_sla_policies`, `branch_categories`, `machines`, `machine_categories`, `problem_categories`, `workflow_statuses`, `escalation_rules`, `hold_requests`, `prs_ticket_requests`, `audit_*`, `users`, `failed_jobs` |
 | attachment-service | `proof_of_completion`, `ticket_attachments` (originally created by ticket-service) |
 | analytics-service | `customer_feedback`, `*_analytics`, `*_snapshots`, `forecast_job_runs`, `branch_ticket_forecasts`, `branch_recurring_issue_trends` |
 | configuration-service | `email_configurations`, `email_templates`, `notification_channels`, `feedback_questions`, `feedback_form_settings`, `ticket_configurations`, `system_security_alerts` |
 | AI-service | `ai_conversations`, `kb_*` |
+| notification-service | `notifications` |
 
 `personal_access_tokens` (Sanctum) is dead: Sanctum is in every service's `dont-discover` list and
 `HasApiTokens` comes from Passport. Its create migration exists in 7 services, so removing it means

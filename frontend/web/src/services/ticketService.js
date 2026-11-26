@@ -1,6 +1,6 @@
 import axios from 'axios';
 import axiosInstance from '@/api/axiosInstance';
-import { TICKET_API_URL, EMPLOYEE_API_URL, AUTH_ENDPOINTS, AI_API_URL } from '@/config/api.config';
+import { TICKET_API_URL, EMPLOYEE_API_URL, AUTH_ENDPOINTS, AI_API_URL, NOTIFICATION_API_URL } from '@/config/api.config';
 import tokenStore from '@/auth/tokenStore';
 import { refreshAccessToken } from '@/auth/refreshSession';
 
@@ -101,6 +101,53 @@ employeeClient.interceptors.response.use(
       if (refreshed && currentToken) {
         originalRequest.headers.Authorization = `Bearer ${currentToken}`;
         return employeeClient(originalRequest);
+      }
+
+      tokenStore.clearToken();
+      sessionStorage.removeItem('user');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('auth:unauthorized'));
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
+
+// Notification bell API (notification-service owns the notifications table and its read routes).
+const notificationClient = axios.create({
+  baseURL: NOTIFICATION_API_URL || '/api/ticketing/notification',
+  withCredentials: true,
+  headers: {
+    'X-Requested-With': 'XMLHttpRequest',
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+  },
+});
+
+notificationClient.interceptors.request.use((config) => {
+  const token = tokenStore.getToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+notificationClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    if (
+      error.response?.status === 401 &&
+      originalRequest &&
+      !originalRequest._retry
+    ) {
+      originalRequest._retry = true;
+      const refreshed = await refreshAccessToken();
+      const currentToken = tokenStore.getToken();
+      if (refreshed && currentToken) {
+        originalRequest.headers.Authorization = `Bearer ${currentToken}`;
+        return notificationClient(originalRequest);
       }
 
       tokenStore.clearToken();
@@ -1333,17 +1380,17 @@ export const saveWorkLog = async (payload) => {
 };
 
 export const getNotifications = async () => {
-  const response = await ticketClient.get('/notifications');
+  const response = await notificationClient.get('/notifications');
   return response.data;
 };
 
 export const markNotificationsRead = async () => {
-  const response = await ticketClient.patch('/notifications/read-all');
+  const response = await notificationClient.patch('/notifications/read-all');
   return response.data;
 };
 
 export const markNotificationRead = async (id) => {
-  const response = await ticketClient.patch(`/notifications/${id}/read`);
+  const response = await notificationClient.patch(`/notifications/${id}/read`);
   return response.data;
 };
 

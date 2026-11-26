@@ -7,6 +7,7 @@ use App\Services\TicketForecastService;
 use App\Services\TicketCacheService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
+use Ticketing\Reporting\BranchScope;
 
 class TicketDashboardController extends Controller
 {
@@ -247,7 +248,7 @@ class TicketDashboardController extends Controller
                 $recordsProcessed += (int) ($branchResult['records_processed'] ?? 0);
             }
         } else {
-            $branch = $this->dashboardService->resolveBranchScope($user, ['branch_id' => $requestedBranchId]);
+            $branch = BranchScope::resolve($user, ['branch_id' => $requestedBranchId]);
             $forecastResult = $forecastService->calculateAndPersistBranchForecasts($branch, 7);
             $recordsProcessed = (int) ($forecastResult['records_processed'] ?? 0);
         }

@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Support;
+namespace Ticketing\Reporting;
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;

@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Support;
+namespace Ticketing\Reporting;
 
 use Carbon\Carbon;
 

@@ -1,0 +1,16 @@
+{
+    "name": "ticketing/reporting",
+    "description": "Shared reporting rules (branch scope, SLA outcome, technical departments, status buckets, report period) for ticket-service and analytics-service",
+    "type": "library",
+    "license": "proprietary",
+    "autoload": {
+        "psr-4": {
+            "Ticketing\\Reporting\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Ticketing\\Reporting\\Tests\\": "tests/"
+        }
+    }
+}

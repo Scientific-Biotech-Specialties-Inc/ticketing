@@ -4,7 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Employee;
 use App\Services\CsatSnapshotService;
-use App\Services\SlaOutcomeService;
+use Ticketing\Reporting\SlaOutcomeService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Http\Client\ConnectionException;

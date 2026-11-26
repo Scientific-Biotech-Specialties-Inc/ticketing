@@ -7,6 +7,7 @@ use App\Services\BranchPriorityService;
 use App\Services\TicketConfigurationService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Ticketing\Reporting\SlaMetrics;
 
 class SLAService
 {
@@ -27,7 +28,7 @@ class SLAService
     }
 
     /** The four columns that record where a ticket's SLA came from (spec 0037). */
-    public const SLA_SOURCE_COLUMNS = ['branch_sla_policy_id', 'branch_priority_override_id', 'sla_rule_id', 'sla_ID'];
+    public const SLA_SOURCE_COLUMNS = SlaMetrics::SLA_SOURCE_COLUMNS;
 
     /** The SLA checker's alert bookkeeping columns, kept in ticket_sla_alerts (spec 0049). */
     private const SLA_ALERT_COLUMNS = ['sla_risk_notified_at', 'sla_breach_notified_at', 'last_sla_breach_alert_at'];
@@ -791,7 +792,7 @@ class SLAService
     }
 
     /** Minutes before resolution_due_at when an open ticket counts as At Risk (AC-13 step 6). */
-    public const AT_RISK_MINUTES = 240;
+    public const AT_RISK_MINUTES = SlaMetrics::AT_RISK_MINUTES;
 
     /**
      * Compute comprehensive SLA metrics (status, due date, minutes remaining) for ticket monitoring.
@@ -810,74 +811,7 @@ class SLAService
      */
     public function computeTicketSlaMetrics($ticket): array
     {
-        $result = fn (string $status, $dueAt = null, $remaining = null, array $flags = []) => array_merge([
-            'status' => $status,
-            'due_at' => $dueAt ? $dueAt->toIso8601String() : null,
-            'time_remaining_minutes' => $remaining,
-            'is_breached' => false,
-            'is_at_risk' => false,
-            'is_paused' => false,
-        ], $flags);
-
-        if (!$ticket) {
-            return $result('On Track');
-        }
-
-        $now = now();
-        $statusName = strtolower(trim((string) ($ticket->status_name ?? $ticket->status ?? '')));
-        $isClosedOrResolved = in_array($statusName, ['closed', 'resolved'], true);
-        $isOnHold = in_array($statusName, ['on hold', 'on-hold', 'paused'], true) || ((int) ($ticket->ticket_status_ID ?? 0) === 11);
-
-        $resDueAtRaw = $ticket->resolution_due_at ?? null;
-        $resDueAt = $resDueAtRaw ? Carbon::parse($resDueAtRaw) : null;
-        $resolvedAtRaw = ($ticket->resolved_at ?? null) ?: ($ticket->closed_at ?? null);
-        $resolvedAt = $resolvedAtRaw ? Carbon::parse($resolvedAtRaw) : null;
-
-        // 1. SLA assignment failed at creation; tickets:backfill-sla repairs it.
-        if (($ticket->sla_status ?? null) === 'SLA Unavailable') {
-            return $result('SLA Unavailable', null, null, ['is_unavailable' => true]);
-        }
-
-        // 2. No SLA source and no due date.
-        $hasSource = false;
-        foreach (self::SLA_SOURCE_COLUMNS as $column) {
-            if (!empty($ticket->{$column} ?? null)) {
-                $hasSource = true;
-                break;
-            }
-        }
-        if (!$hasSource && !$resDueAt) {
-            return $result('No SLA Configured', null, null, ['is_unavailable' => true]);
-        }
-
-        // 3. On Hold: the clock is paused.
-        if ($isOnHold) {
-            return $result('Paused', $resDueAt, $resDueAt ? max(0, $now->diffInMinutes($resDueAt, false)) : null, ['is_paused' => true]);
-        }
-
-        // 4. Closed or Resolved.
-        if ($isClosedOrResolved) {
-            $isBreached = $resDueAt !== null && ($resolvedAt ?: $now)->gt($resDueAt);
-            return $result($isBreached ? 'Breached' : 'Compliant', $resDueAt, 0, ['is_breached' => $isBreached]);
-        }
-
-        if (!$resDueAt) {
-            return $result('On Track');
-        }
-
-        // 5. Breached.
-        if ($now->gt($resDueAt)) {
-            return $result('Breached', $resDueAt, 0, ['is_breached' => true]);
-        }
-
-        // 6. At Risk.
-        $remaining = (int) $now->diffInMinutes($resDueAt, false);
-        if ($resDueAt->lte($now->copy()->addMinutes(self::AT_RISK_MINUTES))) {
-            return $result('At Risk', $resDueAt, $remaining, ['is_at_risk' => true]);
-        }
-
-        // 7. On Track.
-        return $result('On Track', $resDueAt, $remaining);
+        return SlaMetrics::compute($ticket);
     }
 
     /**

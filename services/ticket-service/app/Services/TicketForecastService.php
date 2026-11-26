@@ -8,24 +8,18 @@ use App\Models\ForecastJobRun;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Ticketing\Reporting\BranchScope;
 
 class TicketForecastService
 {
     const MINIMUM_HISTORICAL_DAYS = 14;
-
-    protected TicketDashboardService $dashboardService;
-
-    public function __construct(?TicketDashboardService $dashboardService = null)
-    {
-        $this->dashboardService = $dashboardService ?? app(TicketDashboardService::class);
-    }
 
     /**
      * Get predictive insights for branch (volume forecast and recurring issue trends).
      */
     public function getPredictiveInsights($user, array $filters = [], bool $forceRefresh = false): array
     {
-        $branch = $this->dashboardService->resolveBranchScope($user, $filters);
+        $branch = BranchScope::resolve($user, $filters);
         $horizonDays = max(1, min((int) ($filters['horizon_days'] ?? 7), 30));
 
         $isAllBranches = ($branch->slug === 'all' || (string)($branch->id ?? '') === 'all');
@@ -222,7 +216,7 @@ class TicketForecastService
                 ->where('ts.status_name', '!=', 'Discarded')
                 ->where('t.created_at', '>=', $historyStart);
 
-            $this->dashboardService->applyBranchTicketFilter($ticketQuery, $branch);
+            BranchScope::applyTicketFilter($ticketQuery, $branch);
 
             $dailyCounts = $ticketQuery->select(
                 DB::raw('DATE(t.created_at) as ticket_date'),
@@ -378,7 +372,7 @@ class TicketForecastService
             ->leftJoin('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
             ->whereBetween('t.created_at', [$recentStart, $recentEnd])
             ->whereNotNull('t.problem_category_ID');
-        $this->dashboardService->applyBranchTicketFilter($recentCategoriesQuery, $branch);
+        BranchScope::applyTicketFilter($recentCategoriesQuery, $branch);
         $recentCategories = $recentCategoriesQuery
             ->select('pc.problem_category_ID as id', 'pc.category_name as name', DB::raw('COUNT(*) as total'))
             ->groupBy('pc.problem_category_ID', 'pc.category_name')
@@ -388,7 +382,7 @@ class TicketForecastService
             ->leftJoin('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
             ->whereBetween('t.created_at', [$baselineStart, $baselineEnd])
             ->whereNotNull('t.problem_category_ID');
-        $this->dashboardService->applyBranchTicketFilter($baselineCategoriesQuery, $branch);
+        BranchScope::applyTicketFilter($baselineCategoriesQuery, $branch);
         $baselineCategories = $baselineCategoriesQuery
             ->select('pc.problem_category_ID as id', DB::raw('COUNT(*) as total'))
             ->groupBy('pc.problem_category_ID')
@@ -437,7 +431,7 @@ class TicketForecastService
         $recentMachinesQuery = DB::table('tickets as t')
             ->join('machines as m', 'm.machine_ID', '=', 't.machine_ID')
             ->whereBetween('t.created_at', [$recentStart, $recentEnd]);
-        $this->dashboardService->applyBranchTicketFilter($recentMachinesQuery, $branch);
+        BranchScope::applyTicketFilter($recentMachinesQuery, $branch);
         $recentMachines = $recentMachinesQuery
             ->select('m.machine_ID as id', 'm.machine_name as name', DB::raw('COUNT(*) as total'))
             ->groupBy('m.machine_ID', 'm.machine_name')
@@ -446,7 +440,7 @@ class TicketForecastService
         $baselineMachinesQuery = DB::table('tickets as t')
             ->join('machines as m', 'm.machine_ID', '=', 't.machine_ID')
             ->whereBetween('t.created_at', [$baselineStart, $baselineEnd]);
-        $this->dashboardService->applyBranchTicketFilter($baselineMachinesQuery, $branch);
+        BranchScope::applyTicketFilter($baselineMachinesQuery, $branch);
         $baselineMachines = $baselineMachinesQuery
             ->select('m.machine_ID as id', DB::raw('COUNT(*) as total'))
             ->groupBy('m.machine_ID')

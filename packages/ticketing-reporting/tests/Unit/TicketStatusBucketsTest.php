@@ -1,8 +1,8 @@
 <?php
 
-namespace Tests\Unit;
+namespace Ticketing\Reporting\Tests\Unit;
 
-use App\Support\TicketStatusBuckets;
+use Ticketing\Reporting\TicketStatusBuckets;
 use PHPUnit\Framework\TestCase;
 
 class TicketStatusBucketsTest extends TestCase

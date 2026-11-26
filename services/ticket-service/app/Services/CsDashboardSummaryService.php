@@ -4,6 +4,7 @@ namespace App\Services;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Ticketing\Reporting\BranchScope;
 
 /**
  * Per agent summary for the CS "My Dashboard" (spec 0028 AC-12).
@@ -19,10 +20,10 @@ use Illuminate\Support\Facades\Log;
 class CsDashboardSummaryService
 {
     /** Resolved, Closed and Discarded tickets no longer need triage. */
-    private const FINISHED_STATUS_IDS = \App\Support\TicketStatusBuckets::FINISHED_IDS;
+    private const FINISHED_STATUS_IDS = \Ticketing\Reporting\TicketStatusBuckets::FINISHED_IDS;
 
     /** Resolved tickets are still tracked until the customer closes them, so only Closed and Discarded drop out. */
-    private const CLOSED_STATUS_IDS = \App\Support\TicketStatusBuckets::CLOSED_IDS;
+    private const CLOSED_STATUS_IDS = \Ticketing\Reporting\TicketStatusBuckets::CLOSED_IDS;
     private const RESOLVED_STATUS_ID = 3;
 
     public function __construct(protected SLAService $slaService)
@@ -35,7 +36,7 @@ class CsDashboardSummaryService
         $branchId = isset($user->branch_id) && $user->branch_id !== null ? (int) $user->branch_id : null;
         // Same branch rules as every other dashboard: the main branch also owns tickets saved with no
         // branch (NULL, '' or a legacy 'main'), which a plain `branch_id = 1` comparison would hide.
-        $branch = $branchId !== null ? app(TicketDashboardService::class)->resolveBranchScope($user) : null;
+        $branch = $branchId !== null ? BranchScope::resolve($user) : null;
 
         $partialErrors = [];
         $queued = $this->section('queued_tickets', $partialErrors, fn () => $this->queued($branch, $limit));
@@ -101,7 +102,7 @@ class CsDashboardSummaryService
             );
 
         if ($branch !== null) {
-            app(TicketDashboardService::class)->applyBranchTicketFilter($q, $branch);
+            BranchScope::applyTicketFilter($q, $branch);
         }
 
         return $q;
@@ -155,7 +156,7 @@ class CsDashboardSummaryService
                 DB::raw("TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))) as requested_by_name")
             );
         if ($branch !== null) {
-            app(TicketDashboardService::class)->applyBranchTicketFilter($q, $branch);
+            BranchScope::applyTicketFilter($q, $branch);
         }
 
         $rows = $q->orderBy('rr.requested_at')->get();
