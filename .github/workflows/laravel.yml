@@ -6,8 +6,8 @@ name: 'Laravel Tests'
 # Database isolation: services whose phpunit.xml forces a MySQL test database
 # (ticketing_system_test, analytics_service_test) get a throwaway MySQL service
 # container that only lives for the job, so no shared or dev database is ever
-# touched. The other services force sqlite :memory: in their phpunit.xml. Redis is mocked in the test suites and
-# no suite needs a live MongoDB.
+# touched. The other services force sqlite :memory: in their phpunit.xml.
+# Redis is mocked in the test suites; messaging-service gets a throwaway MongoDB.
 #
 # employee-service is not in the matrix yet: it has no phpunit.xml and no tests.
 # Add it here once it does.
@@ -63,6 +63,11 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=20
+      # messaging-service talks to MongoDB (MONGODB_URI defaults to 127.0.0.1:27017).
+      mongo:
+        image: mongo:7.0.14
+        ports:
+          - 27017:27017
 
     env:
       # Connection details only. DB_CONNECTION and DB_DATABASE are deliberately
@@ -117,9 +122,37 @@ jobs:
           cp .env.example .env
           php artisan key:generate --force
 
+      # Passport and the shared JWT middleware need RSA keys on disk. Real keys are
+      # gitignored, so CI generates a throwaway pair that only exists for this job.
+      - name: Generate throwaway OAuth keys
+        run: |
+          if [ ! -f storage/oauth-private.key ]; then
+            openssl genrsa -out storage/oauth-private.key 2048
+            openssl rsa -in storage/oauth-private.key -pubout -out storage/oauth-public.key
+            chmod 600 storage/oauth-private.key storage/oauth-public.key
+          fi
+          [ -f storage/auth-module-public.key ] || cp storage/oauth-public.key storage/auth-module-public.key
+
       - name: Create isolated MySQL test databases
         run: |
           mysql -h 127.0.0.1 -uroot -proot -e "CREATE DATABASE IF NOT EXISTS ticketing_system_test; CREATE DATABASE IF NOT EXISTS analytics_service_test;"
+
+      # Suites that force a MySQL test database expect it to be migrated already
+      # (locally that database persists between runs). Migrate it here, pointing
+      # explicitly at the test database named in phpunit.xml.
+      - name: Migrate MySQL test database
+        run: |
+          conn=$(grep -oP 'name="DB_CONNECTION" value="\K[^"]+' phpunit.xml | head -1)
+          db=$(grep -oP 'name="DB_DATABASE" value="\K[^"]+' phpunit.xml | head -1)
+          if [ "$conn" = "mysql" ]; then
+            case "$db" in *_test) ;; *) echo "Refusing to migrate non-test database '$db'"; exit 1 ;; esac
+            DB_CONNECTION=mysql DB_DATABASE="$db" php artisan migrate --force
+            if [ -f database/seeders/TicketReferenceSeeder.php ]; then
+              DB_CONNECTION=mysql DB_DATABASE="$db" php artisan db:seed --class=TicketReferenceSeeder --force
+            fi
+          else
+            echo "phpunit.xml uses $conn; nothing to migrate."
+          fi
 
       - name: Run PHPUnit
         run: vendor/bin/phpunit
