@@ -3,6 +3,10 @@ name: deploy-ticketing-prod
 # Production deployment workflow for the Enterprise Ticketing System.
 # Automatically builds container images (frontend, gateway, and all 9 backend microservices)
 # and pushes to GHCR, rolling them into Azure Container Apps.
+#
+# Azure rollout is switched off on purpose (saves Azure credits). The Azure login and
+# roll steps only run when the repository variable AZURE_DEPLOY_ENABLED is 'true';
+# otherwise they show as skipped. When enabled, a failed login or rollout fails the run.
 
 on:
   push:
@@ -48,7 +52,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Azure login (OIDC)
-        continue-on-error: true
+        if: vars.AZURE_DEPLOY_ENABLED == 'true'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -56,7 +60,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Roll ticketing-gateway in Azure
-        continue-on-error: true
+        if: vars.AZURE_DEPLOY_ENABLED == 'true'
         run: |
           az containerapp update \
             --name ticketing-gateway \
@@ -96,7 +100,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Azure login (OIDC)
-        continue-on-error: true
+        if: vars.AZURE_DEPLOY_ENABLED == 'true'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -104,7 +108,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Roll ticketing-web in Azure
-        continue-on-error: true
+        if: vars.AZURE_DEPLOY_ENABLED == 'true'
         run: |
           az containerapp update \
             --name ticketing-web \
@@ -145,7 +149,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=customer-web
 
       - name: Azure login (OIDC)
-        continue-on-error: true
+        if: vars.AZURE_DEPLOY_ENABLED == 'true'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -153,7 +157,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Roll customer-ticketing-web in Azure
-        continue-on-error: true
+        if: vars.AZURE_DEPLOY_ENABLED == 'true'
         run: |
           az containerapp update \
             --name customer-ticketing-web \
@@ -226,7 +230,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Azure login (OIDC)
-        continue-on-error: true
+        if: vars.AZURE_DEPLOY_ENABLED == 'true'
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -234,7 +238,7 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Roll ${{ matrix.name }} in Azure
-        continue-on-error: true
+        if: vars.AZURE_DEPLOY_ENABLED == 'true'
         run: |
           az containerapp update \
             --name ${{ matrix.name }} \

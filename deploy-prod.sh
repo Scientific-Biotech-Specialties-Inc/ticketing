@@ -22,7 +22,7 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 # 3. Wait for database container to be healthy
 echo "=> Waiting for MySQL database to be ready..."
-until [ "`docker inspect -f {{.State.Health.Status}} capstone-db-prod 2>/dev/null`"=="healthy" ]; do
+until [ "$(docker inspect -f '{{.State.Health.Status}}' capstone-db-prod 2>/dev/null)" = "healthy" ]; do
     echo "Database is initializing, waiting 5 seconds..."
     sleep 5
 done
@@ -43,7 +43,9 @@ MIGRATION_SERVICES=(
 
 for SERVICE in "${MIGRATION_SERVICES[@]}"; do
     echo "Running migrations for: $SERVICE..."
-    docker exec -i "$SERVICE" php artisan migrate --force || true
+    # No "|| true": a failed migration must stop the deploy (set -e) instead of
+    # leaving a service running against a schema it does not expect.
+    docker exec -i "$SERVICE" php artisan migrate --force
 done
 
 # 5. Optimize production caches
