@@ -30,6 +30,8 @@ export default function useRealtimeRefresh({
     deferRefreshRef.current = deferRefresh;
   }); // Keep dynamic callbacks fresh on every render
 
+  const channelsKey = JSON.stringify(channels.map((c) => `${c?.name || ''}:${c?.event || ''}`));
+
   useEffect(() => {
     if (!enabled) return undefined;
 
@@ -57,7 +59,7 @@ export default function useRealtimeRefresh({
       };
 
       channel.listen(eventName, handler);
-      return { channel, eventName };
+      return { channel, eventName, handler };
     });
 
     const timer = effectiveIntervalMs
@@ -80,11 +82,11 @@ export default function useRealtimeRefresh({
 
     return () => {
       if (timer) clearInterval(timer);
-      subscriptions.forEach(({ channel, eventName }) => {
+      subscriptions.forEach(({ channel, eventName, handler }) => {
         if (channel?.stopListening) {
-          channel.stopListening(eventName);
+          channel.stopListening(eventName, handler);
         }
       });
     };
-  }, [enabled, intervalMs]);
+  }, [enabled, intervalMs, channelsKey]);
 }

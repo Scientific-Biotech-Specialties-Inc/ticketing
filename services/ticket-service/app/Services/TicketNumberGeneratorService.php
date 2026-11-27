@@ -8,6 +8,9 @@ use Illuminate\Support\Facades\Log;
 
 class TicketNumberGeneratorService
 {
+    /** Attempts allowed when the sequence has drifted behind numbers already stored. */
+    private const MAX_NUMBER_ATTEMPTS = 50;
+
     /** @var array<int, string> Per-request memo of ticket_ID => ticket_number */
     private static array $refCache = [];
 
@@ -70,16 +73,43 @@ class TicketNumberGeneratorService
             $digitLength = 4;
         }
 
+        $date = $date ?? now();
         $sequenceNumber = $this->getNextSequenceNumber('global');
 
-        return $this->assembleTicketNumber(
-            $prefix,
-            $dept,
-            $dateSegment,
-            $digitLength,
-            $sequenceNumber,
-            $date ?? now()
-        );
+        // The global counter seeds from max(ticket_ID) and can sit behind numbers already stored on
+        // `tickets` - seeded or hand written rows whose digits do not follow ticket_ID. A ticket
+        // that carries a department segment stays unique regardless (TKT-SVC-0020), but one with no
+        // department lands in the bare PREFIX-#### namespace those rows occupy and the insert dies
+        // on tickets_ticket_number_unique. That is every internal ticket raised by staff outside
+        // Service and IT, whose department has no `departments` row to take a code from. Advance
+        // past anything already taken instead of handing back a number that cannot be inserted.
+        for ($attempt = 1; ; $attempt++) {
+            $candidate = $this->assembleTicketNumber(
+                $prefix,
+                $dept,
+                $dateSegment,
+                $digitLength,
+                $sequenceNumber,
+                $date
+            );
+
+            if (!DB::table('tickets')->where('ticket_number', $candidate)->exists()) {
+                return $candidate;
+            }
+
+            if ($attempt >= self::MAX_NUMBER_ATTEMPTS) {
+                throw new \RuntimeException(
+                    "Could not allocate a free ticket number after {$attempt} attempts; last tried {$candidate}."
+                );
+            }
+
+            Log::warning('TicketNumberGeneratorService: ticket number already taken, advancing the sequence', [
+                'candidate' => $candidate,
+                'attempt' => $attempt,
+            ]);
+
+            $sequenceNumber = $this->getNextSequenceNumber('global');
+        }
     }
 
     /**

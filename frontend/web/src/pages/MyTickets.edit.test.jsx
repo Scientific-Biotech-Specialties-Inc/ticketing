@@ -87,9 +87,9 @@ describe('Customer edit ticket save (spec 0043 AC-16)', () => {
       </MemoryRouter>
     );
     await screen.findAllByText('Bedside Monitor - Hii');
-    const closedTab = screen.getAllByRole('button').find((b) => /^Closed/.test(b.textContent.trim()));
-    expect(closedTab).toBeTruthy();
-    await act(async () => { fireEvent.click(closedTab); });
+    const draftsTab = screen.getAllByRole('button').find((b) => /^My Drafts/.test(b.textContent.trim()));
+    expect(draftsTab).toBeTruthy();
+    await act(async () => { fireEvent.click(draftsTab); });
     await waitFor(() => expect(screen.queryByText('Bedside Monitor - Hii')).toBeNull());
   });
 

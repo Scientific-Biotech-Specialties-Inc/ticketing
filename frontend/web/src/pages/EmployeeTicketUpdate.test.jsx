@@ -4,7 +4,7 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import EmployeeTicketUpdate from './EmployeeTicketUpdate';
 import * as ticketService from '@/services/ticketService';
-import { getTicketReimbursement } from '@/data/sermsReimbursementData';
+import useTicketReimbursement from '@/hooks/useTicketReimbursement';
 
 vi.mock('@/context/AuthContext', () => ({
   useAuth: vi.fn(() => ({
@@ -23,9 +23,9 @@ vi.mock('@/services/ticketService', () => ({
   getCustomerTicketContext: vi.fn(() => Promise.resolve({ customer: {}, machine: {} })),
 }));
 
-vi.mock('@/data/sermsReimbursementData', async (importOriginal) => ({
-  ...(await importOriginal()),
-  getTicketReimbursement: vi.fn(() => null),
+const noClaim = () => ({ claim: null, canSubmit: false, eligible: false, loading: false, error: null, refresh: vi.fn() });
+vi.mock('@/hooks/useTicketReimbursement', () => ({
+  default: vi.fn(() => noClaim()),
 }));
 
 describe('EmployeeTicketUpdate Component Tests', () => {
@@ -216,9 +216,9 @@ describe('EmployeeTicketUpdate Component Tests', () => {
   });
 
   it('keeps an already filed claim viewable after the ticket is reopened', async () => {
-    getTicketReimbursement.mockReturnValue({ id: 'R-1', status: 'Submitted' });
+    useTicketReimbursement.mockReturnValue({ ...noClaim(), claim: { claimNumber: 'RMB-2026-00001', amount: 100, status: 'Submitted', category: 'Meals' } });
     await renderWithStatus('In Progress', 'Reopened Ticket');
     expect(screen.getAllByRole('button', { name: 'View Reimbursement' }).length).toBeGreaterThan(0);
-    getTicketReimbursement.mockReturnValue(null);
+    useTicketReimbursement.mockImplementation(() => noClaim());
   });
 });

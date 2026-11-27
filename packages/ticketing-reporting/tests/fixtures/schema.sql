@@ -161,6 +161,7 @@ CREATE TABLE `employees` (
   `position_level` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `technical_role` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `is_active` tinyint(1) NOT NULL DEFAULT '1',
+  `is_ticketing_employee` tinyint(1) NOT NULL DEFAULT '0',
   `failed_login_count` int unsigned NOT NULL DEFAULT '0',
   `locked_until` timestamp NULL DEFAULT NULL,
   `last_login_at` timestamp NULL DEFAULT NULL,

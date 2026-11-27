@@ -21,8 +21,11 @@ export default defineConfig({
       'Content-Security-Policy': "frame-ancestors 'self'",
     },
     watch: {
+      // Polling is required because file events do not cross the Windows bind mount, but a
+      // 100ms interval kept each dev server at ~37% CPU while idle. 1s is still quick for HMR.
       usePolling: true,
-      interval: 100,
+      interval: 1000,
+      binaryInterval: 3000,
     },
     proxy: {
       '/api/ticketing/customer': {

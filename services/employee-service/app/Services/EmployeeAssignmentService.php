@@ -190,6 +190,10 @@ class EmployeeAssignmentService
             return ['status' => 404, 'data' => ['message' => 'Ticket not found']];
         }
 
+        if ($denied = $this->rejectNonTicketingEmployees($validated['employee_ids'] ?? [])) {
+            return $denied;
+        }
+
         // Spec 0043 (AC-20): an unclassified ticket must be classified by CS before anyone is assigned.
         if ($ticket->problem_category_ID === null) {
             return ['status' => 422, 'data' => ['message' => 'Classify this ticket before assigning.', 'code' => 'NEEDS_CLASSIFICATION']];
@@ -522,6 +526,37 @@ class EmployeeAssignmentService
     }
 
     /**
+     * Spec 0045 (AC-11): only designated, active ticketing employees can be assigned or accept.
+     * Read from the database at call time, never from the cached session. Not overridable.
+     *
+     * @param int[] $empIds
+     */
+    public function rejectNonTicketingEmployees(array $empIds): ?array
+    {
+        foreach ($empIds as $empId) {
+            $employee = DB::table('employees')
+                ->where('emp_id', (int) $empId)
+                ->first(['role', 'position_level', 'is_active', 'is_ticketing_employee']);
+
+            // Admins bypass the requestor guard but are never assignees (AC-13).
+            $designated = $employee
+                && !\Ticketing\Auth\Access\TicketingAccess::isAdmin($employee)
+                && (bool) $employee->is_ticketing_employee
+                && (bool) $employee->is_active;
+
+            if (!$designated) {
+                return ['status' => 403, 'data' => [
+                    'message' => \Ticketing\Auth\Access\TicketingAccess::NOT_TICKETING_MESSAGE,
+                    'code' => 'NOT_TICKETING_EMPLOYEE',
+                    'employee_id' => (int) $empId,
+                ]];
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Accept ticket by assigned engineer, or assign by customer service.
      */
     public function acceptTicket(int $ticketId, $user, ?array $validated = null): array
@@ -543,6 +578,10 @@ class EmployeeAssignmentService
         // Branch 1: Employee accept logic (when engineer self-accepts)
         if (!$isCS || !$validated) {
             $empId = $user->emp_id;
+
+            if ($denied = $this->rejectNonTicketingEmployees([(int) $empId])) {
+                return $denied;
+            }
 
             $assignment = DB::table('ticket_assignments')
                 ->where('ticket_ID', $ticketId)
@@ -709,6 +748,10 @@ class EmployeeAssignmentService
         // Branch 2: Customer service assignment
         if (!$user) {
             return ['status' => 401, 'data' => ['message' => 'Unauthorized. Please log in.']];
+        }
+
+        if ($denied = $this->rejectNonTicketingEmployees($validated['employee_ids'] ?? [])) {
+            return $denied;
         }
 
         try {

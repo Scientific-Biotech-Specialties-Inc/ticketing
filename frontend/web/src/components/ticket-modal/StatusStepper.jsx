@@ -28,7 +28,8 @@ export default function StatusStepper({
           const isPriorCompleted = idx < currentStepIndex;
           const isCurrent = idx === currentStepIndex;
           const isCurrentFinal = isCurrent && idx === stepperSteps.length - 1;
-          const showCheck = isPriorCompleted || (isCurrentFinal && String(status || '').toLowerCase() === 'resolved');
+          const normStatus = String(status || '').trim().toLowerCase();
+          const showCheck = isPriorCompleted || (isCurrentFinal && (normStatus === 'resolved' || normStatus === 'closed'));
           const showRing = isCurrent && ringCurrentStep && !showCheck;
           const hasNext = idx < stepperSteps.length - 1;
           const isNextCompleted = idx + 1 <= currentStepIndex;

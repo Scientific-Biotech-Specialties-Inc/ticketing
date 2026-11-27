@@ -882,3 +882,89 @@ export function saveStoredIntegrationSettings(settings) {
     return settings;
   }
 }
+
+/**
+ * Creates a new customer & contract record from the SuperAdmin Create User modal
+ */
+export function createCmsCustomerRecord({
+  equipmentName,
+  brandAndModel,
+  serialNumber,
+  customerName,
+  customerEmail,
+  sbsiBranch,
+}) {
+  const current = getStoredCmsCustomers();
+  const now = new Date();
+  const year = now.getFullYear();
+  const randCode = Math.floor(1000 + Math.random() * 9000);
+  const startDate = now.toISOString().split('T')[0];
+  const endDate = new Date(year + 1, now.getMonth(), now.getDate()).toISOString().split('T')[0];
+
+  const modelLabel = equipmentName && brandAndModel
+    ? `${equipmentName.trim()} (${brandAndModel.trim()})`
+    : (equipmentName || brandAndModel || '').trim();
+
+  const newRecord = {
+    id: `cms-cust-${Date.now()}`,
+    cmsClientId: `CMS-CLI-${year}-${randCode}`,
+    companyName: customerName.trim(),
+    tradeName: customerName.trim(),
+    category: 'Healthcare / Diagnostic',
+    taxIdentificationNumber: 'N/A',
+    assignedBranch: sbsiBranch.trim(),
+    primaryContact: {
+      name: customerName.trim(),
+      title: 'Primary Contact',
+      email: customerEmail.trim(),
+      phone: 'N/A',
+      mobile: 'N/A',
+    },
+    secondaryContact: null,
+    address: {
+      street: 'N/A',
+      city: sbsiBranch.trim(),
+      province: 'Philippines',
+      postalCode: 'N/A',
+    },
+    contract: {
+      contractNumber: `CMS-CON-${year}-${randCode}`,
+      contractTitle: 'Standard Equipment & Software Maintenance Contract',
+      contractType: 'Annual Maintenance Contract (AMC)',
+      tier: 'Standard Silver',
+      slaResponseHours: 8,
+      slaResolutionHours: 24,
+      slaDescription: 'Standard 8-hour response and 24-hour target resolution.',
+      startDate,
+      endDate,
+      status: 'Active',
+      contractValue: 'N/A',
+      billingTerm: 'Annual',
+    },
+    coveredEquipment: [
+      {
+        assetTag: `EQ-SBSI-${randCode}`,
+        equipmentName: equipmentName.trim(),
+        brandAndModel: brandAndModel.trim(),
+        model: modelLabel,
+        serialNumber: serialNumber.trim(),
+        department: 'General',
+        installationDate: startDate,
+        warrantyStatus: 'Under Warranty',
+        lastPmsDate: startDate,
+        nextPmsDate: endDate,
+      },
+    ],
+    ticketingIntegration: {
+      storeStatus: 'Stored',
+      linkedTicketCustomerId: `CUST-${randCode}`,
+      syncTimestamp: now.toISOString(),
+      syncVersion: 1,
+      autoTriageEnabled: true,
+    },
+  };
+
+  const updated = [newRecord, ...current];
+  saveStoredCmsCustomers(updated);
+  return { success: true, record: newRecord, records: updated };
+}

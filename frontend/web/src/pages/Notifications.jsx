@@ -33,6 +33,7 @@ import SkeletonLoader from '@/components/SkeletonLoader';
 import { formatDisplayDate } from '@/utils/dateUtils';
 import CustomerTicketDetailModal from '@/components/CustomerTicketDetailModal';
 import TicketDetailModal from '@/components/employee/TicketDetailModal';
+import { isUserAssignedToTicket } from '@/components/ticket-modal/ticketModalUtils';
 import { TicketSummary } from '@/components/CSModals';
 import { respondReassignment } from '@/services/ticketService';
 import { isReassignmentDenied } from '@/utils/reassignmentUtils';
@@ -749,7 +750,7 @@ export default function Notifications() {
           );
         }
 
-        if (checkUserIsEmployee(user)) {
+        if (checkUserIsEmployee(user) && isUserAssignedToTicket(activeTicket, user)) {
           return (
             <TicketDetailModal
               ticket={activeTicket}
@@ -785,13 +786,14 @@ export default function Notifications() {
           <CustomerTicketDetailModal
             ticket={activeTicket}
             onClose={handleCloseActiveTicket}
-            onAssign={(t) => {
+            customerName={activeTicket.customer}
+            onAssign={isCS ? (t) => {
               const tid = t?.ticket_ID || activeTicket.ticket_ID || activeTicket.id;
               handleCloseActiveTicket();
               let r = '';
               try { r = String(JSON.parse(localStorage.getItem('user') || '{}')?.role || '').toLowerCase(); } catch {}
               navigate(r === 'employee' || r === 'service' ? '/employee/incoming' : '/cs/incoming', { state: { assignTicketId: tid } });
-            }}
+            } : undefined}
             onDiscard={null}
             onReopen={null}
             onResolve={null}

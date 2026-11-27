@@ -41,6 +41,7 @@ import { getMaxOpenTicketsLimit, OPEN_STATUS_SET } from '@/data/ticketLimitConfi
 
 import { parseUTCDate } from '@/utils/dateUtils';
 import TitleCasingModal from '@/components/TitleCasingModal';
+import { needsProperCasing, formatProperTitleCase } from '@/utils/titleCaseUtils';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import { hasFeedbackBeenSubmitted, fetchFeedbackForTicket } from '@/data/mockFeedbackData';
 import tokenStore from '@/auth/tokenStore';
@@ -862,6 +863,11 @@ export default function MyTickets({ mode = 'all' }) {
 
     let opts = getCachedTicketFormOptions();
     if (!opts) {
+      try {
+        opts = await getTicketFormOptions();
+      } catch {
+        opts = null;
+      }
     }
     setEditOptions(opts);
 

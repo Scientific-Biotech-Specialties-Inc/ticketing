@@ -61,7 +61,15 @@ export default function EmployeeMyTickets({ roleContext }) {
   const [loadingText, setLoadingText] = useState('Loading...');
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
-  // Internal tickets have no drafts: staff submit them directly (customers keep drafts).
+  const [editingDraft, setEditingDraft] = useState(null);
+  const [activeTab, setActiveTab] = useState(
+    location.state?.tab === 'drafts' || searchParams.get('tab') === 'drafts' ? 'drafts' : 'tickets'
+  );
+  const [drafts, setDrafts] = useState([]);
+  const [loadingDrafts, setLoadingDrafts] = useState(false);
+  const [draftsSupported, setDraftsSupported] = useState(true);
+  const draftsForbiddenRef = React.useRef(false);
+  const [formOptions, setFormOptions] = useState(() => getCachedTicketFormOptions() || {});
   const isHistory = false;
 
   const isCsRole = useMemo(() => {
@@ -75,6 +83,96 @@ export default function EmployeeMyTickets({ roleContext }) {
   const [csDepartments, setCsDepartments] = useState([]);
   const [csPriorityOptions] = useState(['Low', 'Medium', 'High', 'Critical']);
   const storageKey = roleContext === 'cs' ? 'cs_created_tickets' : 'employee_created_tickets';
+
+  const currentUserId = useMemo(() => {
+    const uid = user?.client_ID ?? user?.client_id ?? user?.id ?? user?.emp_id;
+    if (uid) return Number(uid);
+    for (const key of ['user', 'auth_user']) {
+      for (const store of [sessionStorage, localStorage]) {
+        try {
+          const parsed = JSON.parse(store.getItem(key) || 'null');
+          const id = parsed?.client_ID ?? parsed?.client_id ?? parsed?.id ?? parsed?.emp_id;
+          if (id) return Number(id);
+        } catch { /* ignore */ }
+      }
+    }
+    return 1;
+  }, [user]);
+
+  const loadDrafts = useCallback(async () => {
+    if (draftsForbiddenRef.current) return;
+    setLoadingDrafts(true);
+    try {
+      const list = await getTicketDrafts({ client_id: currentUserId });
+      setDrafts(list || []);
+    } catch (err) {
+      if (err?.response?.status === 403) {
+        draftsForbiddenRef.current = true;
+        setDraftsSupported(false);
+        setDrafts([]);
+        setActiveTab((prev) => (prev === 'drafts' ? 'tickets' : prev));
+        return;
+      }
+      console.warn('Failed to load ticket drafts:', err);
+    } finally {
+      setLoadingDrafts(false);
+    }
+  }, [currentUserId]);
+
+  useEffect(() => {
+    loadDrafts();
+    getTicketFormOptions({ forceRefresh: false })
+      .then((opts) => {
+        if (opts) setFormOptions(opts);
+      })
+      .catch(() => {});
+  }, [loadDrafts]);
+
+  useEffect(() => {
+    const targetTab = location.state?.tab || searchParams.get('tab');
+    if (targetTab) {
+      setActiveTab(targetTab);
+      if (targetTab === 'drafts') {
+        loadDrafts();
+      }
+    }
+  }, [location.state?.tab, location.state?.draftSavedAt, searchParams, loadDrafts]);
+
+  const handleEditDraft = (draft) => {
+    setEditingDraft(draft);
+    setIsModalOpen(true);
+  };
+
+  const handleDeleteDraft = async (draft) => {
+    if (!draft?.id) return;
+    try {
+      await deleteTicketDraft(draft.id, { client_id: currentUserId });
+      setDrafts((prev) => prev.filter((d) => d.id !== draft.id));
+    } catch (err) {
+      console.error('Failed to delete draft:', err);
+      window.alert(err?.response?.data?.message || 'Failed to delete draft.');
+    }
+  };
+
+  const getEquipmentName = (machineId) => {
+    if (!machineId) return '—';
+    const eqOpts = formOptions?.equipment_options || [];
+    const found = eqOpts.find((o) => String(o.value) === String(machineId));
+    if (found) return found.label;
+    const mach = (formOptions?.machines || []).find((m) => String(m.machine_ID) === String(machineId));
+    if (mach) return `${mach.machine_name} - ${mach.serial_number}`;
+    return `Equipment #${machineId}`;
+  };
+
+  const getCategoryName = (catId) => {
+    if (!catId) return '—';
+    const catOpts = formOptions?.category_options || [];
+    const found = catOpts.find((o) => String(o.value) === String(catId));
+    if (found) return found.label;
+    const cat = (formOptions?.problem_categories || []).find((c) => String(c.problem_category_ID) === String(catId));
+    if (cat) return cat.category_name;
+    return `Category #${catId}`;
+  };
 
   const [filters, setFilters] = useState({
     status: '',
@@ -523,9 +621,9 @@ export default function EmployeeMyTickets({ roleContext }) {
       <div className="flex border-b border-gray-200 gap-2">
         <button
           type="button"
-          onClick={() => { setMyTicketsView('all'); setSearchParams({}); }}
+          onClick={() => { setMyTicketsView('all'); setActiveTab('tickets'); setSearchParams({}); }}
           className={`pb-3 px-4 text-sm font-bold transition-all border-b-2 -mb-px flex items-center gap-2 cursor-pointer ${
-            myTicketsView === 'department' && departmentQueue.available ? 'border-transparent text-muted-slate hover:text-dark-slate' : 'border-brand-primary text-brand-primary'
+            (myTicketsView === 'department' && departmentQueue.available) || activeTab === 'drafts' ? 'border-transparent text-muted-slate hover:text-dark-slate' : 'border-brand-primary text-brand-primary'
           }`}
         >
           All Tickets
@@ -536,7 +634,7 @@ export default function EmployeeMyTickets({ roleContext }) {
         {departmentQueue.available && (
           <button
             type="button"
-            onClick={() => setMyTicketsView('department')}
+            onClick={() => { setMyTicketsView('department'); setActiveTab('tickets'); }}
             data-testid="my-tickets-department-queue"
             className={`pb-3 px-4 text-sm font-bold transition-all border-b-2 -mb-px flex items-center gap-2 cursor-pointer ${
               myTicketsView === 'department' ? 'border-brand-primary text-brand-primary' : 'border-transparent text-muted-slate hover:text-dark-slate'
@@ -545,6 +643,29 @@ export default function EmployeeMyTickets({ roleContext }) {
             Department Queue
             <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-brand-primary/10 text-brand-primary">
               {departmentQueue.tickets.length}
+            </span>
+          </button>
+        )}
+        {draftsSupported && (
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('drafts');
+              setMyTicketsView('all');
+              setSearchParams({ tab: 'drafts' });
+              loadDrafts();
+            }}
+            className={`pb-3 px-4 text-sm font-bold transition-all border-b-2 -mb-px flex items-center gap-2 cursor-pointer ${
+              activeTab === 'drafts'
+                ? 'border-brand-primary text-brand-primary'
+                : 'border-transparent text-muted-slate hover:text-dark-slate'
+            }`}
+          >
+            My Drafts
+            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
+              activeTab === 'drafts' ? 'bg-amber-100 text-amber-800' : 'bg-page text-muted-slate'
+            }`}>
+              {drafts.length}
             </span>
           </button>
         )}
