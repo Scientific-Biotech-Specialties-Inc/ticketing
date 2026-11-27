@@ -2,10 +2,12 @@
 
 namespace App\Services;
 
-use App\Support\TechnicalDepartments;
+use Ticketing\Reporting\TechnicalDepartments;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Ticketing\Reporting\BranchScope;
+use Ticketing\Reporting\SlaOutcomeService;
 
 /**
  * Live summary and breached queue for Service, IT and Customer Service managers (spec 0031 AC-7, AC-8).
@@ -24,16 +26,13 @@ class ManagerDashboardService
 
     protected SlaOutcomeService $slaOutcomes;
     protected SLAService $slaService;
-    protected TicketDashboardService $dashboardService;
 
     public function __construct(
         ?SlaOutcomeService $slaOutcomes = null,
-        ?SLAService $slaService = null,
-        ?TicketDashboardService $dashboardService = null
+        ?SLAService $slaService = null
     ) {
         $this->slaOutcomes = $slaOutcomes ?? app(SlaOutcomeService::class);
         $this->slaService = $slaService ?? app(SLAService::class);
-        $this->dashboardService = $dashboardService ?? app(TicketDashboardService::class);
     }
 
     /**
@@ -83,7 +82,7 @@ class ManagerDashboardService
             ->leftJoin('employees as e', 'e.emp_id', '=', 't.assigned_to')
             ->whereNotIn(DB::raw('LOWER(TRIM(ts.status_name))'), self::NOT_OPEN_STATUSES);
 
-        $this->dashboardService->applyBranchTicketFilter($query, $branch);
+        BranchScope::applyTicketFilter($query, $branch);
 
         if (!$isBranchMode) {
             // AC-8: Service and IT scopes are by the assignee's department; unassigned tickets are not in them.
@@ -209,7 +208,7 @@ class ManagerDashboardService
             : app(EscalationParticipants::class)->ticketIdsForManager((int) ($manager->emp_id ?? 0), $department);
 
         $scoped = function ($scope) use ($branch, $isBranchMode, $department) {
-            $this->dashboardService->applyBranchTicketFilter($scope, $branch);
+            BranchScope::applyTicketFilter($scope, $branch);
 
             if (!$isBranchMode) {
                 $this->applyDepartmentScope($scope, $department);

@@ -2,10 +2,12 @@
 
 namespace App\Services;
 
-use App\Support\TechnicalDepartments;
+use Ticketing\Reporting\TechnicalDepartments;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Ticketing\Reporting\BranchScope;
+use Ticketing\Reporting\SlaOutcomeService;
 
 /**
  * Employee and department performance for the admin dashboard and admin reports.
@@ -18,18 +20,15 @@ use Illuminate\Support\Facades\DB;
 class AdminPerformanceService
 {
     protected ?SLAService $slaService;
-    protected TicketDashboardService $dashboardService;
     protected SlaOutcomeService $slaOutcomes;
     protected CsatSnapshotService $csatSnapshots;
 
     public function __construct(
         ?SLAService $slaService = null,
-        ?TicketDashboardService $dashboardService = null,
         ?SlaOutcomeService $slaOutcomes = null,
         ?CsatSnapshotService $csatSnapshots = null
     ) {
         $this->slaService = $slaService ?? app(SLAService::class);
-        $this->dashboardService = $dashboardService ?? app(TicketDashboardService::class);
         $this->slaOutcomes = $slaOutcomes ?? app(SlaOutcomeService::class);
         $this->csatSnapshots = $csatSnapshots ?? app(CsatSnapshotService::class);
     }
@@ -39,7 +38,7 @@ class AdminPerformanceService
      */
     public function resolveDateRange(array $filters): array
     {
-        [$preset, $dateFrom, $dateTo] = \App\Support\ReportPeriod::resolve($filters, 'Last 30 Days');
+        [$preset, $dateFrom, $dateTo] = \Ticketing\Reporting\ReportPeriod::resolve($filters, 'Last 30 Days');
 
         return [$preset, $dateFrom, $dateTo];
     }
@@ -51,7 +50,7 @@ class AdminPerformanceService
      */
     public function getEmployeePerformanceMetrics($user, array $filters = [], bool $forceRefresh = false): array
     {
-        $branch = $this->dashboardService->resolveBranchScope($user, $filters);
+        $branch = BranchScope::resolve($user, $filters);
         [$preset, $dateFrom, $dateTo] = $this->resolveDateRange($filters);
 
         $departmentFilter = $filters['department'] ?? null;
@@ -228,7 +227,7 @@ class AdminPerformanceService
             ->join('tickets as t', 't.ticket_ID', '=', 'p.ticket_ID')
             ->whereIn('p.employee_ID', $empIds)
             ->whereBetween('p.assigned_at', [$dateFrom, $dateTo]);
-        $this->dashboardService->applyBranchTicketFilter($periodsQuery, $branch);
+        BranchScope::applyTicketFilter($periodsQuery, $branch);
         $windowPeriods = $periodsQuery->select($periodColumns)->get();
 
         // 3. Every period and the SLA fields of those tickets, for resolution attribution (AC-11)
@@ -329,7 +328,7 @@ class AdminPerformanceService
      */
     public function getDepartmentPerformanceMetrics($user, array $filters = [], bool $forceRefresh = false): array
     {
-        $branch = $this->dashboardService->resolveBranchScope($user, $filters);
+        $branch = BranchScope::resolve($user, $filters);
         [$preset, $dateFrom, $dateTo] = $this->resolveDateRange($filters);
 
         $sortBy = $filters['sort_by'] ?? 'total_tickets';
@@ -385,7 +384,7 @@ class AdminPerformanceService
             ->where('ts.status_name', '!=', 'Discarded')
             ->whereBetween('t.created_at', [$dateFrom, $dateTo]);
         TechnicalDepartments::applyEmployeeFilter($ticketQuery, 'e');
-        $this->dashboardService->applyBranchTicketFilter($ticketQuery, $branch);
+        BranchScope::applyTicketFilter($ticketQuery, $branch);
 
         $tickets = $ticketQuery->select(
             't.ticket_ID',
@@ -406,7 +405,7 @@ class AdminPerformanceService
             ->join('employees as e', 'e.emp_id', '=', 't.assigned_to')
             ->where('ts.status_name', '!=', 'Discarded');
         TechnicalDepartments::applyEmployeeFilter($slaQuery, 'e');
-        $this->dashboardService->applyBranchTicketFilter($slaQuery, $branch);
+        BranchScope::applyTicketFilter($slaQuery, $branch);
         $this->slaOutcomes->applyOutcomeWindow($slaQuery, $dateFrom, $dateTo);
 
         $slaTickets = $slaQuery->select(

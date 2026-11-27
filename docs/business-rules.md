@@ -88,7 +88,7 @@ SLAs are calculated dynamically upon ticket ingestion based on four dimensional 
   * If `current_time > target_resolution_deadline` and `resolved_at` is null $\rightarrow$ Flag `resolution_breached = 1`.
 
 ### 3. SLA Clock Pausing (`On Hold`)
-When a ticket transitions to `On Hold` (status `4`), the SLA resolution clock is temporarily frozen to avoid penalizing technicians for external dependencies (e.g., waiting for parts shipment). The paused duration is recorded in `sla_trackings.paused_duration_minutes` and appended to the resolution deadline upon resumption.
+When a ticket transitions to `On Hold` (status `4`), the SLA resolution clock is temporarily frozen to avoid penalizing technicians for external dependencies (e.g., waiting for parts shipment). The paused duration is accumulated in `tickets.sla_paused_total_seconds` and appended to the resolution deadline upon resumption.
 
 ---
 

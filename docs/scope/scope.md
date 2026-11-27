@@ -8,6 +8,7 @@ This scope tracks features in flight. It was started by `/architect` for spec 00
 |---|---|---|
 | PRS equipment ticket intake | in-progress | [0046](../specs/0046-prs-equipment-integration/index.md) |
 | Customer asset ticket intake | in-progress | [0047](../specs/0047-customer-asset-ticket-intake/index.md) |
+| Department ticket routing | in-progress | [0051](../specs/0051-department-ticket-routing.md) |
 
 ## Features
 
@@ -46,6 +47,23 @@ Spec: [0047](../specs/0047-customer-asset-ticket-intake/index.md) · code in `se
 - [ ] Verify it: /check verify Customer asset ticket intake
 - [ ] Test it: /test Customer asset ticket intake
 
+### Department ticket routing · in-progress
+
+CS can route a ticket to a whole department instead of named people. The department manager then accepts it, assigns it to people in the department, or returns it to CS with a reason. A superadmin chooses which departments accept routed tickets.
+
+Done when: CS can route to an enabled department, its managers see it in a Department queue, the first manager to act accepts, delegates or returns it, and direct member assignment still works as before.
+
+Spec: [0051](../specs/0051-department-ticket-routing.md) · code in `services/employee-service/app/Services/DepartmentRoutingService.php`, `services/employee-service/app/Services/DepartmentManagerResolver.php`, `frontend/web/src/components/DepartmentQueueTab.jsx`, `frontend/web/src/components/DepartmentRoutePicker.jsx`
+
+- [x] Design it (spec)
+- [ ] Build it: /develop Department ticket routing
+  - [ ] Schema and CS routing: migrations, manager resolver, assignable departments, route endpoint, CS modal toggle, notifications and email template (AC-2 to AC-5, AC-13)
+  - [x] Manager triage: Department queue tab, claim, delegate and return with the first to act lock (AC-6 to AC-10)
+  - [x] Superadmin switch and manager scope: `accepts_tickets` in the department form, scope driven by the switch (AC-1, AC-11)
+  - [x] Reroute, timeline and metrics: CS reroute, timeline labels, "Waiting on" label, leave out closed manager rows from metrics (AC-12, AC-14 to AC-16)
+- [ ] Verify it: /check verify Department ticket routing
+- [ ] Test it: /test Department ticket routing
+
 ## Deferred
 
 - Return to the exact ticket after login (needs an Auth Module change), from spec 0046
@@ -54,3 +72,5 @@ Spec: [0047](../specs/0047-customer-asset-ticket-intake/index.md) · code in `se
 - Map imported software to `asset_type = software` and decide whether to retire seeded items, from spec 0047
 - Make sure the CMS / equipment sync never updates or deletes `SW-` serial rows, from spec 0047
 - Remove or keep the unused `classify-category` endpoint and `useCategoryPreview` hook, from spec 0047
+- Link employees to departments by id instead of by name, from spec 0051
+- Alert the superadmin when an enabled department has no active manager, from spec 0051

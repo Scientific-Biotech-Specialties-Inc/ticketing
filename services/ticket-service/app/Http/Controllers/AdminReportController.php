@@ -3,19 +3,16 @@
 namespace App\Http\Controllers;
 
 use App\Services\AdminPerformanceService;
-use App\Services\TicketForecastService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class AdminReportController extends Controller
 {
     protected AdminPerformanceService $performanceService;
-    protected TicketForecastService $forecastService;
 
-    public function __construct(AdminPerformanceService $performanceService, TicketForecastService $forecastService)
+    public function __construct(AdminPerformanceService $performanceService)
     {
         $this->performanceService = $performanceService;
-        $this->forecastService = $forecastService;
     }
 
     /**
@@ -148,33 +145,4 @@ class AdminReportController extends Controller
         $data = $this->performanceService->getDepartmentPerformanceMetrics($user, $filters, $forceRefresh);
         return response()->json($data);
     }
-
-    /**
-     * GET /api/ticketing/ticket/admin-reports/predictive-insights
-     * Return forecasted ticket volume and recurring issue trends.
-     */
-    public function predictiveInsights(Request $request): JsonResponse
-    {
-        $user = $request->user();
-
-        if ($authError = $this->authorizeAdminRole($user)) {
-            return $authError;
-        }
-
-        if ($branchError = $this->validateBranchAccess($user, $request)) {
-            return $branchError;
-        }
-
-        $filters = [
-            'horizon_days' => $request->query('horizon_days', 7),
-            'branch' => $request->query('branch'),
-            'branch_id' => $request->query('branch_id'),
-        ];
-
-        $forceRefresh = filter_var($request->query('forceRefresh', $request->query('force_refresh', false)), FILTER_VALIDATE_BOOLEAN);
-
-        $data = $this->forecastService->getPredictiveInsights($user, $filters, $forceRefresh);
-        return response()->json($data);
-    }
 }
-

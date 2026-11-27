@@ -1,0 +1,102 @@
+{
+    "status": "success",
+    "branch": {
+        "id": "all",
+        "name": "All Branches",
+        "slug": "all"
+    },
+    "historical_basis": {
+        "days_used": 30,
+        "minimum_days_required": 14,
+        "model": "7-day Weighted Moving Average with Day-of-Week Seasonality (Global)"
+    },
+    "volume_forecast": [
+        {
+            "date": "2026-11-20",
+            "day_of_week": "Fri",
+            "predicted_volume": 17,
+            "lower_bound": 12,
+            "upper_bound": 22
+        },
+        {
+            "date": "2026-11-21",
+            "day_of_week": "Sat",
+            "predicted_volume": 8,
+            "lower_bound": 5,
+            "upper_bound": 11
+        },
+        {
+            "date": "2026-11-22",
+            "day_of_week": "Sun",
+            "predicted_volume": 5,
+            "lower_bound": 2,
+            "upper_bound": 8
+        },
+        {
+            "date": "2026-11-23",
+            "day_of_week": "Mon",
+            "predicted_volume": 20,
+            "lower_bound": 15,
+            "upper_bound": 25
+        },
+        {
+            "date": "2026-11-24",
+            "day_of_week": "Tue",
+            "predicted_volume": 23,
+            "lower_bound": 18,
+            "upper_bound": 28
+        },
+        {
+            "date": "2026-11-25",
+            "day_of_week": "Wed",
+            "predicted_volume": 18,
+            "lower_bound": 13,
+            "upper_bound": 23
+        },
+        {
+            "date": "2026-11-26",
+            "day_of_week": "Thu",
+            "predicted_volume": 15,
+            "lower_bound": 10,
+            "upper_bound": 20
+        }
+    ],
+    "recurring_issues": {
+        "categories": [
+            {
+                "issue_type": "category",
+                "item_id": 1,
+                "item_name": "Hardware Failure",
+                "change_percentage": 32.075,
+                "recent_frequency": 11,
+                "baseline_frequency": 7.47
+            },
+            {
+                "issue_type": "category",
+                "item_id": 2,
+                "item_name": "Software Error",
+                "change_percentage": -8.26,
+                "recent_frequency": 3,
+                "baseline_frequency": 3.27
+            }
+        ],
+        "machines": [
+            {
+                "issue_type": "machine",
+                "item_id": 1,
+                "item_name": "Ultrasound X1",
+                "change_percentage": 150,
+                "recent_frequency": 5,
+                "baseline_frequency": 2
+            },
+            {
+                "issue_type": "machine",
+                "item_id": 2,
+                "item_name": "MRI Scanner M2",
+                "change_percentage": 100,
+                "recent_frequency": 4,
+                "baseline_frequency": 0
+            }
+        ]
+    }
+}

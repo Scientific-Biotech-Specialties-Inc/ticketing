@@ -30,23 +30,27 @@ return new class extends Migration
             $table->foreign('employee_id')->references('emp_id')->on('employees')->cascadeOnDelete();
         });
 
-        Schema::create('notifications', function (Blueprint $table) {
-            $table->bigIncrements('id');
-            $table->unsignedBigInteger('recipient_id');
-            $table->string('recipient_type'); // 'client' or 'employee'
-            $table->string('title');
-            $table->text('message');
-            $table->unsignedBigInteger('ticket_id')->nullable();
-            $table->boolean('is_read')->default(false);
-            $table->timestamps();
+        // notifications is owned by notification-service now (its 2026_11_26_000002 migration).
+        // On a fresh shared database that service may have created the table already.
+        if (!Schema::hasTable('notifications')) {
+            Schema::create('notifications', function (Blueprint $table) {
+                $table->bigIncrements('id');
+                $table->unsignedBigInteger('recipient_id');
+                $table->string('recipient_type'); // 'client' or 'employee'
+                $table->string('title');
+                $table->text('message');
+                $table->unsignedBigInteger('ticket_id')->nullable();
+                $table->boolean('is_read')->default(false);
+                $table->timestamps();
 
-            $table->foreign('ticket_id')->references('ticket_ID')->on('tickets')->cascadeOnDelete();
-        });
+                $table->foreign('ticket_id')->references('ticket_ID')->on('tickets')->cascadeOnDelete();
+            });
+        }
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('notifications');
+        // notifications is left alone: notification-service owns it.
         Schema::dropIfExists('ticket_remarks');
         Schema::dropIfExists('internal_notes');
     }

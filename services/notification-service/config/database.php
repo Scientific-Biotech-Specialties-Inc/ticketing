@@ -146,6 +146,19 @@ return [
             'database' => env('REDIS_CACHE_DB', '1'),
         ],
 
+        // Central auth module's Redis: TokenRevocationChecker reads the JWT blacklist here.
+        'auth' => [
+            'url' => env('AUTH_REDIS_URL'),
+            'host' => env('AUTH_REDIS_HOST', 'auth-redis'),
+            'username' => env('AUTH_REDIS_USERNAME'),
+            'password' => env('AUTH_REDIS_PASSWORD'),
+            'port' => env('AUTH_REDIS_PORT', '6379'),
+            'database' => env('AUTH_REDIS_DB', '0'),
+            'options' => [
+                'prefix' => 'laravel-cache-',
+            ],
+        ],
+
     ],
 
 ];

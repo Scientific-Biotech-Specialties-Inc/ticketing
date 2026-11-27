@@ -4,7 +4,6 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\TicketController;
 use App\Http\Controllers\TicketDashboardController;
-use App\Http\Controllers\TicketNotificationController;
 use App\Http\Controllers\SuperAdminConfigController;
 use App\Http\Controllers\BranchPriorityController;
 use App\Http\Controllers\BranchCategoryController;
@@ -95,10 +94,8 @@ Route::middleware('auth.subsystem')->group(function () {
     Route::get('/admin/reports/employees', [AdminReportController::class, 'employeePerformance'])->middleware('no-cache');
     Route::get('/admin-reports/departments', [AdminReportController::class, 'departmentPerformance'])->middleware('no-cache');
     Route::get('/admin/reports/departments', [AdminReportController::class, 'departmentPerformance'])->middleware('no-cache');
-    Route::get('/admin-reports/predictive-insights', [AdminReportController::class, 'predictiveInsights'])->middleware('no-cache');
-    Route::get('/admin/reports/predictive-insights', [AdminReportController::class, 'predictiveInsights'])->middleware('no-cache');
-    Route::post('/etl/trigger', [TicketDashboardController::class, 'triggerEtl'])->middleware('no-cache');
-    Route::post('/admin/etl/trigger', [TicketDashboardController::class, 'triggerEtl'])->middleware('no-cache');
+    // Predictive insights and the ETL trigger moved to analytics-service (spec 0050 slice 1):
+    // /api/ticketing/analytics/insights/predictive and /api/ticketing/analytics/etl/sync.
     Route::get('/superadmin/system-dashboard', [SuperAdminDashboardController::class, 'systemDashboard'])->middleware('no-cache');
     Route::get('/super-admin/system-dashboard', [SuperAdminDashboardController::class, 'systemDashboard'])->middleware('no-cache');
     Route::get('/employee/dashboard', [EmployeeDashboardController::class, 'dashboard'])->middleware('no-cache');
@@ -148,44 +145,7 @@ Route::middleware('auth.subsystem')->group(function () {
         return response()->json(['message' => 'Internal notes cannot be deleted to preserve collaboration history integrity.'], 405);
     });
 
-    // ─── Security Incident Audit Details (TS085) ─────────────────────────────
-    Route::get('/security-incidents/{id}', function (Request $request, $id) {
-        $user = $request->user();
-        if (!$user) {
-            return response()->json(['message' => 'Unauthorized'], 401);
-        }
-        $role = strtolower(trim((string) ($user->role ?? '')));
-        if (!in_array($role, ['superadmin', 'super admin', 'admin'], true)) {
-            return response()->json(['message' => 'Access denied: Admin role required to review security incident records.'], 403);
-        }
-
-        $row = Illuminate\Support\Facades\DB::table('notifications')
-            ->where(function ($q) use ($id) {
-                if (is_numeric($id)) {
-                    $q->where('notification_ID', $id);
-                }
-                $q->orWhere('data', 'like', "%{$id}%");
-            })
-            ->first();
-
-        if (!$row) {
-            return response()->json(['message' => 'Security incident record not found.'], 404);
-        }
-
-        $data = json_decode($row->data ?? '{}', true);
-        return response()->json([
-            'id' => $row->notification_ID ?? $id,
-            'title' => $row->title,
-            'message' => $row->message,
-            'incident_details' => $data,
-            'created_at' => $row->created_at,
-        ]);
-    });
-
-    // ─── Notifications ────────────────────────────────────────────────────────
-    Route::get('/notifications', [TicketNotificationController::class, 'getNotifications']);
-    Route::patch('/notifications/read-all', [TicketNotificationController::class, 'markNotificationsRead']);
-    Route::patch('/notifications/{id}/read', [TicketNotificationController::class, 'markNotificationRead']);
+    // Notification bell routes (GET /notifications, mark read) live in notification-service.
 
     // ─── SuperAdmin Configuration & Audit Logs ────────────────────────────────
     Route::get('/superadmin/config', [SuperAdminConfigController::class, 'getSuperAdminConfig']);

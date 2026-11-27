@@ -167,10 +167,11 @@ export default function EmployeeTicketUpdate() {
         ...details,
         internalNotes: notes.length > 0 ? notes : (details?.internalNotes || prev?.internalNotes || []),
         timeline: details?.timeline || prev?.timeline,
-        reassignmentDenyReason: prev?.reassignmentDenyReason || details?.reassignmentDenyReason,
-        disapprovalReason: prev?.disapprovalReason || details?.disapprovalReason,
-        reassignmentStatus: prev?.reassignmentStatus || details?.reassignmentStatus,
-        deniedReassignment: prev?.deniedReassignment ?? details?.deniedReassignment,
+        // The server is the source of truth for reassignment state, so a CS approve or deny replaces stale local values.
+        reassignmentDenyReason: details ? details.reassignmentDenyReason : prev?.reassignmentDenyReason,
+        disapprovalReason: details ? details.disapprovalReason : prev?.disapprovalReason,
+        reassignmentStatus: details ? details.reassignmentStatus : prev?.reassignmentStatus,
+        deniedReassignment: details ? details.deniedReassignment : prev?.deniedReassignment,
       }));
       if (Array.isArray(details?.worklogs)) {
         setSavedWorkLogs(details.worklogs);

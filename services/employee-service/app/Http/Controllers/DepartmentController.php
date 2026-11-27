@@ -104,6 +104,8 @@ class DepartmentController extends Controller
             'code' => ['sometimes', 'required', 'string', 'max:16'],
             'description' => ['nullable', 'string', 'max:1000'],
             'is_active' => ['sometimes', 'boolean'],
+            // Spec 0051 (AC-1): whether CS may route tickets to this department.
+            'accepts_tickets' => ['sometimes', 'boolean'],
         ]);
 
         $update = ['updated_at' => now()];
@@ -130,6 +132,10 @@ class DepartmentController extends Controller
 
         if (array_key_exists('is_active', $validated)) {
             $update['is_active'] = (bool) $validated['is_active'];
+        }
+
+        if (array_key_exists('accepts_tickets', $validated)) {
+            $update['accepts_tickets'] = (bool) $validated['accepts_tickets'];
         }
 
         try {
@@ -216,6 +222,7 @@ class DepartmentController extends Controller
             'code' => (string) ($d->code ?? ''),
             'description' => $d->description ?? null,
             'is_active' => (bool) $d->is_active,
+            'accepts_tickets' => (bool) ($d->accepts_tickets ?? false),
         ];
     }
 

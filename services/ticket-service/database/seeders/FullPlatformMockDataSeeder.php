@@ -371,7 +371,6 @@ class FullPlatformMockDataSeeder extends Seeder
                     'ticket_status_ID' => 2, // In Progress
                     'sla_ID' => 2,
                     'first_response_at' => $now->copy()->subHours(18),
-                    'first_cs_response_at' => $now->copy()->subHours(20),
                     'response_due_at' => $now->copy()->subHours(19),
                     'resolution_due_at' => $now->copy()->addHours(8),
                     'title' => 'MRI 3T Scanner Helium Cooling Pressure Alarm',
@@ -413,7 +412,6 @@ class FullPlatformMockDataSeeder extends Seeder
                     'ticket_status_ID' => 2, // In Progress (Breached SLA for alerts)
                     'sla_ID' => 1,
                     'first_response_at' => $now->copy()->subDays(2),
-                    'first_cs_response_at' => $now->copy()->subDays(2),
                     'response_due_at' => $now->copy()->subDays(2)->addHours(2),
                     'resolution_due_at' => $now->copy()->subHours(3), // Past SLA due date!
                     'title' => 'Defibrillator Lifepak 20e Internal Battery Replacement',
@@ -450,7 +448,6 @@ class FullPlatformMockDataSeeder extends Seeder
                     'ticket_status_ID' => 2, // In Progress
                     'sla_ID' => 1,
                     'first_response_at' => $now->copy()->subHours(10),
-                    'first_cs_response_at' => $now->copy()->subHours(12),
                     'response_due_at' => $now->copy()->addHours(4),
                     'resolution_due_at' => $now->copy()->addHours(20),
                     'title' => 'CT Scanner Somatom Force Gantry Alignment Fault',
@@ -483,7 +480,6 @@ class FullPlatformMockDataSeeder extends Seeder
                     'priority_ID' => 3, // High
                     'ticket_status_ID' => 2, // In Progress
                     'sla_ID' => 1,
-                    'first_cs_response_at' => $now->copy()->subHours(6),
                     'response_due_at' => $now->copy()->addHours(3),
                     'resolution_due_at' => $now->copy()->addHours(14),
                     'title' => 'Anesthesia Vaporizer Calibration & Pressure Leak Check',
@@ -519,7 +515,6 @@ class FullPlatformMockDataSeeder extends Seeder
                     'ticket_status_ID' => 2, // In Progress
                     'sla_ID' => 1,
                     'first_response_at' => $now->copy()->subHours(15),
-                    'first_cs_response_at' => $now->copy()->subHours(16),
                     'response_due_at' => $now->copy()->addHours(6),
                     'resolution_due_at' => $now->copy()->addHours(28),
                     'title' => 'Ultrasound System EPIQ 7 Transducer Probe 2 Calibration',
@@ -545,7 +540,6 @@ class FullPlatformMockDataSeeder extends Seeder
                     'ticket_status_ID' => 2, // In Progress
                     'sla_ID' => 1,
                     'first_response_at' => $now->copy()->subHours(6),
-                    'first_cs_response_at' => $now->copy()->subHours(8),
                     'response_due_at' => $now->copy()->addHours(4),
                     'resolution_due_at' => $now->copy()->addHours(16),
                     'title' => 'Anesthesia Workstation O2 Flush Valve Stiffness',
@@ -573,7 +567,6 @@ class FullPlatformMockDataSeeder extends Seeder
                     'ticket_status_ID' => 3, // Resolved
                     'sla_ID' => 1,
                     'first_response_at' => $now->copy()->subDays(2),
-                    'first_cs_response_at' => $now->copy()->subDays(2),
                     'resolved_at' => $now->copy()->subHours(6),
                     'response_due_at' => $now->copy()->subDays(2)->addHours(4),
                     'resolution_due_at' => $now->copy()->subHours(2),
@@ -603,7 +596,6 @@ class FullPlatformMockDataSeeder extends Seeder
                     'ticket_status_ID' => 4, // Closed
                     'sla_ID' => 1,
                     'first_response_at' => $now->copy()->subDays(5),
-                    'first_cs_response_at' => $now->copy()->subDays(5),
                     'resolved_at' => $now->copy()->subDays(4),
                     'closed_at' => $now->copy()->subDays(3),
                     'response_due_at' => $now->copy()->subDays(5)->addHours(6),
@@ -632,7 +624,6 @@ class FullPlatformMockDataSeeder extends Seeder
                     'ticket_status_ID' => 4, // Closed
                     'sla_ID' => 1,
                     'first_response_at' => $now->copy()->subDays(8),
-                    'first_cs_response_at' => $now->copy()->subDays(8),
                     'resolved_at' => $now->copy()->subDays(7),
                     'closed_at' => $now->copy()->subDays(6),
                     'response_due_at' => $now->copy()->subDays(8)->addHours(8),
@@ -663,7 +654,6 @@ class FullPlatformMockDataSeeder extends Seeder
                     'ticket_status_ID' => 8, // Reopened
                     'sla_ID' => 2,
                     'first_response_at' => $now->copy()->subDays(3),
-                    'first_cs_response_at' => $now->copy()->subDays(3),
                     'response_due_at' => $now->copy()->addHours(2),
                     'resolution_due_at' => $now->copy()->addHours(6),
                     'title' => 'Defibrillator Shock Discharge Verification Calibration',

@@ -28,6 +28,7 @@ import { Badge, getStatusBadgeVariant } from '@/components/ui/badge';
 import { Table, TableHeader, TableBody, TableHead, TableRow, TableCell } from '@/components/ui/table';
 import { DataTableSkeleton, DataTableEmptyState } from '@/components/ui/data-table';
 import { ConfirmationModal } from '@/components/ui/confirmation-modal';
+import { DepartmentQueuePanel, useDepartmentQueue } from '@/components/DepartmentQueueTab';
 import Pagination from '@/components/Pagination';
 
 const STATUSES = ['Open', 'Pending Assignment', 'In Progress', 'Pending', 'Resolved', 'Closed', 'Discarded', 'On Hold'];
@@ -500,6 +501,10 @@ export default function EmployeeMyTickets({ roleContext }) {
     }
   };
 
+  // Spec 0051 (AC-6): a manager of any department that accepts routed tickets gets a Department queue.
+  const departmentQueue = useDepartmentQueue();
+  const [myTicketsView, setMyTicketsView] = useState('all');
+
   return (
     <div className="flex flex-col gap-6 font-sans text-dark-slate">
       <PageHeader
@@ -518,15 +523,36 @@ export default function EmployeeMyTickets({ roleContext }) {
       <div className="flex border-b border-gray-200 gap-2">
         <button
           type="button"
-          onClick={() => setSearchParams({})}
-          className="pb-3 px-4 text-sm font-bold transition-all border-b-2 -mb-px flex items-center gap-2 cursor-pointer border-brand-primary text-brand-primary"
+          onClick={() => { setMyTicketsView('all'); setSearchParams({}); }}
+          className={`pb-3 px-4 text-sm font-bold transition-all border-b-2 -mb-px flex items-center gap-2 cursor-pointer ${
+            myTicketsView === 'department' && departmentQueue.available ? 'border-transparent text-muted-slate hover:text-dark-slate' : 'border-brand-primary text-brand-primary'
+          }`}
         >
           All Tickets
           <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-brand-primary/10 text-brand-primary">
             {visibleTickets.length}
           </span>
         </button>
+        {departmentQueue.available && (
+          <button
+            type="button"
+            onClick={() => setMyTicketsView('department')}
+            data-testid="my-tickets-department-queue"
+            className={`pb-3 px-4 text-sm font-bold transition-all border-b-2 -mb-px flex items-center gap-2 cursor-pointer ${
+              myTicketsView === 'department' ? 'border-brand-primary text-brand-primary' : 'border-transparent text-muted-slate hover:text-dark-slate'
+            }`}
+          >
+            Department Queue
+            <span className="px-2 py-0.5 rounded-full text-xs font-semibold bg-brand-primary/10 text-brand-primary">
+              {departmentQueue.tickets.length}
+            </span>
+          </button>
+        )}
       </div>
+
+      {myTicketsView === 'department' && departmentQueue.available && <DepartmentQueuePanel queue={departmentQueue} />}
+
+      {(myTicketsView !== 'department' || !departmentQueue.available) && (
 
         <>
           {/* Filter toolbar: Search bar in the same row as dropdown filters */}
@@ -684,6 +710,7 @@ export default function EmployeeMyTickets({ roleContext }) {
             )}
           </div>
         </>
+      )}
 
       <TicketModal
         departmentFromCategory

@@ -61,6 +61,18 @@ foreach ($s in $services) {
 
 Execute PHPUnit / Pest tests inside any microservice:
 
+Tests run only on isolated MySQL databases whose names end in `_test` (`ticketing_system_test`, `analytics_service_test`), never on `ticketing_system`; each suite aborts before migrating otherwise (spec 0050). Create them once with the stack up:
+
+```bash
+sh scripts/create-test-databases.sh
+```
+
+Parity golden files for the reporting move (spec 0050) are captured from ticket-service on the commit before a slice's removals:
+
+```bash
+docker compose exec -e PARITY_CAPTURE=1 ticket-service php artisan test --filter=ParityCapture
+```
+
 ```bash
 # Test Ticketing Service
 docker compose exec ticketing-service php artisan test

@@ -7,6 +7,7 @@ use App\Services\BranchPriorityService;
 use App\Services\TicketConfigurationService;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Ticketing\Reporting\SlaMetrics;
 
 class SLAService
 {
@@ -27,7 +28,10 @@ class SLAService
     }
 
     /** The four columns that record where a ticket's SLA came from (spec 0037). */
-    public const SLA_SOURCE_COLUMNS = ['branch_sla_policy_id', 'branch_priority_override_id', 'sla_rule_id', 'sla_ID'];
+    public const SLA_SOURCE_COLUMNS = SlaMetrics::SLA_SOURCE_COLUMNS;
+
+    /** The SLA checker's alert bookkeeping columns, kept in ticket_sla_alerts (spec 0049). */
+    private const SLA_ALERT_COLUMNS = ['sla_risk_notified_at', 'sla_breach_notified_at', 'last_sla_breach_alert_at'];
 
     /**
      * Source column values for a resolveSlaPolicy() result: the resolved source is set
@@ -788,7 +792,7 @@ class SLAService
     }
 
     /** Minutes before resolution_due_at when an open ticket counts as At Risk (AC-13 step 6). */
-    public const AT_RISK_MINUTES = 240;
+    public const AT_RISK_MINUTES = SlaMetrics::AT_RISK_MINUTES;
 
     /**
      * Compute comprehensive SLA metrics (status, due date, minutes remaining) for ticket monitoring.
@@ -807,74 +811,7 @@ class SLAService
      */
     public function computeTicketSlaMetrics($ticket): array
     {
-        $result = fn (string $status, $dueAt = null, $remaining = null, array $flags = []) => array_merge([
-            'status' => $status,
-            'due_at' => $dueAt ? $dueAt->toIso8601String() : null,
-            'time_remaining_minutes' => $remaining,
-            'is_breached' => false,
-            'is_at_risk' => false,
-            'is_paused' => false,
-        ], $flags);
-
-        if (!$ticket) {
-            return $result('On Track');
-        }
-
-        $now = now();
-        $statusName = strtolower(trim((string) ($ticket->status_name ?? $ticket->status ?? '')));
-        $isClosedOrResolved = in_array($statusName, ['closed', 'resolved'], true);
-        $isOnHold = in_array($statusName, ['on hold', 'on-hold', 'paused'], true) || ((int) ($ticket->ticket_status_ID ?? 0) === 11);
-
-        $resDueAtRaw = $ticket->resolution_due_at ?? null;
-        $resDueAt = $resDueAtRaw ? Carbon::parse($resDueAtRaw) : null;
-        $resolvedAtRaw = ($ticket->resolved_at ?? null) ?: ($ticket->closed_at ?? null);
-        $resolvedAt = $resolvedAtRaw ? Carbon::parse($resolvedAtRaw) : null;
-
-        // 1. SLA assignment failed at creation; tickets:backfill-sla repairs it.
-        if (($ticket->sla_status ?? null) === 'SLA Unavailable') {
-            return $result('SLA Unavailable', null, null, ['is_unavailable' => true]);
-        }
-
-        // 2. No SLA source and no due date.
-        $hasSource = false;
-        foreach (self::SLA_SOURCE_COLUMNS as $column) {
-            if (!empty($ticket->{$column} ?? null)) {
-                $hasSource = true;
-                break;
-            }
-        }
-        if (!$hasSource && !$resDueAt) {
-            return $result('No SLA Configured', null, null, ['is_unavailable' => true]);
-        }
-
-        // 3. On Hold: the clock is paused.
-        if ($isOnHold) {
-            return $result('Paused', $resDueAt, $resDueAt ? max(0, $now->diffInMinutes($resDueAt, false)) : null, ['is_paused' => true]);
-        }
-
-        // 4. Closed or Resolved.
-        if ($isClosedOrResolved) {
-            $isBreached = $resDueAt !== null && ($resolvedAt ?: $now)->gt($resDueAt);
-            return $result($isBreached ? 'Breached' : 'Compliant', $resDueAt, 0, ['is_breached' => $isBreached]);
-        }
-
-        if (!$resDueAt) {
-            return $result('On Track');
-        }
-
-        // 5. Breached.
-        if ($now->gt($resDueAt)) {
-            return $result('Breached', $resDueAt, 0, ['is_breached' => true]);
-        }
-
-        // 6. At Risk.
-        $remaining = (int) $now->diffInMinutes($resDueAt, false);
-        if ($resDueAt->lte($now->copy()->addMinutes(self::AT_RISK_MINUTES))) {
-            return $result('At Risk', $resDueAt, $remaining, ['is_at_risk' => true]);
-        }
-
-        // 7. On Track.
-        return $result('On Track', $resDueAt, $remaining);
+        return SlaMetrics::compute($ticket);
     }
 
     /**
@@ -961,7 +898,17 @@ class SLAService
                 $q->whereNull('ts.status_name')
                   ->orWhereNotIn(DB::raw('LOWER(ts.status_name)'), ['closed', 'resolved', 'discarded', 'cancelled']);
             })
-            ->select('t.*', 'ts.status_name', 'c.client_name')
+            ->leftJoin('ticket_sla_alerts as a', 'a.ticket_id', '=', 't.ticket_ID')
+            ->select(
+                't.*',
+                'ts.status_name',
+                'c.client_name',
+                // Alert bookkeeping lives only in ticket_sla_alerts (spec 0049, release 2). Aliased so it can
+                // never clash with a same named column on tickets; assigned back under the original names below.
+                'a.sla_risk_notified_at as alert_sla_risk_notified_at',
+                'a.sla_breach_notified_at as alert_sla_breach_notified_at',
+                'a.last_sla_breach_alert_at as alert_last_sla_breach_alert_at'
+            )
             ->get();
 
         $breachNotifiedCount = 0;
@@ -972,6 +919,9 @@ class SLAService
         foreach ($activeTickets as $ticket) {
             $evaluatedCount++;
             $ticketId = (int) $ticket->ticket_ID;
+            $ticket->sla_risk_notified_at = $ticket->alert_sla_risk_notified_at;
+            $ticket->sla_breach_notified_at = $ticket->alert_sla_breach_notified_at;
+            $ticket->last_sla_breach_alert_at = $ticket->alert_last_sla_breach_alert_at;
             $metrics = $this->computeTicketSlaMetrics($ticket);
             $status = $metrics['status'];
 
@@ -985,12 +935,16 @@ class SLAService
 
                 if ($shouldAlert) {
                     $this->dispatchSlaBreachAlert($ticket, $metrics, $notificationService);
-                    DB::table('tickets')->where('ticket_ID', $ticketId)->update([
-                        'sla_status' => 'Breached',
-                        'sla_breach_notified_at' => $ticket->sla_breach_notified_at ?: $now,
-                        'last_sla_breach_alert_at' => $now,
-                        'updated_at' => $now,
-                    ]);
+                    DB::transaction(function () use ($ticketId, $ticket, $now) {
+                        DB::table('tickets')->where('ticket_ID', $ticketId)->update([
+                            'sla_status' => 'Breached',
+                            'updated_at' => $now,
+                        ]);
+                        // The first breach time is "existing value, else now": filled only when the row has none.
+                        $this->upsertSlaAlert($ticketId, $ticket, ['last_sla_breach_alert_at' => $now], $now, [
+                            'sla_breach_notified_at' => $ticket->sla_breach_notified_at ?: $now,
+                        ]);
+                    });
                     $breachNotifiedCount++;
                 } elseif (($ticket->sla_status ?? '') !== 'Breached') {
                     DB::table('tickets')->where('ticket_ID', $ticketId)->update([
@@ -1005,11 +959,13 @@ class SLAService
             if ($status === 'At Risk') {
                 if (empty($ticket->sla_risk_notified_at)) {
                     $this->dispatchSlaRiskAlert($ticket, $metrics, $notificationService);
-                    DB::table('tickets')->where('ticket_ID', $ticketId)->update([
-                        'sla_status' => 'At Risk',
-                        'sla_risk_notified_at' => $now,
-                        'updated_at' => $now,
-                    ]);
+                    DB::transaction(function () use ($ticketId, $ticket, $now) {
+                        DB::table('tickets')->where('ticket_ID', $ticketId)->update([
+                            'sla_status' => 'At Risk',
+                            'updated_at' => $now,
+                        ]);
+                        $this->upsertSlaAlert($ticketId, $ticket, ['sla_risk_notified_at' => $now], $now);
+                    });
                     $riskNotifiedCount++;
                 } elseif (($ticket->sla_status ?? '') !== 'At Risk') {
                     DB::table('tickets')->where('ticket_ID', $ticketId)->update([
@@ -1034,6 +990,41 @@ class SLAService
             'breach_notifications_sent' => $breachNotifiedCount,
             'risk_notifications_sent' => $riskNotifiedCount,
         ];
+    }
+
+    /**
+     * Record SLA alert bookkeeping in ticket_sla_alerts (one row per ticket, keyed by ticket_id).
+     *
+     * $set columns are written as given. Every other alert column is carried over (spec 0049, AC-10):
+     * a new row takes the value the checker loaded for the ticket (or the $fill override), and an existing row
+     * keeps its own value when it has one, else takes that same value ("fill if empty"). So a write never clears
+     * another run's timestamp. Since release 2 the loaded value is the row's own value, so for an existing row
+     * the carry over is a no op; it is kept as a guard against overlapping checker runs.
+     */
+    private function upsertSlaAlert(int $ticketId, object $ticket, array $set, $now, array $fill = []): void
+    {
+        $useAlias = (bool) DB::connection()->getConfig('use_upsert_alias');
+        $row = ['ticket_id' => $ticketId];
+        $update = [];
+
+        foreach (self::SLA_ALERT_COLUMNS as $column) {
+            if (array_key_exists($column, $set)) {
+                $row[$column] = $set[$column];
+                $update[] = $column;
+                continue;
+            }
+
+            $row[$column] = array_key_exists($column, $fill) ? $fill[$column] : ($ticket->{$column} ?? null);
+            // The incoming (inserted) value is the carried value, referenced the same way Laravel's MySQL grammar does.
+            $incoming = $useAlias ? "`laravel_upsert_alias`.`{$column}`" : "VALUES(`{$column}`)";
+            $update[$column] = DB::raw("COALESCE(`ticket_sla_alerts`.`{$column}`, {$incoming})");
+        }
+
+        $row['created_at'] = $now;
+        $row['updated_at'] = $now;
+        $update[] = 'updated_at';
+
+        DB::table('ticket_sla_alerts')->upsert([$row], ['ticket_id'], $update);
     }
 
     /**

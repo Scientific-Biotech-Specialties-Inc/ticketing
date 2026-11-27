@@ -11,13 +11,34 @@ abstract class TestCase extends BaseTestCase
 {
     use CreatesApplication;
 
+    /**
+     * Runs after the app boots and before RefreshDatabase migrates, so a wrong database is never wiped.
+     */
+    protected function setUpTraits()
+    {
+        $this->assertIsolatedTestDatabase();
+
+        return parent::setUpTraits();
+    }
+
+    /**
+     * Spec 0050 AC-16: tests only ever run on an isolated database whose name ends in _test
+     * (ticketing_system_test, created by scripts/create-test-databases.sh). The shared dev database
+     * ticketing_system was once wiped by a test run.
+     */
+    protected function assertIsolatedTestDatabase(): void
+    {
+        $connection = (string) config('database.default');
+        $database = (string) config("database.connections.{$connection}.database");
+
+        if (!str_ends_with($database, '_test')) {
+            throw new \RuntimeException("Refusing to run tests: database '{$database}' does not end in _test. Run them on ticketing_system_test.");
+        }
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
-
-        if (\Illuminate\Support\Facades\DB::connection()->getDatabaseName() === 'ticketing_system') {
-            throw new \RuntimeException("Refusing to run tests against production/development database 'ticketing_system'");
-        }
 
         $this->assertSame('log', config('broadcasting.default'), "Expected broadcast driver 'log', got " . config('broadcasting.default'));
         $this->assertSame('array', config('cache.default'), "Expected cache driver 'array', got " . config('cache.default'));

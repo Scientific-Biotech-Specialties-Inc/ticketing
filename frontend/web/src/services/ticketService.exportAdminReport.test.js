@@ -30,7 +30,29 @@ vi.mock('@/auth/refreshSession', () => ({
   refreshAccessToken: vi.fn(() => Promise.resolve(true)),
 }));
 
-import { exportAdminReport, getAdminDashboard, getAdminPredictiveInsights } from './ticketService';
+import axios from 'axios';
+import { exportAdminReport, getAdminDashboard, getAdminPredictiveInsights, triggerEtlSync } from './ticketService';
+
+// Snapshot what ticketService set up when it loaded, before any test clears the mocks.
+const clientConfigsAtLoad = axios.create.mock.calls.map((c) => c[0]);
+const requestInterceptorsAtLoad = instance.interceptors.request.use.mock.calls.length;
+const responseInterceptorsAtLoad = instance.interceptors.response.use.mock.calls.length;
+
+describe('ticketService analytics client (spec 0050 slice 1)', () => {
+  it('creates an analytics client on the analytics gateway path, with the same token handling', () => {
+    expect(clientConfigsAtLoad).toContainEqual(expect.objectContaining({ baseURL: '/api/ticketing/analytics', withCredentials: true }));
+    // ticketClient and analyticsClient (at least) both get the request and 401 refresh interceptors.
+    expect(requestInterceptorsAtLoad).toBeGreaterThanOrEqual(2);
+    expect(responseInterceptorsAtLoad).toBeGreaterThanOrEqual(2);
+  });
+
+  it('posts the ETL sync to analytics-service', async () => {
+    instance.post.mockResolvedValueOnce({ data: { status: 'success' } });
+
+    await expect(triggerEtlSync({ full_sync: true, branch_id: 'all' })).resolves.toEqual({ status: 'success' });
+    expect(instance.post).toHaveBeenCalledWith('/etl/sync', { full_sync: true, branch_id: 'all' });
+  });
+});
 
 describe('ticketService.getAdminDashboard shares identical in flight requests', () => {
   beforeEach(() => {
@@ -66,7 +88,7 @@ describe('ticketService.getAdminDashboard shares identical in flight requests', 
     await Promise.all([getAdminPredictiveInsights({}), getAdminPredictiveInsights({}), getAdminDashboard({})]);
 
     expect(instance.get).toHaveBeenCalledTimes(2);
-    expect(instance.get.mock.calls.map((c) => c[0]).sort()).toEqual(['/admin-reports/predictive-insights', '/admin/dashboard']);
+    expect(instance.get.mock.calls.map((c) => c[0]).sort()).toEqual(['/admin/dashboard', '/insights/predictive']);
   });
 
   it('does not keep a failed request, so the next call tries again', async () => {

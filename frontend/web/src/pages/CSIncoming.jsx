@@ -975,6 +975,12 @@ export default function CSIncoming() {
                             Pending Reassignment
                           </span>
                         )}
+                        {/* Spec 0051 (AC-15): routed to a department, no manager has acted yet. */}
+                        {t.waiting_on_department && (
+                          <span className="text-[10px] font-semibold px-1 py-0.5 rounded border border-primary/20 bg-primary/5 text-primary w-fit" data-testid="waiting-on-department">
+                            Waiting on {t.waiting_on_department}
+                          </span>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell className="font-medium text-foreground max-w-[18rem] truncate">

@@ -191,7 +191,7 @@ export function buildAnalyticsExportRows(data) {
   return [['Report', 'Dashboard data', UNAVAILABLE, '', 'No dashboard data was loaded when the export was requested']];
 }
 
-/** Predictive payload from `GET /admin-reports/predictive-insights`. */
+/** Predictive payload from analytics-service `GET /insights/predictive` (spec 0050; same JSON as before). */
 export function buildPredictiveExportRows(data) {
   const rows = [];
   const add = (section, metric, value, unit = '', note = '') => rows.push([section, metric, val(value), unit, note]);

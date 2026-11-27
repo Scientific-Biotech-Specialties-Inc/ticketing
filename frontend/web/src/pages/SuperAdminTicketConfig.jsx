@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import DepartmentCodesPanel from '@/components/DepartmentCodesPanel';
 import { Search, Plus, MoreVertical, Clock, Save, Building2, ChevronRight, ChevronDown, ChevronUp, ArrowLeft, CheckCircle2, Edit3, Trash2, Power, AlertCircle, RotateCcw, GitBranch, ArrowRight, ArrowUp, ArrowDown, Lock, Info, ShieldCheck, ShieldAlert, FileUp, Check, HardDrive, Bell, Users, UserCheck, Mail, Layers, Star, MessageSquare, Hash, Eye, Calendar, Tag, EyeOff, Send, Key, RefreshCw, X, Sparkles, Sliders, Settings, Table, ArrowUpDown } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import NotificationModal from '@/components/NotificationModal';
@@ -9687,6 +9688,15 @@ export default function SuperAdminTicketConfig() {
                 </span>
               </div>
             </div>
+          </div>
+
+          {/* Departments: codes (spec 0043) and the routed tickets switch (spec 0051, AC-1) */}
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-xs" data-testid="departments-card">
+            <div className="pb-4 mb-4 border-b border-gray-100 flex items-center gap-2">
+              <Building2 size={16} className="text-[#252578]" />
+              <h3 className="text-base font-bold text-gray-900">Departments</h3>
+            </div>
+            <DepartmentCodesPanel enabled />
           </div>
         </div>
       ) : tab === TAB_LIMITS ? (

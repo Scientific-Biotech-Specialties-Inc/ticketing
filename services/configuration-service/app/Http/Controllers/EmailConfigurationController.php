@@ -14,6 +14,11 @@ use Illuminate\Validation\ValidationException;
 
 class EmailConfigurationController extends Controller
 {
+    /** Event keys whose template may be missing, mapped to the template used instead. */
+    private const TEMPLATE_FALLBACKS = [
+        'ticket_department_routed' => 'ticket_assigned',
+    ];
+
     /**
      * Email categories accepted by dispatchEmail(). "security" mail (OTP, password reset,
      * provisioning) is never skipped by notification channel settings (spec 0040, AC-5).
@@ -437,6 +442,11 @@ class EmailConfigurationController extends Controller
 
         $template = EmailTemplate::where('event_key', $eventKey)->first();
 
+        // Spec 0051: a newer event without its own template row falls back to an older template.
+        if (!$template && isset(self::TEMPLATE_FALLBACKS[$eventKey])) {
+            $template = EmailTemplate::where('event_key', self::TEMPLATE_FALLBACKS[$eventKey])->first();
+        }
+
         // If template doesn't exist or is disabled by SuperAdmin, cleanly skip dispatch
         if (!$template || !$template->is_enabled) {
             return response()->json([
@@ -545,7 +555,7 @@ class EmailConfigurationController extends Controller
         if (!$eventKey) return null;
         return match ($eventKey) {
             'ticket_created' => 'new_ticket',
-            'ticket_assigned', 'ticket_escalated' => 'escalation_delegation',
+            'ticket_assigned', 'ticket_escalated', 'ticket_department_routed' => 'escalation_delegation',
             'ticket_status_changed', 'ticket_resolved', 'ticket_closed' => 'status_update',
             'new_message' => 'new_message',
             'sla_breach_warning', 'overdue_sla_breach' => 'overdue_sla_breach',

@@ -27,13 +27,15 @@
         "psr-4": {
             "App\\": "app/",
             "Ticketing\\Auth\\": ["packages/ticketing-auth/src/", "../../packages/ticketing-auth/src/"],
+            "Ticketing\\Reporting\\": ["packages/ticketing-reporting/src/", "../../packages/ticketing-reporting/src/"],
             "Database\\Factories\\": "database/factories/",
             "Database\\Seeders\\": "database/seeders/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "Tests\\": "tests/"
+            "Tests\\": "tests/",
+            "Ticketing\\Reporting\\Tests\\": ["packages/ticketing-reporting/tests/", "../../packages/ticketing-reporting/tests/"]
         }
     },
     "scripts": {

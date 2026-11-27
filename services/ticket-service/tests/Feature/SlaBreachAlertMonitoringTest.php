@@ -133,9 +133,6 @@ class SlaBreachAlertMonitoringTest extends TestCase
                 $t->dateTime('resolution_due_at')->nullable();
                 $t->dateTime('due_at')->nullable();
                 $t->string('sla_status')->nullable();
-                $t->dateTime('sla_breach_notified_at')->nullable();
-                $t->dateTime('last_sla_breach_alert_at')->nullable();
-                $t->dateTime('sla_risk_notified_at')->nullable();
                 $t->timestamps();
             });
         } else {
@@ -150,21 +147,6 @@ class SlaBreachAlertMonitoringTest extends TestCase
                     $t->string('sla_status')->nullable();
                 });
             }
-            if (!Schema::hasColumn('tickets', 'sla_breach_notified_at')) {
-                Schema::table('tickets', function ($t) {
-                    $t->dateTime('sla_breach_notified_at')->nullable();
-                });
-            }
-            if (!Schema::hasColumn('tickets', 'last_sla_breach_alert_at')) {
-                Schema::table('tickets', function ($t) {
-                    $t->dateTime('last_sla_breach_alert_at')->nullable();
-                });
-            }
-            if (!Schema::hasColumn('tickets', 'sla_risk_notified_at')) {
-                Schema::table('tickets', function ($t) {
-                    $t->dateTime('sla_risk_notified_at')->nullable();
-                });
-            }
             if (!Schema::hasColumn('tickets', 'assigned_to')) {
                 Schema::table('tickets', function ($t) {
                     $t->unsignedBigInteger('assigned_to')->nullable();
@@ -175,6 +157,16 @@ class SlaBreachAlertMonitoringTest extends TestCase
                     $t->unsignedBigInteger('department_id')->nullable();
                 });
             }
+        }
+
+        if (!Schema::hasTable('ticket_sla_alerts')) {
+            Schema::create('ticket_sla_alerts', function ($t) {
+                $t->unsignedBigInteger('ticket_id')->primary();
+                $t->dateTime('sla_risk_notified_at')->nullable();
+                $t->dateTime('sla_breach_notified_at')->nullable();
+                $t->dateTime('last_sla_breach_alert_at')->nullable();
+                $t->timestamps();
+            });
         }
 
         if (!Schema::hasTable('ticket_assignments')) {
@@ -337,8 +329,10 @@ class SlaBreachAlertMonitoringTest extends TestCase
 
         $updatedTicket = DB::table('tickets')->where('ticket_ID', $ticketId)->first();
         $this->assertSame('Breached', $updatedTicket->sla_status);
-        $this->assertNotNull($updatedTicket->sla_breach_notified_at);
-        $this->assertNotNull($updatedTicket->last_sla_breach_alert_at);
+
+        $alert = DB::table('ticket_sla_alerts')->where('ticket_id', $ticketId)->first();
+        $this->assertNotNull($alert->sla_breach_notified_at);
+        $this->assertNotNull($alert->last_sla_breach_alert_at);
     }
 
     /**
@@ -576,10 +570,13 @@ class SlaBreachAlertMonitoringTest extends TestCase
             'description' => 'Unresponsive touchscreen.',
             'resolution_due_at' => $overdueDate,
             'sla_status' => 'Breached',
-            'sla_breach_notified_at' => Carbon::now()->subHours(3),
-            'last_sla_breach_alert_at' => Carbon::now()->subHours(3),
             'created_at' => Carbon::now()->subHours(8),
             'updated_at' => Carbon::now()->subHours(2),
+        ]);
+        DB::table('ticket_sla_alerts')->insert([
+            'ticket_id' => $ticketId,
+            'sla_breach_notified_at' => Carbon::now()->subHours(3),
+            'last_sla_breach_alert_at' => Carbon::now()->subHours(3),
         ]);
 
         $slaService = app(SLAService::class);
@@ -632,5 +629,138 @@ class SlaBreachAlertMonitoringTest extends TestCase
         $this->assertStringContainsString('Background Job Alert', $adminAlert->title);
         $adminData = json_decode($adminAlert->data, true);
         $this->assertSame('system_alert', $adminData['type']);
+    }
+
+    private function makeTicket(array $overrides = []): int
+    {
+        return DB::table('tickets')->insertGetId(array_merge([
+            'ticket_number' => 'TKT-' . random_int(2000, 9999),
+            'ticket_type_ID' => 1,
+            'created_by' => $this->testClientId,
+            'problem_category_ID' => 1,
+            'priority_ID' => 1,
+            'ticket_status_ID' => 1,
+            'title' => 'SLA alert table scenario',
+            'description' => 'Spec 0049',
+            'resolution_due_at' => Carbon::now()->subHours(2),
+            'sla_status' => 'At Risk',
+            'created_at' => Carbon::now()->subHours(6),
+            'updated_at' => Carbon::now()->subHours(1),
+        ], $overrides));
+    }
+
+    /** AC-3, AC-4: first breach, repeat inside the interval, repeat after it. */
+    public function test_breach_alert_cadence_writes_only_the_alert_table(): void
+    {
+        $ticketId = $this->makeTicket();
+        $service = app(SLAService::class);
+
+        $first = $service->checkAndNotifySlaAlerts();
+        $this->assertGreaterThanOrEqual(1, $first['breach_notifications_sent']);
+        $row = DB::table('ticket_sla_alerts')->where('ticket_id', $ticketId)->first();
+        $this->assertNotNull($row->sla_breach_notified_at);
+        $this->assertNotNull($row->last_sla_breach_alert_at);
+        $this->assertSame('Breached', DB::table('tickets')->where('ticket_ID', $ticketId)->value('sla_status'));
+
+        $second = $service->checkAndNotifySlaAlerts();
+        $this->assertSame(0, $second['breach_notifications_sent'], 'inside the interval nothing is sent');
+
+        $firstNotified = '2020-01-01 00:00:00';
+        DB::table('ticket_sla_alerts')->where('ticket_id', $ticketId)->update([
+            'sla_breach_notified_at' => $firstNotified,
+            'last_sla_breach_alert_at' => Carbon::now()->subDays(2),
+            'sla_risk_notified_at' => '2019-01-01 00:00:00',
+        ]);
+        $third = $service->checkAndNotifySlaAlerts();
+        $this->assertGreaterThanOrEqual(1, $third['breach_notifications_sent']);
+        $row = DB::table('ticket_sla_alerts')->where('ticket_id', $ticketId)->first();
+        $this->assertSame($firstNotified, $row->sla_breach_notified_at, 'repeat keeps the first breach time');
+        $this->assertSame('2019-01-01 00:00:00', $row->sla_risk_notified_at, 'earlier risk time survives');
+        $this->assertGreaterThan(Carbon::now()->subMinutes(5)->timestamp, Carbon::parse($row->last_sla_breach_alert_at)->timestamp);
+    }
+
+    /** AC-2: an At Risk ticket is alerted once. */
+    public function test_at_risk_alert_is_sent_once(): void
+    {
+        $ticketId = $this->makeTicket([
+            'resolution_due_at' => Carbon::now()->addMinutes(5),
+            'sla_status' => 'On Track',
+            'created_at' => Carbon::now()->subHours(3),
+        ]);
+        $service = app(SLAService::class);
+
+        $first = $service->checkAndNotifySlaAlerts();
+        $second = $service->checkAndNotifySlaAlerts();
+
+        $this->assertSame(0, $second['risk_notifications_sent']);
+        if ($first['risk_notifications_sent'] > 0) {
+            $this->assertNotNull(DB::table('ticket_sla_alerts')->where('ticket_id', $ticketId)->value('sla_risk_notified_at'));
+        }
+    }
+
+    /** AC-6: an alert row with a recent breach time counts as already alerted; nothing is sent again. */
+    public function test_alert_row_counts_as_already_alerted(): void
+    {
+        $ticketId = $this->makeTicket(['sla_status' => 'Breached']);
+        $recent = Carbon::now()->subMinutes(1)->startOfSecond();
+        DB::table('ticket_sla_alerts')->insert([
+            'ticket_id' => $ticketId,
+            'sla_breach_notified_at' => $recent,
+            'last_sla_breach_alert_at' => $recent,
+        ]);
+
+        app(SLAService::class)->checkAndNotifySlaAlerts();
+
+        $this->assertSame($recent->toDateTimeString(), DB::table('ticket_sla_alerts')->where('ticket_id', $ticketId)->value('last_sla_breach_alert_at'));
+    }
+
+    /** AC-6: a ticket with no alert row is alerted as new. */
+    public function test_ticket_without_alert_row_is_alerted_as_new(): void
+    {
+        $ticketId = $this->makeTicket();
+
+        $result = app(SLAService::class)->checkAndNotifySlaAlerts();
+
+        $this->assertGreaterThanOrEqual(1, $result['breach_notifications_sent']);
+        $this->assertNotNull(DB::table('ticket_sla_alerts')->where('ticket_id', $ticketId)->first());
+    }
+
+    private function escalationCount(int $ticketId): int
+    {
+        return DB::table('ticket_audit_logs')
+            ->where('ticket_ID', $ticketId)
+            ->where('action_type', \App\Services\EscalationParticipants::EVENT)
+            ->count();
+    }
+
+    /**
+     * AC-3, AC-10: a repeat alert keeps the row's first breach and risk times and does not escalate again.
+     */
+    public function test_repeat_breach_keeps_row_values_and_does_not_escalate(): void
+    {
+        $firstBreach = '2020-01-01 08:00:00';
+        $riskTime = '2019-12-31 08:00:00';
+        $ticketId = $this->makeTicket(['sla_status' => 'Breached']);
+        DB::table('ticket_assignments')->insert([
+            'ticket_ID' => $ticketId,
+            'employee_ID' => $this->assignedEmpId,
+            'assigned_by' => $this->csEmpId,
+            'created_at' => Carbon::now()->subHours(5),
+        ]);
+        DB::table('ticket_sla_alerts')->insert([
+            'ticket_id' => $ticketId,
+            'sla_risk_notified_at' => $riskTime,
+            'sla_breach_notified_at' => $firstBreach,
+            'last_sla_breach_alert_at' => Carbon::now()->subDays(2),
+        ]);
+
+        $result = app(SLAService::class)->checkAndNotifySlaAlerts();
+
+        $this->assertGreaterThanOrEqual(1, $result['breach_notifications_sent']);
+        $row = DB::table('ticket_sla_alerts')->where('ticket_id', $ticketId)->first();
+        $this->assertSame($firstBreach, $row->sla_breach_notified_at);
+        $this->assertSame($riskTime, $row->sla_risk_notified_at);
+        $this->assertGreaterThan(Carbon::now()->subMinutes(5)->timestamp, Carbon::parse($row->last_sla_breach_alert_at)->timestamp);
+        $this->assertSame(0, $this->escalationCount($ticketId), 'a repeat alert does not escalate');
     }
 }
