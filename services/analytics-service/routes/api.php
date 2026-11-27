@@ -23,7 +23,7 @@ Route::middleware('auth:api')->get('/user', function (Request $request) {
     return $request->user();
 });
 
-// Spec 0034: every feedback and stats route needs a verified token (auth.subsystem).
+// Every feedback and stats route needs a verified token (auth.subsystem).
 // Direct routes matching Nginx gateway rewrite: /api/ticketing/analytics/(.*) -> /api/$1
 Route::middleware('auth.subsystem')->group(function () {
     Route::post('/feedback', [FeedbackController::class, 'store']);
@@ -33,7 +33,7 @@ Route::middleware('auth.subsystem')->group(function () {
     Route::get('/csat-stats', [FeedbackController::class, 'csatStats']);
     Route::get('/predictive-metrics', [PredictiveAnalyticsController::class, 'getPredictiveMetrics']);
 
-    // Spec 0050: reporting moved from ticket-service. Registered once each (no alias forms).
+    // Reporting moved from ticket-service. Registered once each (no alias forms).
     Route::get('/insights/predictive', [PredictiveInsightsController::class, 'show'])->middleware('no-cache');
     Route::post('/etl/sync', [EtlSyncController::class, 'sync'])->middleware('no-cache');
 

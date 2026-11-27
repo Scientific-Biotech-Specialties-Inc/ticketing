@@ -63,6 +63,7 @@ class CsNewTicketNotificationTest extends TestCase
         $this->machineId = (int) DB::table('machines')->insertGetId([
             'category_ID' => $machineCategoryId,
             'client_ID' => $this->customer->id,
+            'branch_id' => 'sbsi-makati-branch',
             'machine_name' => 'Notify Scanner',
             'serial_number' => 'SN-' . uniqid(),
             'created_at' => now(), 'updated_at' => now(),

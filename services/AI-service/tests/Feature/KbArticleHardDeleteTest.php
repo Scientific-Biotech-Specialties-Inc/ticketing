@@ -33,7 +33,7 @@ class KbArticleHardDeleteTest extends TestCase
      */
     protected function superAdminHeaders(string $actorName = 'Super Admin'): array
     {
-        // Spec 0036 (AC-11): identity comes from a verified token, never from an unsigned payload.
+        // Identity comes from a verified token, never from an unsigned payload.
         $this->actingAsSuperAdmin($actorName);
 
         return ['Accept' => 'application/json'];

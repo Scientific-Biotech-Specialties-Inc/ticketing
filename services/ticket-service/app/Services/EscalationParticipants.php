@@ -80,11 +80,12 @@ class EscalationParticipants
     /**
      * Tickets escalated to this manager: named in an escalation record, or currently Escalated with an
      * active assignee in the manager's department (the rule escalation uses to pick managers, which
-     * also covers escalations recorded before this table existed). Branch does not matter.
+     * also covers escalations recorded before this table existed). With a branch id, that assignee must
+     * also work in the manager's branch (employees with no branch count as the main branch, id 1).
      *
      * @return int[]
      */
-    public function ticketIdsForManager(int $managerId, ?string $department): array
+    public function ticketIdsForManager(int $managerId, ?string $department, ?int $branchId = null): array
     {
         if ($managerId <= 0) {
             return [];
@@ -103,13 +104,21 @@ class EscalationParticipants
             $byDepartment = DB::table('tickets as t')
                 ->join('ticket_statuses as ts', 'ts.ticket_status_ID', '=', 't.ticket_status_ID')
                 ->whereRaw('LOWER(TRIM(ts.status_name)) = ?', ['escalated'])
-                ->whereExists(function ($sub) use ($dept) {
+                ->whereExists(function ($sub) use ($dept, $branchId) {
                     $sub->select(DB::raw(1))
                         ->from('ticket_assignments as ta')
                         ->join('employees as ae', 'ae.emp_id', '=', 'ta.employee_ID')
                         ->whereColumn('ta.ticket_ID', 't.ticket_ID')
                         ->whereNull('ta.completed_at')
                         ->whereRaw('LOWER(TRIM(ae.department)) = ?', [$dept]);
+                    if ($branchId !== null && $branchId > 0) {
+                        $sub->where(function ($b) use ($branchId) {
+                            $b->where('ae.branch_id', $branchId);
+                            if ($branchId === 1) {
+                                $b->orWhereNull('ae.branch_id')->orWhere('ae.branch_id', 0);
+                            }
+                        });
+                    }
                 })
                 ->pluck('t.ticket_ID')
                 ->map(fn ($id) => (int) $id)

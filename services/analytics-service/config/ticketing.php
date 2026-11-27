@@ -2,7 +2,7 @@
 
 /*
 |--------------------------------------------------------------------------
-| Ticketing domain settings read by the shared reporting package (spec 0050)
+| Ticketing domain settings read by the shared reporting package
 |--------------------------------------------------------------------------
 |
 | Same key and same env var as ticket-service's config/ticketing.php, so both

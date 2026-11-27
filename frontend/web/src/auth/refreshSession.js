@@ -16,6 +16,10 @@ const refreshClient = axios.create({
 });
 
 export const refreshAccessToken = async () => {
+  if (import.meta.env.VITE_APP_MODE === 'employee') {
+    return false;
+  }
+
   if (refreshInFlight) {
     return refreshInFlight;
   }

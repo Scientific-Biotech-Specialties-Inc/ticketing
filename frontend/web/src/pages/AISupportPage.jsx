@@ -1331,26 +1331,6 @@ function AISupportPage() {
       });
   }, [activeConversationId, loadConversation, handleNewChat, fetchConversationsListOnly, currentUserId]);
 
-  const handleClearChat = useCallback(() => {
-    if (window.confirm("Are you sure you want to clear this conversation's messages?")) {
-      setMessages([welcomeMessage, gatherDetailsMessage]);
-      setShowSuggestionChips(true);
-      setShowTicketCard(false);
-      setConversationPhase(0);
-      setEscalationTicketData(null);
-
-      if (activeConversationId) {
-        delete conversationStateRef.current[activeConversationId];
-        axiosInstance.delete(`${AI_API_URL}/conversations/${activeConversationId}`, {
-          baseURL: '',
-          params: { user_id: currentUserId }
-        }).then(() => {
-          fetchConversationsListOnly();
-        }).catch(() => null);
-      }
-    }
-  }, [activeConversationId, currentUserId, fetchConversationsListOnly]);
-
   const [duplicateModal, setDuplicateModal] = useState({
     isOpen: false,
     machineName: '',
@@ -2018,16 +1998,6 @@ function AISupportPage() {
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {messages.length > 2 && (
-                <button
-                  onClick={handleClearChat}
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-slate-muted hover:text-red-600 hover:bg-red-50 rounded-lg transition-all border border-border hover:border-red-200 cursor-pointer"
-                  title="Clear all messages in this conversation"
-                >
-                  <Trash2 size={13} />
-                  <span className="hidden sm:inline">Clear Chat</span>
-                </button>
-              )}
               <span className="inline-flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-semibold">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="hidden xs:inline sm:inline">Online</span>

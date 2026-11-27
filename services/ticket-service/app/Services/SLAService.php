@@ -836,7 +836,7 @@ class SLAService
         $sql = "(CASE"
             . " WHEN {$t}.sla_status = 'SLA Unavailable' THEN 'unavailable'"
             . " WHEN ({$noSource}) AND {$due} IS NULL THEN 'no_sla'"
-            . " WHEN {$status} IN ('on hold', 'on-hold', 'paused') OR {$t}.ticket_status_ID = 11 THEN 'paused'"
+            . " WHEN {$status} IN ('on hold', 'on-hold', 'paused') OR {$t}.ticket_status_ID = 11 OR {$t}.sla_paused_by_maintenance = 1 THEN 'paused'"
             . " WHEN {$status} IN ('closed', 'resolved') THEN"
             . "   (CASE WHEN {$due} IS NOT NULL AND COALESCE({$t}.resolved_at, {$t}.closed_at, ?) > {$due} THEN 'breached' ELSE 'compliant' END)"
             . " WHEN {$due} IS NULL THEN 'on_track'"
@@ -1457,8 +1457,11 @@ class SLAService
 
         $managers = collect();
 
+        // Without an assignee to follow, only managers in the ticket's own branch are alerted.
+        $branchId = $this->ticketBranchId($ticket);
+
         if (!empty($targetDept)) {
-            $directManagers = DB::table('employees')
+            $directManagers = $this->whereEmployeeBranch(DB::table('employees'), $branchId)
                 ->whereRaw('LOWER(department) = ?', [strtolower(trim($targetDept))])
                 ->where(function ($q) use ($hasPosLevel) {
                     if ($hasPosLevel) {
@@ -1507,7 +1510,7 @@ class SLAService
             }
         }
 
-        $query = DB::table('employees')
+        $query = $this->whereEmployeeBranch(DB::table('employees'), $branchId)
             ->where(function ($q) use ($hasPosLevel) {
                 if ($hasPosLevel) {
                     $q->whereRaw('LOWER(COALESCE(position_level, "")) = ?', ['manager'])
@@ -1559,7 +1562,7 @@ class SLAService
                 $val = $res->json('value') ?? $res->json();
                 if (!empty($val[$deptType]['id'])) {
                     $cfgManager = DB::table('employees')->where('emp_id', $val[$deptType]['id'])->first();
-                    if ($cfgManager) {
+                    if ($cfgManager && $this->employeeBranchId($cfgManager) === $branchId) {
                         $managers->push($cfgManager);
                     }
                 }
@@ -1573,7 +1576,7 @@ class SLAService
                 default => 1028,
             };
             $defManager = DB::table('employees')->where('emp_id', $defaultMgrId)->first();
-            if ($defManager) {
+            if ($defManager && $this->employeeBranchId($defManager) === $branchId) {
                 $managers->push($defManager);
             }
         }
@@ -1610,15 +1613,17 @@ class SLAService
             return [];
         }
 
-        $departments = DB::table('employees')
+        // One (department, branch) pair per assignee: an escalation only reaches the manager of the
+        // assignee's department in the assignee's own branch, never a manager in another branch.
+        $departmentBranches = DB::table('employees')
             ->whereIn('emp_id', $assigneeIds)
-            ->pluck('department')
-            ->map(fn ($d) => trim((string) $d))
-            ->filter(fn ($d) => $d !== '')
-            ->unique(fn ($d) => strtolower($d))
+            ->get(['department', 'branch_id'])
+            ->map(fn ($e) => ['department' => trim((string) $e->department), 'branch_id' => $this->employeeBranchId($e)])
+            ->filter(fn ($p) => $p['department'] !== '')
+            ->unique(fn ($p) => strtolower($p['department']) . '|' . $p['branch_id'])
             ->values()
             ->all();
-        if (empty($departments)) {
+        if (empty($departmentBranches)) {
             return [];
         }
 
@@ -1634,7 +1639,9 @@ class SLAService
         }
 
         $managers = [];
-        foreach ($departments as $department) {
+        foreach ($departmentBranches as $pair) {
+            $department = $pair['department'];
+            $branchId = $pair['branch_id'];
             $deptLower = strtolower($department);
             $configKey = match (true) {
                 in_array($deptLower, ['it', 'it support'], true) => 'it',
@@ -1643,17 +1650,20 @@ class SLAService
                 default => null,
             };
 
-            // The configured department manager, when that employee actually exists.
+            // The configured department manager, when that employee actually exists and works in
+            // the assignee's branch.
             if ($configKey && !empty($configured[$configKey]['id'])) {
                 $configuredManager = DB::table('employees')->where('emp_id', (int) $configured[$configKey]['id'])->first();
-                if ($configuredManager && !in_array((int) $configuredManager->emp_id, $assigneeIds, true)) {
+                if ($configuredManager
+                    && !in_array((int) $configuredManager->emp_id, $assigneeIds, true)
+                    && $this->employeeBranchId($configuredManager) === $branchId) {
                     $managers[(int) $configuredManager->emp_id] = $configuredManager;
                 }
             }
 
-            // Every active manager of the department is alerted, not only the first one found:
-            // a department can have several managers and each watches its escalations/breaches.
-            $deptManagers = DB::table('employees')
+            // Every active manager of the department in that branch is alerted, not only the first
+            // one found: a department can have several managers and each watches its escalations/breaches.
+            $deptManagers = $this->whereEmployeeBranch(DB::table('employees'), $branchId)
                 ->whereRaw('LOWER(TRIM(COALESCE(department, ""))) = ?', [$deptLower])
                 ->where('is_active', 1)
                 ->whereNotIn('emp_id', $assigneeIds)
@@ -1663,7 +1673,7 @@ class SLAService
 
             // Older directories mark managers by role name instead of position level.
             if ($deptManagers->isEmpty()) {
-                $deptManagers = DB::table('employees')
+                $deptManagers = $this->whereEmployeeBranch(DB::table('employees'), $branchId)
                     ->whereRaw('LOWER(TRIM(COALESCE(department, ""))) = ?', [$deptLower])
                     ->where('is_active', 1)
                     ->whereNotIn('emp_id', $assigneeIds)
@@ -1678,6 +1688,50 @@ class SLAService
         }
 
         return array_values($managers);
+    }
+
+    /**
+     * An employee's branch id. Employees without one belong to the main branch (id 1), the same
+     * rule the manager dashboard and admin scoping use.
+     */
+    public function employeeBranchId(?object $employee): int
+    {
+        $id = (int) ($employee->branch_id ?? 0);
+        return $id > 0 ? $id : 1;
+    }
+
+    /**
+     * A ticket's branch id. tickets.branch_id may hold an id, slug or code; empty means the main branch.
+     */
+    public function ticketBranchId(?object $ticket): int
+    {
+        $raw = trim((string) ($ticket->branch_id ?? ''));
+        if ($raw === '') {
+            return 1;
+        }
+        if (ctype_digit($raw)) {
+            return (int) $raw > 0 ? (int) $raw : 1;
+        }
+
+        $id = DB::table('branches')
+            ->where('slug', strtolower($raw))
+            ->orWhereRaw('LOWER(code) = ?', [strtolower($raw)])
+            ->value('id');
+
+        return (int) $id > 0 ? (int) $id : 1;
+    }
+
+    /**
+     * Limit an employees query to one branch; the main branch also covers employees with no branch.
+     */
+    protected function whereEmployeeBranch($query, int $branchId)
+    {
+        return $query->where(function ($q) use ($branchId) {
+            $q->where('branch_id', $branchId);
+            if ($branchId === 1) {
+                $q->orWhereNull('branch_id')->orWhere('branch_id', 0);
+            }
+        });
     }
 
     public function resolveDepartmentManagerForTicket($ticket): ?object

@@ -555,8 +555,6 @@ export default function SuperAdminDashboard() {
               subtitle="Organization-wide target: ≥ 90%"
               icon={<ShieldCheck className="w-5 h-5 text-emerald-600" />}
               iconBg="bg-emerald-50 text-emerald-600"
-              trend="+1.6%"
-              trendPositive={true}
               showTooltip={false}
             />
 
@@ -566,8 +564,6 @@ export default function SuperAdminDashboard() {
               subtitle="Based on post-service surveys"
               icon={<Smile className="w-5 h-5 text-amber-600" />}
               iconBg="bg-amber-50 text-amber-600"
-              trend="+0.12"
-              trendPositive={true}
               variant="amber"
               showTooltip={false}
             />
@@ -575,11 +571,9 @@ export default function SuperAdminDashboard() {
             <MetricCard
               title="Overall Avg Resolution Time"
               value={dashboardData.systemKpis.overallResolutionTime != null ? `${dashboardData.systemKpis.overallResolutionTime} hrs` : 'Unavailable'}
-              subtitle="Excluding On-Hold duration"
+              subtitle="Average time from creation to resolution"
               icon={<Clock className="w-5 h-5 text-accent" />}
               iconBg="bg-blue-50 text-accent"
-              trend="-0.4h"
-              trendPositive={true}
               showTooltip={false}
             />
           </div>
@@ -716,7 +710,7 @@ export default function SuperAdminDashboard() {
                         {b.totalTickets === 0 ? '—' : `${b.slaCompliance}%`}
                       </span>
                     </td>
-                    <td className="py-3 px-3 text-slate-dark">{b.avgResolutionTime} hrs</td>
+                    <td className="py-3 px-3 text-slate-dark">{b.avgResolutionTime != null ? `${b.avgResolutionTime} hrs` : '—'}</td>
                     <td className="py-3 px-3 text-amber-700 font-medium">{b.avgCsat != null ? `★ ${b.avgCsat}` : '—'}</td>
                     <td className="py-3 px-3">
                       <Badge

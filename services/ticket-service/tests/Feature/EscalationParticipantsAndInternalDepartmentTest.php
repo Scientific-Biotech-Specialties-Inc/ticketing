@@ -6,9 +6,11 @@ use App\Models\Employee;
 use App\Services\CategoryTrack;
 use App\Services\EscalationParticipants;
 use App\Services\ManagerDashboardService;
+use App\Services\SLAService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 /**
@@ -136,10 +138,11 @@ class EscalationParticipantsAndInternalDepartmentTest extends TestCase
     }
 
     /**
-     * A ticket escalated to a manager shows in their queue and can be reassigned, even when the
-     * ticket belongs to another branch (escalation picks managers by department, not branch).
+     * An escalated ticket shows (and can be reassigned) only for the department manager in the
+     * assignee's branch. A same department manager in another branch does not see it, unless an
+     * escalation record names them explicitly.
      */
-    public function test_escalated_ticket_outside_the_manager_branch_is_in_their_queue_and_reassignable(): void
+    public function test_escalated_ticket_is_only_in_the_queue_of_the_manager_in_the_assignee_branch(): void
     {
         DB::table('branches')->updateOrInsert(['id' => 951], ['slug' => 'branch-951', 'name' => 'Branch 951', 'code' => 'B951', 'region' => 'East', 'is_active' => 1, 'created_at' => now(), 'updated_at' => now()]);
         DB::table('branches')->updateOrInsert(['id' => 952], ['slug' => 'branch-952', 'name' => 'Branch 952', 'code' => 'B952', 'region' => 'East', 'is_active' => 1, 'created_at' => now(), 'updated_at' => now()]);
@@ -149,6 +152,10 @@ class EscalationParticipantsAndInternalDepartmentTest extends TestCase
         $engineer = Employee::create([
             'emp_id' => 89502, 'first_name' => 'Eddie', 'last_name' => 'Cruz', 'email' => 'eng.escjoin@example.com',
             'role' => 'Engineer', 'department' => 'Service', 'is_active' => 1, 'branch_id' => 952, 'password_hash' => bcrypt('password'),
+        ]);
+        $sameBranchManager = Employee::create([
+            'emp_id' => 89504, 'first_name' => 'Sara', 'last_name' => 'Lim', 'email' => 'mgr952.escjoin@example.com',
+            'role' => 'Service Manager', 'department' => 'Service', 'position_level' => 'Manager', 'is_active' => 1, 'branch_id' => 952, 'password_hash' => bcrypt('password'),
         ]);
         $itManager = Employee::create([
             'emp_id' => 89503, 'first_name' => 'Ivan', 'last_name' => 'Tech', 'email' => 'itmgr.escjoin@example.com',
@@ -163,11 +170,14 @@ class EscalationParticipantsAndInternalDepartmentTest extends TestCase
             app(ManagerDashboardService::class)->ticketsForManager(DB::table('employees')->where('emp_id', $emp->emp_id)->first())['tickets']
         )->firstWhere('ticket_ID', $this->ticketId);
 
-        // No escalation record needed: Escalated + an assignee in the manager's department is enough.
-        $row = $queue($this->manager);
-        $this->assertNotNull($row, 'The escalated ticket from another branch must be in the Service manager queue.');
+        // No escalation record needed: Escalated + an assignee in the manager's department and branch is enough.
+        $row = $queue($sameBranchManager);
+        $this->assertNotNull($row, 'The escalated ticket must be in the queue of the Service manager in the assignee branch.');
         $this->assertTrue($row['can_reassign']);
         $this->assertTrue($row['escalated_to_me']);
+
+        // The Service manager of another branch is not escalated to.
+        $this->assertNull($queue($this->manager));
 
         // Not escalated to the IT manager (no IT assignee, not named in an escalation record).
         $this->assertNull($queue($itManager));
@@ -175,6 +185,48 @@ class EscalationParticipantsAndInternalDepartmentTest extends TestCase
         // Once an escalation names the IT manager explicitly, it shows for them too.
         app(EscalationParticipants::class)->record($this->ticketId, [$itManager->emp_id], $this->manager->emp_id, 'employee', 'Needs IT');
         $this->assertTrue($queue($itManager)['escalated_to_me']);
+    }
+
+    /**
+     * Escalation and SLA breach alerts reach only the assignee's department manager in the
+     * assignee's own branch; employees without a branch count as the main branch.
+     */
+    public function test_escalation_managers_are_limited_to_the_assignee_branch(): void
+    {
+        Http::fake(['*' => Http::response([], 404)]);
+        DB::table('branches')->updateOrInsert(['id' => 951], ['slug' => 'branch-951', 'name' => 'Branch 951', 'code' => 'B951', 'region' => 'East', 'is_active' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('branches')->updateOrInsert(['id' => 952], ['slug' => 'branch-952', 'name' => 'Branch 952', 'code' => 'B952', 'region' => 'East', 'is_active' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('employees')->where('emp_id', $this->manager->emp_id)->update(['branch_id' => 951]);
+
+        $engineer = $this->employee(89520, 'Service', 952);
+        $branchManager = $this->employee(89521, 'Service', 952, 'Manager');
+        $mainManager = $this->employee(89522, 'Service', null, 'Manager');
+        $mainEngineer = $this->employee(89523, 'Service', null);
+
+        $sla = app(SLAService::class);
+        $ids = fn ($ticketId) => collect($sla->resolveDepartmentManagersForTicket(DB::table('tickets')->where('ticket_ID', $ticketId)->first()))
+            ->pluck('emp_id')->map(fn ($id) => (int) $id)->all();
+
+        $branchTicket = $this->ticket(5, '952');
+        $this->assign($branchTicket, $engineer->emp_id);
+        $found = $ids($branchTicket);
+        $this->assertContains((int) $branchManager->emp_id, $found);
+        $this->assertNotContains((int) $this->manager->emp_id, $found, 'A manager in another branch must not be alerted.');
+        $this->assertNotContains((int) $mainManager->emp_id, $found);
+
+        // An assignee with no branch belongs to the main branch and reaches the main branch manager only.
+        $mainTicket = $this->ticket(5);
+        $this->assign($mainTicket, $mainEngineer->emp_id);
+        $found = $ids($mainTicket);
+        $this->assertContains((int) $mainManager->emp_id, $found);
+        $this->assertNotContains((int) $branchManager->emp_id, $found);
+        $this->assertNotContains((int) $this->manager->emp_id, $found);
+
+        // Unassigned: the ticket's own branch decides.
+        $unassigned = $this->ticket(5, 'branch-952');
+        $found = $ids($unassigned);
+        $this->assertNotContains((int) $this->manager->emp_id, $found);
+        $this->assertNotContains((int) $mainManager->emp_id, $found);
     }
 
     // EscalationParticipants::ticketIdsForManager

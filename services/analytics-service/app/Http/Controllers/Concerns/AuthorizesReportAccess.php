@@ -6,7 +6,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
- * Admin report access rules, copied verbatim from ticket-service's AdminReportController (spec 0050 AC-12):
+ * Admin report access rules, copied verbatim from ticket-service's AdminReportController:
  * the same allowed roles, the same branch rule and the same 403 messages as the endpoints they replace.
  */
 trait AuthorizesReportAccess

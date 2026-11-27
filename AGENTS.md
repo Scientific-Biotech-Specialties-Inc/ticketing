@@ -57,6 +57,7 @@ AI assistants operating within this repository are configured with specialized r
 5. **Mandatory Antivirus Scanning**: File uploads in `attachment-service` must pass ClamAV daemon verification before being saved to storage.
 6. **Non-Blocking Cache Invalidation**: Always use Redis `SCAN` chunking for ticket cache invalidation; never issue blocking `KEYS *`.
 7. **Branch Protection**: Never push directly to `dev` or `main`. Always create a typed work branch and open a PR targeting `dev`.
+8. **No Spec References in Code Comments**: Never put specification numbers, spec titles, or `docs/specs/` references in code comments or docblocks; explain the technical rationale or behavior directly instead.
 
 UI & Frontend Design Guardrails (ONE UI Specification)
 All frontend engineering and user interface work must strictly follow the rules in `DESIGN.md`. The canonical source of truth is `docs/ONE UI DESIGN.pdf`, representing the unified ONE UI standard across all 4 industry subsystems (CRMS, SERMS, PRS, TS) and the central Auth Module SPA.

@@ -146,7 +146,7 @@ class KnowledgeBaseSeeder extends Seeder
 
             // Index chunks & embeddings if content exists
             // indexArticle() activates the new embeddings only when the article is Published.
-            // Spec 0036: a failed embedding call leaves the article 'Indexing failed' instead of storing fake vectors.
+            // A failed embedding call leaves the article 'Indexing failed' instead of storing fake vectors.
             if (!empty($article->content)) {
                 try {
                     $ragService->indexArticle($article);

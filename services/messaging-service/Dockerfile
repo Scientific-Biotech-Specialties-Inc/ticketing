@@ -28,4 +28,25 @@ COPY . .
 # Run composer install at build time
 RUN mkdir -p bootstrap/cache storage && composer install --no-interaction --no-dev --prefer-dist --optimize-autoloader
 
-CMD sh -lc "if [ ! -f .env ] && [ -f .env.example ]; then cp .env.example .env; fi && if grep -q '^APP_KEY=$' .env; then php artisan key:generate --force; fi && php /usr/local/bin/init-db.php && php artisan migrate --force && php -d variables_order=EGPCS -d upload_max_filesize=20M -d post_max_size=25M artisan serve --no-reload --host=0.0.0.0 --port=8000"
+# HTTP runtime: nginx on :8000 in front of php-fpm, replacing the single threaded
+# `php artisan serve`. Startup steps (APP_KEY check, migrations, post-migrate hooks) are in
+# docker/runtime/start.sh. Compose `command:` overrides (queue, scheduler, reverb) still replace CMD.
+RUN apt-get update && apt-get install -y --no-install-recommends nginx \
+    && rm -rf /var/lib/apt/lists/* /etc/nginx/sites-enabled/default \
+    && ln -sf /dev/stdout /var/log/nginx/access.log \
+    && ln -sf /dev/stderr /var/log/nginx/error.log
+
+# Upload limits for this service (nginx client_max_body_size is only an upper bound).
+RUN { echo "upload_max_filesize=20M"; echo "post_max_size=25M"; } > /usr/local/etc/php/conf.d/uploads.ini
+
+COPY docker/runtime/nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker/runtime/php-fpm.conf /usr/local/etc/php-fpm.d/zz-app.conf
+COPY docker/runtime/start.sh /usr/local/bin/start-app
+# Strip Windows line endings in case the files were checked out with CRLF.
+RUN sed -i 's/\r$//' /usr/local/bin/start-app /etc/nginx/conf.d/default.conf /usr/local/etc/php-fpm.d/zz-app.conf \
+    && chmod +x /usr/local/bin/start-app
+
+ENV PHP_FPM_MAX_CHILDREN=10
+EXPOSE 8000
+
+CMD ["start-app"]

@@ -25,5 +25,6 @@ When working on this repository, all AI coding assistants must strictly adhere t
 
 ## 4. Operational & Code Hygiene
 * **Preserve Documentation**: Do not remove existing docstrings, PHPDoc blocks, or comments unless directly made obsolete.
+* **No Spec References in Code Comments**: Never reference specification numbers, spec titles, or spec file paths (e.g., `spec 0026`, `Spec 0050`, `docs/specs/...`) in code comments or docblocks. Describe the technical behavior or rationale directly instead.
 * **Timestamped Migrations**: All schema modifications must be scripted via standard Laravel timestamped migrations with appropriate foreign key cascade rules (`ticket_audit_logs` foreign keys must remain nullable and non-cascading).
 * **Nginx Routing Parity**: If a new microservice route prefix is added, ensure corresponding FastCGI / HTTP proxy directives are added to both `nginx.conf` and `nginx.prod.conf`.

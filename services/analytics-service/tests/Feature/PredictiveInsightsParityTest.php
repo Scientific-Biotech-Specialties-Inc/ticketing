@@ -7,7 +7,7 @@ use Tests\RefreshReportingDatabase;
 use Tests\TestCase;
 
 /**
- * Spec 0050 AC-3, AC-16: GET /insights/predictive returns the same JSON ticket-service's
+ * GET /insights/predictive returns the same JSON ticket-service's
  * /admin-reports/predictive-insights returned, for the same seed, frozen time and actors.
  */
 class PredictiveInsightsParityTest extends TestCase

@@ -31,20 +31,24 @@ vi.mock('@/data/mockFeedbackData', () => ({
   getTicketEmployees: vi.fn(() => []),
 }));
 
-vi.mock('@/services/ticketService', () => ({
-  getTicketDetails: vi.fn(() => Promise.resolve({})),
-  getInternalNotes: vi.fn(() => Promise.resolve([])),
-  addInternalNote: vi.fn(() => Promise.resolve({})),
-  holdTicket: vi.fn(() => Promise.resolve({})),
-  resumeTicket: vi.fn(() => Promise.resolve({})),
-  reclassifyTicket: vi.fn(() => Promise.resolve({})),
-  getTicketFormOptions: vi.fn(() => Promise.resolve({
-    problem_categories: [],
-    ticket_priorities: [],
-  })),
-  getAssignableEmployees: vi.fn(() => Promise.resolve([])),
-  sendTicketReminder: vi.fn(() => Promise.resolve({ success: true })),
-}));
+vi.mock('@/services/ticketService', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getTicketDetails: vi.fn(() => Promise.resolve({})),
+    getInternalNotes: vi.fn(() => Promise.resolve([])),
+    addInternalNote: vi.fn(() => Promise.resolve({})),
+    holdTicket: vi.fn(() => Promise.resolve({})),
+    resumeTicket: vi.fn(() => Promise.resolve({})),
+    reclassifyTicket: vi.fn(() => Promise.resolve({})),
+    getAssignableEmployees: vi.fn(() => Promise.resolve([])),
+    getTicketFormOptions: vi.fn(() => Promise.resolve({
+      problem_categories: [],
+      ticket_priorities: [],
+    })),
+    sendTicketReminder: vi.fn(() => Promise.resolve({ success: true })),
+  };
+});
 
 import { getTicketFormOptions } from '@/services/ticketService';
 

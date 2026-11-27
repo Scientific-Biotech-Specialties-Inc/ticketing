@@ -30,7 +30,7 @@ class KbArticlePublishArchiveTest extends TestCase
      */
     protected function superAdminHeaders(string $actorName = 'Super Admin'): array
     {
-        // Spec 0036 (AC-11): identity comes from a verified token, never from an unsigned payload.
+        // Identity comes from a verified token, never from an unsigned payload.
         $this->actingAsSuperAdmin($actorName);
 
         return ['Accept' => 'application/json'];
@@ -140,7 +140,7 @@ class KbArticlePublishArchiveTest extends TestCase
             $this->superAdminHeaders()
         );
 
-        // Spec 0036 (AC-3, AC-12): publish never indexes; an unindexed article is refused.
+        // Publish never indexes; an unindexed article is refused.
         $response->assertStatus(422)
             ->assertJson([
                 'success' => false,

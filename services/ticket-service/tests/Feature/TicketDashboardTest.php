@@ -39,6 +39,7 @@ class TicketDashboardTest extends TestCase
                 'machine_ID' => 1,
                 'category_ID' => 1,
                 'client_ID' => 1,
+                'branch_id' => 'sbsi-makati-branch',
                 'machine_name' => 'Test Machine',
                 'serial_number' => 'TEST-DASH-001',
                 'created_at' => now(),

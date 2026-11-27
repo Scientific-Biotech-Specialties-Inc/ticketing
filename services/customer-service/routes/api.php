@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ProvisionController;
+use App\Http\Controllers\InternalCustomerDirectoryController;
 
 /*
 |--------------------------------------------------------------------------
@@ -18,6 +19,13 @@ use App\Http\Controllers\ProvisionController;
 
 // Internal only: callers must send X-Internal-Secret (spec 0044, AC-8). Never exposed on the customer portal.
 Route::post('/customers/provision', [ProvisionController::class, 'provision'])->middleware('internal.secret');
+
+// Internal only hospital and account lookups for ticket-service. Never routed through the gateway.
+Route::middleware('internal.secret')->prefix('/internal')->group(function () {
+    Route::get('/organizations', [InternalCustomerDirectoryController::class, 'organizations']);
+    Route::get('/customers/lookup', [InternalCustomerDirectoryController::class, 'lookup']);
+    Route::get('/customers/by-ids', [InternalCustomerDirectoryController::class, 'byIds']);
+});
 
 Route::get('/encryption-key', [AuthController::class, 'getEncryptionKey']);
 Route::post('/login', [AuthController::class, 'login'])->middleware(['throttle:ip_auth', 'decrypt.rsa:password']);

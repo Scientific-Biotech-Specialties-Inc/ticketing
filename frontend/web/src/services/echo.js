@@ -25,7 +25,7 @@ const wsPort =
 const isHttps = window.location.protocol === 'https:'
 
 const createEcho = () => {
-  if (!shouldEnableRealtime(wsHost)) {
+  if (!shouldEnableRealtime(wsHost) || typeof PusherClient !== 'function') {
     console.info('[Echo] Real-time updates disabled: no reachable Reverb host configured.')
     return createNoopEcho()
   }

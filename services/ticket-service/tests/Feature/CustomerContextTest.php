@@ -54,6 +54,7 @@ class CustomerContextTest extends TestCase
         $machineId = DB::table('machines')->insertGetId([
             'category_ID' => 1,
             'client_ID' => $userId,
+            'branch_id' => 'sbsi-makati-branch',
             'machine_name' => 'CT Scanner Pro',
             'serial_number' => 'CT-PRO-' . $uniqueSuffix,
             'model' => 'Revolution Apex',

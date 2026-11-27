@@ -162,6 +162,7 @@ abstract class TestCase extends BaseTestCase
             array_merge([
                 'machine_name' => 'Test Machine ' . $machineId,
                 'serial_number' => 'SN-FIXTURE-' . $machineId,
+                'branch_id' => 'sbsi-makati-branch',
                 'created_at' => now(),
                 'updated_at' => now(),
             ], $attributes, [

@@ -12,7 +12,7 @@ use Ticketing\Reporting\BranchScope;
 use Ticketing\Reporting\ForecastReader;
 
 /**
- * Ticket volume forecasts and recurring issue trends per branch (moved from ticket-service, spec 0050 slice 1).
+ * Ticket volume forecasts and recurring issue trends per branch (moved from ticket-service).
  *
  * analytics-service owns branch_ticket_forecasts, branch_recurring_issue_trends and forecast_job_runs and is
  * the only writer. It reads tickets, ticket_statuses, problem_categories, machines and branches read only.
@@ -25,7 +25,7 @@ class TicketForecastService
      * Get predictive insights for branch (volume forecast and recurring issue trends).
      *
      * Tops the stored rows up first when asked to (forceRefresh) or when fewer than horizon_days future rows
-     * exist, then returns ForecastReader's payload (spec 0050 AC-1a).
+     * exist, then returns ForecastReader's payload.
      */
     public function getPredictiveInsights($user, array $filters = [], bool $forceRefresh = false): array
     {
@@ -76,7 +76,7 @@ class TicketForecastService
 
             $distinctDaysCount = count($dailyCounts);
 
-            // AC-15: Minimum historical threshold check
+            // Minimum historical threshold check
             if ($distinctDaysCount < self::MINIMUM_HISTORICAL_DAYS) {
                 // Persist insufficient data placeholder
                 for ($d = 0; $d < $horizonDays; $d++) {
@@ -142,7 +142,7 @@ class TicketForecastService
                 }
             }
 
-            // Persist projected horizon days (AC-14)
+            // Persist projected horizon days
             for ($d = 0; $d < $horizonDays; $d++) {
                 $targetCarbon = $now->copy()->addDays($d);
                 $targetDate = $targetCarbon->toDateString();
@@ -166,12 +166,12 @@ class TicketForecastService
                 );
             }
 
-            // 3. Compute recurring issue trends (AC-16)
+            // 3. Compute recurring issue trends
             $this->computeAndPersistRecurringTrends($branch, $now);
 
             $durationMs = (int) round((microtime(true) - $startTime) * 1000);
 
-            // AC-18: Log execution health
+            // Log execution health
             ForecastJobRun::create([
                 'job_name' => 'tickets:calculate-forecasts',
                 'branch_id' => $branchId,

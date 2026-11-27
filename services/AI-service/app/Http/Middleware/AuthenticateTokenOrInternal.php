@@ -6,7 +6,7 @@ use Closure;
 use Illuminate\Http\Request;
 
 /**
- * Spec 0034 (AC-10): AI chat routes need a verified token (customer, or staff for reading) or a
+ * AI chat routes need a verified token (customer, or staff for reading) or a
  * valid X-Internal-Token. Anything else is stopped here with 401, before any controller code runs.
  */
 class AuthenticateTokenOrInternal

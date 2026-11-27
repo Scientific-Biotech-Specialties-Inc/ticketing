@@ -8,6 +8,7 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::disableForeignKeyConstraints();
         Schema::create('ticket_assignments', function (Blueprint $table) {
             $table->bigIncrements('assignment_ID');
             $table->foreignId('ticket_ID')->constrained('tickets', 'ticket_ID')->cascadeOnDelete();
@@ -18,6 +19,7 @@ return new class extends Migration
             $table->dateTime('completed_at')->nullable();
             $table->timestamps();
         });
+        Schema::enableForeignKeyConstraints();
     }
 
     public function down(): void

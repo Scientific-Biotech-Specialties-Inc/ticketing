@@ -51,3 +51,13 @@ Option 1 is the only one that meets all four engineer decisions with one item li
 Deriving the category on the server removes a whole class of wrong categories and makes the AI category suggestion unnecessary on this form. The AI must see the customer's real list to tell owned from unowned items, and invariant 3 means it gets that list from ticket-service over REST with the internal token, keyed by the verified customer id, never from the browser. Gating `escalate` on a validated `asset_id` enforces "the AI must get the item first"; the Gemini outage fallback still lands on the form, which enforces the same rule, so invariant 2 holds.
 
 Lazy seeding inside ticket-service covers customers created later (including by the CMS sync) without customer-service writing to ticket-service's tables; the one time command covers today's customers and the TKT-0008 fix, as a dry run by default because the dev database is shared.
+
+## Update 2026-11-27: every machine has a branch
+
+**Context**: after a database rebuild, the dev database had no `machines.branch_id` column (its migration lived only on unmerged CRMS sync branches) and had lost the "Software" machine category. Seeding then did nothing, a customer's item list came back empty, and the AI asked them to "choose one below" with nothing to choose. The engineer decided that every machine must have a branch.
+
+**Options considered**:
+- *Keep `branch_id` optional and let `TicketBranchResolver` fall back to the default branch* (the original AC-16). Cheap, but an item's branch stays implicit, and rows with no branch or a bad branch go unnoticed.
+- *Make `branch_id` required and store the default branch on seeded software* (chosen). The branch becomes a fact the database enforces. The cost: every machine insert must name a branch, and deleting a branch with machines is blocked.
+
+**Why**: the engineer wants branch ownership to be explicit for every item. Storing the same default the resolver already used changes no ticket routing today. The fill in runs before any schema change, because MySQL cannot roll back a half finished ALTER. Seeding skips (with a warning) rather than inventing a branch when the default is missing, so a misconfiguration shows up in the logs instead of as rows the database would reject. An empty item list is treated like an unreadable one, so the AI falls back to the manual form instead of a dead end prompt.

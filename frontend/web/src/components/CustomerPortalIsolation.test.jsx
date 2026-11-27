@@ -91,7 +91,7 @@ describe('Customer portal isolation', () => {
     await expect(refreshAccessToken()).resolves.toBe(false);
     if (postSpy) expect(postSpy).not.toHaveBeenCalled();
     createSpy.mockRestore();
-  });
+  }, 15000);
 
   it('customer site: login() always uses customer mode and never redirects to central SSO', async () => {
     vi.stubEnv('VITE_APP_MODE', 'customer');

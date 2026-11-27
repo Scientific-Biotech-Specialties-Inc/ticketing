@@ -22,6 +22,7 @@ import { statusColors, priorityColors } from '@/constants/employeeTickets';
 import { useAuth } from '@/context/AuthContext';
 import useRealtimeRefresh from '@/hooks/useRealtimeRefresh';
 import { normalizeCasing } from '@/utils/normalizeCasing';
+import { formatProperTitleCase, needsProperCasing } from '@/utils/titleCaseUtils';
 import { formatDisplayDate } from '@/utils/dateUtils';
 import {
   createTicket,
@@ -41,7 +42,6 @@ import { getMaxOpenTicketsLimit, OPEN_STATUS_SET } from '@/data/ticketLimitConfi
 
 import { parseUTCDate } from '@/utils/dateUtils';
 import TitleCasingModal from '@/components/TitleCasingModal';
-import { needsProperCasing, formatProperTitleCase } from '@/utils/titleCaseUtils';
 import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import { hasFeedbackBeenSubmitted, fetchFeedbackForTicket } from '@/data/mockFeedbackData';
 import tokenStore from '@/auth/tokenStore';

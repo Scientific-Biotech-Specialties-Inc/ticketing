@@ -1,11 +1,8 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render as rtlRender, screen, waitFor } from '@testing-library/react';
-import { AssignModal } from './CSModals';
+import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
-
-// AssignModal uses useNavigate (Message button), so it must render inside a router.
-const render = (ui, options) => rtlRender(ui, { wrapper: MemoryRouter, ...options });
+import { AssignModal } from './CSModals';
 import * as ticketService from '@/services/ticketService';
 
 vi.mock('@/context/AuthContext', () => ({
@@ -38,14 +35,16 @@ const eligibility = (employees) => ({
 
 function renderModal() {
   render(
-    <AssignModal
-      ticket={{ id: 'TKT-00101', ticket_ID: 101, title: 'Centrifuge', category: 'Biomedical Equipment', priority: 'High', branch: 'Main Branch', status: 'Open', assigned: [] }}
-      employees={[]}
-      departments={['Service', 'IT']}
-      priorityOptions={['Low', 'High']}
-      onClose={vi.fn()}
-      onSave={vi.fn()}
-    />
+    <MemoryRouter>
+      <AssignModal
+        ticket={{ id: 'TKT-00101', ticket_ID: 101, title: 'Centrifuge', category: 'Biomedical Equipment', priority: 'High', branch: 'Main Branch', status: 'Open', assigned: [] }}
+        employees={[]}
+        departments={['Service', 'IT']}
+        priorityOptions={['Low', 'High']}
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />
+    </MemoryRouter>
   );
 }
 

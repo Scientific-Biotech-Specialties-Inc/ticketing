@@ -6,7 +6,7 @@ use App\Services\AssetIntakeGate;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Spec 0047 (AC-8 to AC-12): the AI chat offers a ticket only once one owned item is identified.
+ * The AI chat offers a ticket only once one owned item is identified.
  */
 class AssetIntakeGateTest extends TestCase
 {
@@ -35,6 +35,16 @@ class AssetIntakeGateTest extends TestCase
         $this->assertSame(40, $result['ticket_data']['machine_ID']);
         $this->assertSame('Software', $result['ticket_data']['category']);
         $this->assertSame([], $result['asset_options']);
+    }
+
+    public function test_an_empty_item_list_never_asks_the_customer_to_choose_from_nothing(): void
+    {
+        $result = (new AssetIntakeGate())->apply($this->escalating(), [], null, null);
+
+        $this->assertSame(AssetIntakeGate::UNAVAILABLE, $result['asset_status']);
+        $this->assertTrue($result['escalate']);
+        $this->assertSame([], $result['asset_options']);
+        $this->assertStringNotContainsString('Choose one below', $result['content']);
     }
 
     public function test_an_id_gemini_invented_is_ignored_and_the_customer_is_asked(): void

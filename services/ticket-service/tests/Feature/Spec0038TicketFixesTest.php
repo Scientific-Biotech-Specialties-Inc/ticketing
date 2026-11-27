@@ -83,6 +83,7 @@ class Spec0038TicketFixesTest extends TestCase
         return DB::table('machines')->insertGetId([
             'category_ID' => $categoryId,
             'client_ID' => $client->id,
+            'branch_id' => 'sbsi-makati-branch',
             'machine_name' => 'Patient Monitor',
             'serial_number' => 'SN-' . strtoupper(uniqid()),
             'model' => 'VS-900',

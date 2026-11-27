@@ -78,6 +78,12 @@ Route::middleware('internal.prs')->group(function () {
         ->whereNumber('ticketId');
 });
 
+// ─── CRMS Machine Sync (X-Internal-Secret; never on the customer edge) ───────
+Route::middleware(['internal.secret', 'throttle:120,1'])->prefix('/internal/crms')->group(function () {
+    Route::post('/machines', [\App\Http\Controllers\CrmsMachineSyncController::class, 'store']);
+    Route::get('/branches', [\App\Http\Controllers\CrmsMachineSyncController::class, 'branches']);
+});
+
 Route::middleware('auth.subsystem')->group(function () {
     // ─── Customer Ticket Drafts (spec 0034: verified customer token only) ────
     Route::post('/tickets/draft', [TicketDraftController::class, 'saveDraft']);
@@ -88,6 +94,10 @@ Route::middleware('auth.subsystem')->group(function () {
     // ─── Customer Dashboard (Strictly Token Authenticated) ────────────────────
     Route::get('/customer-dashboard', [TicketDashboardController::class, 'customerDashboard']);
     Route::get('/customer/filter-options', [TicketDashboardController::class, 'customerFilterOptions']);
+
+    // ─── Spec 3.1: CMS equipment sync state (banner) and admin "Sync now" ─────
+    Route::get('/integrations/cms/status', [\App\Http\Controllers\CmsIntegrationController::class, 'status'])->middleware('no-cache');
+    Route::post('/integrations/cms/sync', [\App\Http\Controllers\CmsIntegrationController::class, 'sync'])->middleware(['no-cache', 'throttle:6,1']);
 
     // ─── CS Dashboard & Incoming Queue (Token Authenticated) ──────────────────
     Route::get('/cs-dashboard', [TicketDashboardController::class, 'csDashboard'])->middleware(['no-cache', 'ticketing.employee']);
@@ -183,6 +193,12 @@ Route::middleware('auth.subsystem')->group(function () {
 
     // ─── Branch-specific priority levels & SLA overrides ──────────────────────
     Route::get('/superadmin/branches', [BranchPriorityController::class, 'branches']);
+
+    // Super Admin Customers page: real customer items, hospital search, duplicate checks, create.
+    Route::get('/superadmin/customers', [\App\Http\Controllers\SuperAdminCustomerController::class, 'index'])->middleware('no-cache');
+    Route::get('/superadmin/customers/organizations', [\App\Http\Controllers\SuperAdminCustomerController::class, 'organizations'])->middleware(['no-cache', 'throttle:120,1']);
+    Route::post('/superadmin/customers/check', [\App\Http\Controllers\SuperAdminCustomerController::class, 'check'])->middleware(['no-cache', 'throttle:30,1']);
+    Route::post('/superadmin/customers', [\App\Http\Controllers\SuperAdminCustomerController::class, 'store'])->middleware(['no-cache', 'throttle:30,1']);
     Route::prefix('/superadmin/branches/{branchId}/priorities')
         ->where(['branchId' => '[a-z0-9\-]{1,64}', 'id' => '[0-9]+'])
         ->group(function () {

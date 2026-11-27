@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 /**
- * Spec 0036: published Knowledge Base articles are reliably searchable by the AI.
+ * Published Knowledge Base articles are reliably searchable by the AI.
  */
 class KbPublishReadinessTest extends TestCase
 {
@@ -56,7 +56,6 @@ class KbPublishReadinessTest extends TestCase
         return array_values(array_unique(array_column($result['chunks'], 'article_id')));
     }
 
-    /** AC-1, AC-3, AC-4, AC-5 */
     public function test_happy_path_indexes_with_model_publishes_with_probe_and_is_searchable_immediately(): void
     {
         $article = $this->createIndexedArticle(
@@ -85,12 +84,11 @@ class KbPublishReadinessTest extends TestCase
         $this->assertGreaterThanOrEqual(0.55, $res->json('probe.score'));
         $this->assertNotNull($article->fresh()->probe_score);
 
-        // AC-4: searchable on the very next call, with no queue job in between.
+        // Searchable on the very next call, with no queue job in between.
         $result = $this->rag->retrieve('Zebra ZT410 ribbon out alarm');
         $this->assertContains($article->id, $this->retrievedIds($result));
     }
 
-    /** AC-2, AC-3 */
     public function test_embedding_failure_marks_indexing_failed_leaves_no_chunks_and_blocks_publish(): void
     {
         $this->failEmbeddingsWith(404);
@@ -135,7 +133,6 @@ class KbPublishReadinessTest extends TestCase
         }
     }
 
-    /** AC-6 */
     public function test_live_edit_failure_keeps_the_old_set_serving(): void
     {
         $article = $this->publishedArticle('Kyocera paper feed squeal', 'Kyocera paper feed squeal: clean the pickup roller.');
@@ -156,7 +153,7 @@ class KbPublishReadinessTest extends TestCase
         $this->assertContains($article->id, $this->retrievedIds($this->rag->retrieve('Kyocera paper feed squeal')));
     }
 
-    /** AC-6: a successful live edit swaps the whole set and stays active. */
+    /** A successful live edit swaps the whole set and stays active. */
     public function test_live_edit_success_swaps_in_the_new_set_atomically(): void
     {
         $article = $this->publishedArticle('Ricoh toner low warning', 'Ricoh toner low warning: shake the cartridge.');
@@ -171,7 +168,6 @@ class KbPublishReadinessTest extends TestCase
         $this->assertTrue($new->every(fn ($e) => $e->is_active && $e->embedding_model === 'gemini-embedding-001'));
     }
 
-    /** AC-7 */
     public function test_metadata_only_edit_does_not_call_the_embedding_api(): void
     {
         $article = $this->publishedArticle('Canon C3520 waste toner full', 'Canon C3520 waste toner full: replace the waste toner box.');
@@ -194,7 +190,7 @@ class KbPublishReadinessTest extends TestCase
         $this->assertSame('2.0', $meta['version']);
     }
 
-    /** AC-3: the client cannot flip publish or processing state through PATCH. */
+    /** The client cannot flip publish or processing state through PATCH. */
     public function test_patch_cannot_set_status_or_processing_status(): void
     {
         $this->actingAsSuperAdmin();
@@ -208,7 +204,6 @@ class KbPublishReadinessTest extends TestCase
         $this->assertSame('Draft', $article->processing_status);
     }
 
-    /** AC-8 */
     public function test_vectors_from_another_model_are_never_returned(): void
     {
         $article = KbArticle::create(['title' => 'Legacy hash vector article', 'status' => 'Published', 'processing_status' => RagService::STATUS_READY]);
@@ -230,7 +225,6 @@ class KbPublishReadinessTest extends TestCase
         $this->postJson("/api/articles/{$article->id}/publish")->assertStatus(422)->assertJsonPath('error_code', 'NOT_INDEXED');
     }
 
-    /** AC-8, AC-10 */
     public function test_query_embedding_failure_escalates_to_manual_ticket(): void
     {
         $this->failEmbeddingsWith(500);
@@ -245,7 +239,6 @@ class KbPublishReadinessTest extends TestCase
         $this->assertNotEmpty($response['ticket_title']);
     }
 
-    /** AC-10 */
     public function test_chat_uses_configured_model_header_key_and_escalates_on_timeout(): void
     {
         // The model comes from GEMINI_MODEL (the dev .env uses the lite model), so only require one is set;
@@ -275,7 +268,6 @@ class KbPublishReadinessTest extends TestCase
         $this->assertTrue($request->hasHeader('x-goog-api-key'));
     }
 
-    /** AC-11 */
     public function test_forged_unsigned_superadmin_jwt_gets_401_and_verified_employee_gets_403(): void
     {
         $article = KbArticle::create(['title' => 'Auth target', 'status' => 'Draft', 'processing_status' => 'Draft']);
@@ -325,7 +317,6 @@ class KbPublishReadinessTest extends TestCase
         }
     }
 
-    /** AC-9 */
     public function test_kb_reembed_is_idempotent_and_prints_score_stats(): void
     {
         $a = $this->publishedArticle('HP M404 fuser error 50.2', 'HP M404 fuser error 50.2: power cycle and check the fuser connector.');
@@ -352,7 +343,7 @@ class KbPublishReadinessTest extends TestCase
         $this->assertSame('reindexed', collect($a->fresh()->history)->last()['type']);
     }
 
-    /** AC-5: a hard to find article stays Published but is flagged. */
+    /** A hard to find article stays Published but is flagged. */
     public function test_low_retrievability_is_flagged_but_article_stays_published(): void
     {
         config(['services.kb.min_score' => 0.99]);

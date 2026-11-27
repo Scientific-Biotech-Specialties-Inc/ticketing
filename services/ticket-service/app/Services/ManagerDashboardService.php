@@ -202,10 +202,11 @@ class ManagerDashboardService
             ->leftJoin('employees as req', 'req.emp_id', '=', 't.requested_by')
             ->whereNotIn(DB::raw('LOWER(TRIM(ts.status_name))'), self::NOT_OPEN_STATUSES);
 
-        // Tickets escalated to this manager show (and can be reassigned) even outside their branch scope.
+        // Tickets escalated to this manager show (and can be reassigned): those naming them in an escalation
+        // record, or Escalated tickets worked by their department in their own branch.
         $escalatedToMe = $isBranchMode
             ? []
-            : app(EscalationParticipants::class)->ticketIdsForManager((int) ($manager->emp_id ?? 0), $department);
+            : app(EscalationParticipants::class)->ticketIdsForManager((int) ($manager->emp_id ?? 0), $department, (int) ($branch->id ?? 1));
 
         $scoped = function ($scope) use ($branch, $isBranchMode, $department) {
             BranchScope::applyTicketFilter($scope, $branch);

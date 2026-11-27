@@ -151,8 +151,13 @@ class FullPlatformMockDataSeeder extends Seeder
             ['name' => 'EVIS EXERA III Video Colonoscope Tower', 'serial' => 'ENDO-EVIS-L22', 'model' => 'CV-190 / CLV-190', 'brand' => 'Olympus', 'cat' => 2],
         ];
 
+        // Every machine must have a branch (machines.branch_id is NOT NULL). Spread the clients over
+        // two branches so branch routing has something to show.
+        $seedBranches = ['sbsi-makati-branch', 'sbsi-cebu-branch'];
+
         $clientMachineMap = [];
-        foreach ($clientIds as $cId) {
+        foreach (array_values($clientIds) as $clientIndex => $cId) {
+            $clientBranch = $seedBranches[$clientIndex % count($seedBranches)];
             $clientMachineMap[$cId] = [];
             foreach ($machineTemplates as $t) {
                 $serial = $t['serial'] . "-C" . $cId;
@@ -163,10 +168,14 @@ class FullPlatformMockDataSeeder extends Seeder
 
                 if ($existing) {
                     $mId = $existing->machine_ID;
+                    if (empty($existing->branch_id)) {
+                        DB::table('machines')->where('machine_ID', $mId)->update(['branch_id' => $clientBranch]);
+                    }
                 } else {
                     $mId = DB::table('machines')->insertGetId([
                         'category_ID' => $t['cat'],
                         'client_ID' => $cId,
+                        'branch_id' => $clientBranch,
                         'machine_name' => $t['name'],
                         'serial_number' => $serial,
                         'model' => $t['model'],

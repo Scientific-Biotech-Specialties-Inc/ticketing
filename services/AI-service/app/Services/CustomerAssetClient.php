@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Spec 0047 (AC-7): reads a customer's pickable equipment and software from ticket-service over
+ * Reads a customer's pickable equipment and software from ticket-service over
  * REST with the internal token. AI-service never reads ticket-service tables.
  */
 class CustomerAssetClient

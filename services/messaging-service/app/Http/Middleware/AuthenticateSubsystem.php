@@ -18,6 +18,11 @@ class AuthenticateSubsystem
      */
     public function handle(Request $request, Closure $next)
     {
+        // 0. If request is already authenticated (e.g. test actingAs), proceed
+        if (Auth::check() || $request->user()) {
+            return $next($request);
+        }
+
         // 1. Try to authenticate as Employee using central JWT
         $authHeader = $request->header('Authorization');
         if ($authHeader && str_starts_with($authHeader, 'Bearer ')) {

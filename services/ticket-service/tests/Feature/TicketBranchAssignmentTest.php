@@ -63,7 +63,7 @@ class TicketBranchAssignmentTest extends TestCase
         ]);
     }
 
-    private function machine(?int $branchId): int
+    private function machine(?string $branchSlug): int
     {
         DB::statement('SET FOREIGN_KEY_CHECKS=0');
         try {
@@ -74,7 +74,7 @@ class TicketBranchAssignmentTest extends TestCase
                 'serial_number' => 'SN-' . strtoupper(uniqid()),
                 'model' => 'VS-900',
                 'brand' => 'Philips',
-                'branch_id' => $branchId,
+                'branch_id' => $branchSlug, // machines.branch_id stores the branch slug
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
@@ -90,21 +90,22 @@ class TicketBranchAssignmentTest extends TestCase
 
     public function test_the_equipment_branch_wins_over_the_default(): void
     {
-        $machine = $this->machine($this->cebuId);
+        $machine = $this->machine('sbsi-cebu-branch');
 
         $this->assertSame('sbsi-cebu-branch', app(TicketBranchResolver::class)->resolve(null, $machine));
     }
 
-    public function test_equipment_with_no_branch_falls_back_to_the_default(): void
+    public function test_a_machine_without_a_branch_is_rejected(): void
     {
-        $machine = $this->machine(null);
+        // machines.branch_id is required: every piece of equipment and software belongs to a branch.
+        $this->expectException(\Illuminate\Database\QueryException::class);
 
-        $this->assertSame('sbsi-makati-branch', app(TicketBranchResolver::class)->resolve(null, $machine));
+        $this->machine(null);
     }
 
     public function test_an_explicit_branch_wins_over_everything(): void
     {
-        $machine = $this->machine($this->makatiId);
+        $machine = $this->machine('sbsi-makati-branch');
 
         $this->assertSame('sbsi-cebu-branch', app(TicketBranchResolver::class)->resolve('sbsi-cebu-branch', $machine));
     }
@@ -131,7 +132,7 @@ class TicketBranchAssignmentTest extends TestCase
             'address' => '1 Test Way',
         ]);
 
-        // Seeded software has no branch of its own, so the default branch applies (spec 0047 AC-16).
+        // Seeded software is stored with the default branch, so the ticket gets it too.
         if (!DB::table('machine_categories')->where('category_name', 'Software')->exists()) {
             DB::table('machine_categories')->insert(['category_name' => 'Software', 'created_at' => now(), 'updated_at' => now()]);
         }

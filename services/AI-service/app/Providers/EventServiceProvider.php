@@ -25,7 +25,7 @@ class EventServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // Spec 0036: indexing happens inside the upload, edit, replace or reindex request, so
+        // Indexing happens inside the upload, edit, replace or reindex request, so
         // publish and update listeners only refresh caches. The events still broadcast on their own
         // (they implement ShouldBroadcastNow).
         Event::listen(\App\Events\ArticlePublished::class, function (\App\Events\ArticlePublished $event) {

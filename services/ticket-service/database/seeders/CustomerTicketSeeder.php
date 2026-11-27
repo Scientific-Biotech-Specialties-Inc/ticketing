@@ -190,7 +190,9 @@ class CustomerTicketSeeder extends Seeder
         ];
 
         foreach ($machines as $m) {
-            DB::table('machines')->upsert($m, ['machine_ID'], ['category_ID', 'client_ID', 'machine_name', 'serial_number', 'model', 'brand', 'status', 'purchase_date', 'last_maintenance_date', 'updated_at']);
+            // Every machine must have a branch (machines.branch_id is NOT NULL).
+            $m['branch_id'] = $m['branch_id'] ?? 'sbsi-makati-branch';
+            DB::table('machines')->upsert($m, ['machine_ID'], ['category_ID', 'client_ID', 'branch_id', 'machine_name', 'serial_number', 'model', 'brand', 'status', 'purchase_date', 'last_maintenance_date', 'updated_at']);
         }
 
         // 4. Seed Medical Equipment Tickets for customer@gmail.com (Open, In Progress, Closed)

@@ -84,6 +84,9 @@ const attachTicketInterceptors = (client) => {
 };
 
 attachTicketInterceptors(ticketClient);
+
+// Shared with feature service modules that call ticket-service with the same auth handling.
+export { ticketClient };
 attachTicketInterceptors(analyticsClient);
 
 const employeeClient = axios.create({
@@ -423,6 +426,23 @@ export const saveCustomerTicketDetail = (ticket = {}) => {
 export const discardCustomerTicket = async (ticketId) => {
   const response = await ticketClient.delete(`/tickets/${ticketId}`);
   return response.data;
+};
+
+// Spec 3.1: last recorded CMS equipment sync state. Never calls the CMS itself.
+export const getCmsSyncStatus = async () => {
+  const response = await ticketClient.get('/integrations/cms/status');
+  return response.data;
+};
+
+// Spec 3.1: Admin / SuperAdmin "Sync now". Resolves with the outcome even when the CMS is down.
+export const triggerCmsSync = async () => {
+  try {
+    const response = await ticketClient.post('/integrations/cms/sync');
+    return response.data;
+  } catch (error) {
+    if (error?.response?.data) return error.response.data;
+    throw error;
+  }
 };
 
 const fetchTicketFormOptions = async () => {

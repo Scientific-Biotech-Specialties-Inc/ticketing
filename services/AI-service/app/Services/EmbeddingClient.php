@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Spec 0036: the single place that turns text into embedding vectors.
+ * The single place that turns text into embedding vectors.
  *
  * Calls Gemini `batchEmbedContents` (up to 100 texts per request) with the API key in the
  * `x-goog-api-key` header. Any failure (no key, non 2xx, timeout, empty or wrong sized
@@ -132,7 +132,7 @@ class EmbeddingClient
                 $response = Http::withHeaders([
                     'Content-Type' => 'application/json',
                     'x-goog-api-key' => $this->apiKey,
-                ])->connectTimeout(5)->timeout($this->timeout)->post($url, ['requests' => $requests]);
+                ])->connectTimeout(max(1, min((int) config('services.gemini.connect_timeout', 12), $this->timeout)))->timeout($this->timeout)->post($url, ['requests' => $requests]);
             } catch (ConnectionException $e) {
                 $this->logFailure('timeout or connection error', null, $e);
                 throw new EmbeddingFailedException('Embedding API request timed out or could not connect (' . class_basename($e) . ').');

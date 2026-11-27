@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Spec 0036: track which model produced each embedding, the hash of the indexed text,
+ * Track which model produced each embedding, the hash of the indexed text,
  * the last indexing failure, and the self retrieval probe score.
  * Every column is nullable so the rollout is safe on a live database.
  */

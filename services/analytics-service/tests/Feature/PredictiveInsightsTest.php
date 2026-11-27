@@ -13,7 +13,7 @@ use Tests\TestCase;
 use Ticketing\Auth\Dto\AuthenticatedUserDto;
 
 /**
- * Predictive insights behavior and access (spec 0050 slice 1: AC-1, AC-1a, AC-3, AC-12).
+ * Predictive insights behavior and access.
  * The forecast behavior tests moved here from ticket-service's AdminReportsTest with the code.
  */
 class PredictiveInsightsTest extends TestCase
@@ -32,7 +32,7 @@ class PredictiveInsightsTest extends TestCase
         return new AuthenticatedUserDto(['emp_id' => 7000, 'role' => $role, 'branch' => $branch, 'branch_id' => $branchId]);
     }
 
-    /** Spec 0029: 15 distinct days of Main Branch tickets, enough to cross the 14 day threshold. */
+    /** 15 distinct days of Main Branch tickets, enough to cross the 14 day threshold. */
     private function seedHistory(string $prefix): void
     {
         $now = Carbon::now();
@@ -56,7 +56,7 @@ class PredictiveInsightsTest extends TestCase
         }
     }
 
-    /** AC-13, AC-15 (spec 0029): insufficient_data when below 14 days of history. */
+    /** insufficient_data when below 14 days of history. */
     public function test_insufficient_data_when_below_14_days_of_history(): void
     {
         $response = $this->actingAs($this->parityActor('admin'))
@@ -71,7 +71,7 @@ class PredictiveInsightsTest extends TestCase
         $this->assertStringContainsString('Insufficient historical data', $response->json('message'));
     }
 
-    /** AC-14, AC-16, AC-17, AC-18 (spec 0029): the command calculates forecasts and logs job health. */
+    /** The command calculates forecasts and logs job health. */
     public function test_forecast_command_calculates_rows_and_logs_the_job_run(): void
     {
         $this->seedHistory('TCK-HIST');
@@ -94,7 +94,7 @@ class PredictiveInsightsTest extends TestCase
         $this->assertCount(7, $response->json('volume_forecast'));
     }
 
-    /** Spec 0029 AC-10: a 30 day request tops the 7 stored days up instead of returning a short window. */
+    /** A 30 day request tops the 7 stored days up instead of returning a short window. */
     public function test_thirty_day_horizon_is_topped_up_after_a_seven_day_run(): void
     {
         $this->seedHistory('TCK-H30');
@@ -108,7 +108,7 @@ class PredictiveInsightsTest extends TestCase
         $this->assertCount(30, $response->json('volume_forecast'));
     }
 
-    /** Spec 0050 AC-1a: with fewer than horizon_days future rows stored, analytics tops up (ticket-service never does). */
+    /** With fewer than horizon_days future rows stored, analytics tops up (ticket-service never does). */
     public function test_three_stored_rows_are_topped_up_to_the_horizon(): void
     {
         $this->loadReportingSql('fixtures/forecast_seed.sql');
@@ -125,7 +125,7 @@ class PredictiveInsightsTest extends TestCase
         $this->assertSame('insufficient_data', $response->json('status'));
     }
 
-    /** Spec 0029 AC-12: All Branches reports insufficient data when no branch has enough, else the real basis. */
+    /** All Branches reports insufficient data when no branch has enough, else the real basis. */
     public function test_all_branches_forecast_reports_true_status_and_basis(): void
     {
         DB::table('branch_ticket_forecasts')->delete();
@@ -159,7 +159,7 @@ class PredictiveInsightsTest extends TestCase
             ->assertJsonCount(7, 'volume_forecast');
     }
 
-    /** AC-12: same roles, branch rule and 403 messages as ticket-service's AdminReportController. */
+    /** Same roles, branch rule and 403 messages as ticket-service's AdminReportController. */
     public function test_access_rules_match_the_old_endpoint(): void
     {
         $this->loadReportingSql('fixtures/forecast_seed.sql');

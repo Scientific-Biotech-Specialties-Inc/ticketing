@@ -13,7 +13,7 @@ use Ticketing\Auth\Dto\AuthenticatedUserDto;
 
 /**
  * The shared parity fixture loads into analytics' test database on top of its own migrations, and the
- * shared reporting package reads it the same way ticket-service does (spec 0050 AC-13, AC-16).
+ * shared reporting package reads it the same way ticket-service does.
  */
 class ParityFixtureTest extends TestCase
 {

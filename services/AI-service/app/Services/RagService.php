@@ -19,7 +19,7 @@ class RagService
     public const STATUS_READY = 'Ready for AI Search';
     public const STATUS_FAILED = 'Indexing failed';
 
-    /** Spec 0036 (AC-5): the article must rank in the top N of its own probe. */
+    /** The article must rank in the top N of its own probe. */
     public const PROBE_TOP_N = 3;
 
     /** Seconds the per article index lock is held at most. */
@@ -157,7 +157,7 @@ class RagService
     }
 
     /**
-     * Spec 0036 (AC-1, AC-2, AC-6, AC-7): index an article's text into chunks and embeddings.
+     * Index an article's text into chunks and embeddings.
      *
      * - Same content hash and current model embeddings exist (and not forced): no embedding call,
      *   chunk metadata is refreshed in place. Returns 'unchanged'.
@@ -280,7 +280,7 @@ class RagService
     }
 
     /**
-     * Spec 0036 (AC-7): update kb_chunks.metadata in place without touching embeddings.
+     * Update kb_chunks.metadata in place without touching embeddings.
      */
     public function refreshChunkMetadata(KbArticle $article): void
     {
@@ -305,7 +305,7 @@ class RagService
 
     /**
      * True when publish may proceed: the article is 'Ready for AI Search' and has at least one
-     * embedding from the configured model (spec 0036, AC-3).
+     * embedding from the configured model.
      */
     public function isIndexedForPublish(KbArticle $article): bool
     {
@@ -313,7 +313,7 @@ class RagService
     }
 
     /**
-     * Spec 0036 (AC-3, AC-4, AC-5): publish an already indexed article.
+     * Publish an already indexed article.
      *
      * Publish never indexes. It activates the article's current model embeddings (chunk and
      * embedding IDs stay identical), flips the status, then runs the self retrieval probe and
@@ -377,7 +377,7 @@ class RagService
     }
 
     /**
-     * Spec 0036 (AC-5): search for the article using its own title plus description and report
+     * Search for the article using its own title plus description and report
      * where it lands. Never throws: if the query cannot be embedded the score is null, which
      * counts as low retrievability.
      *
@@ -664,7 +664,7 @@ class RagService
      * - Defense-in-depth safety check: inspects each candidate chunk against real-time DB state.
      * - Measures and logs execution latency against 5-second target.
      *
-     * Spec 0036 (AC-8, AC-9): only active embeddings from the configured model on Published
+     * Only active embeddings from the configured model on Published
      * articles are compared, and the threshold defaults to KB_MIN_SCORE. If the query cannot be
      * embedded, EmbeddingFailedException is thrown so the caller escalates to a manual ticket.
      *

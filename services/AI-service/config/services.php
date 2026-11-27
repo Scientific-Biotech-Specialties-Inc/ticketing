@@ -34,8 +34,11 @@ return [
     'gemini' => [
         'api_key' => env('GEMINI_API_KEY'),
         'model' => env('GEMINI_MODEL', 'gemini-3.5-flash'),
-        // Chat request timeout in seconds. Spec 0036 (AC-10) caps it at 15.
+        // Chat request timeout in seconds. Capped at 15.
         'timeout' => min((int) env('GEMINI_TIMEOUT_SECONDS', 15), 15),
+        // Seconds to wait for the TCP/TLS connection to Google. Slow networks can take 7 to 10s
+        // just to connect, so 5s made every chat fail. Kept below the request timeout.
+        'connect_timeout' => (int) env('GEMINI_CONNECT_TIMEOUT_SECONDS', 12),
     ],
 
     // Shared secret for service to service calls (X-Internal-Token). Read through config so it still
@@ -44,12 +47,12 @@ return [
         'token' => env('INTERNAL_TOKEN', ''),
     ],
 
-    // Spec 0047 (AC-7): the AI chat reads a customer's equipment and software from ticket-service.
+    // The AI chat reads a customer's equipment and software from ticket-service.
     'ticket_service' => [
         'url' => env('TICKET_SERVICE_URL', 'http://ticket-service:8000/api'),
     ],
 
-    // Spec 0036: Knowledge Base embedding and retrieval settings.
+    // Knowledge Base embedding and retrieval settings.
     'kb' => [
         'embedding_model' => env('KB_EMBEDDING_MODEL', 'gemini-embedding-001'),
         'embedding_dims' => (int) env('KB_EMBEDDING_DIMS', 768),
@@ -63,7 +66,7 @@ return [
     ],
 
 
-    // Spec 0044: refuse customer tokens on staff gateway traffic (X-Ticketing-Edge: staff).
+    // Refuse customer tokens on staff gateway traffic (X-Ticketing-Edge: staff).
     'edge' => [
         'enforce' => (bool) env('TICKETING_EDGE_ENFORCE', false),
     ],

@@ -7,12 +7,12 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 
 /**
- * Clears analytics-service's report caches (spec 0050).
+ * Clears analytics-service's report caches.
  *
  * Every report key analytics writes starts with analytics_ (analytics_emp_perf_v4_, analytics_dept_perf_v3_,
  * analytics_operational_report_v3_, analytics_perf_dashboard_v1_), so one pattern covers them. Keys are found
  * with Redis SCAN in chunks, never KEYS (AGENTS.md invariant 6). ticket-service's caches are left alone:
- * after an ETL sync the dashboards reload with their own force refresh option instead (AC-5).
+ * after an ETL sync the dashboards reload with their own force refresh option instead.
  */
 class ReportCacheService
 {

@@ -30,22 +30,21 @@ done
 # 4. Run Laravel migrations across all microservices
 echo "=> Executing database migrations..."
 MIGRATION_SERVICES=(
+    "employee-service-prod"
     "customer-service-prod"
     "ticket-service-prod"
-    "employee-service-prod"
-    "configuration-service-prod"
     "attachment-service-prod"
+    "configuration-service-prod"
     "notification-service-prod"
     "analytics-service-prod"
     "ai-service-prod"
-    "messaging-service-prod"
 )
 
 for SERVICE in "${MIGRATION_SERVICES[@]}"; do
     echo "Running migrations for: $SERVICE..."
     # No "|| true": a failed migration must stop the deploy (set -e) instead of
     # leaving a service running against a schema it does not expect.
-    docker exec -i "$SERVICE" php artisan migrate --force
+    docker exec -i -u www-data "$SERVICE" php artisan migrate --force
 done
 
 # 5. Optimize production caches

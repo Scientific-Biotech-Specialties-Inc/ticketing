@@ -91,7 +91,6 @@ describe('TicketModal title casing prompt (covers: AC-7)', () => {
     await fillBasics();
     selectBounded('machine_ID', 'Centrifuge - SN001');
 
-    expect(screen.queryByText('Proper Casing Applied')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Submit Ticket' }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));

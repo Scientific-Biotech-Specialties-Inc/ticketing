@@ -37,7 +37,7 @@ class KbArticleController extends Controller
     }
 
     /**
-     * Spec 0036 (AC-11): resolve the acting user only from verified identity.
+     * Resolve the acting user only from verified identity.
      *
      * The KB write routes sit behind `auth.token_or_internal`, so by the time this runs the caller
      * either sent a valid X-Internal-Token or a token whose signature was verified (staff RS256 JWT,
@@ -73,7 +73,7 @@ class KbArticleController extends Controller
     }
 
     /**
-     * Probe summary for API responses (spec 0036, AC-5).
+     * Probe summary for API responses.
      */
     protected function probeSummary(KbArticle $article): array
     {
@@ -360,7 +360,7 @@ class KbArticleController extends Controller
             'history' => [$historyEntry],
         ]);
 
-        // Spec 0036: index inside this request so the article is ready to publish when it returns.
+        // Index inside this request so the article is ready to publish when it returns.
         // Embeddings stay inactive until the article is published.
         if (!empty($article->content) || !empty($article->description)) {
             try {
@@ -441,7 +441,7 @@ class KbArticleController extends Controller
         ];
 
         // Publish state and indexing state are owned by the server (publish, archive and indexArticle).
-        // Letting a client set them would bypass the NOT_INDEXED guard (spec 0036, AC-3).
+        // Letting a client set them would bypass the NOT_INDEXED guard.
         unset($validated['status'], $validated['processing_status']);
 
         $article->fill($validated);
@@ -472,7 +472,7 @@ class KbArticleController extends Controller
             );
         }
 
-        // Spec 0036 (AC-6, AC-7): re-embed only when the indexed text changed. A Published article
+        // Re-embed only when the indexed text changed. A Published article
         // keeps serving its old set until the new one is swapped in; a metadata only edit just
         // refreshes chunk metadata in place without calling the embedding API.
         $indexError = null;
@@ -505,7 +505,7 @@ class KbArticleController extends Controller
 
     /**
      * POST /api/articles/{id}/publish
-     * Super Admin action (spec 0036, AC-3 to AC-5): publish an article that is already indexed
+     * Super Admin action: publish an article that is already indexed
      * with the current embedding model. Publish never indexes; it activates the existing
      * embeddings (IDs unchanged), runs the self retrieval probe, and the article is searchable
      * as soon as this returns. Otherwise 422 NOT_INDEXED.
@@ -526,7 +526,7 @@ class KbArticleController extends Controller
         }
 
         // An article with no content was never indexed, so the single NOT_INDEXED guard in
-        // publishArticle() covers it too (spec 0036, AC-3).
+        // publishArticle() covers it too.
         try {
             // publishArticle() dispatches ArticlePublished itself (cache refresh and broadcast only).
             $updated = $this->ragService->publishArticle($article, $auth['actor']);
@@ -688,7 +688,7 @@ class KbArticleController extends Controller
             return response()->json(['success' => false, 'message' => 'Article not found.'], 404);
         }
 
-        // Retry button for 'Indexing failed' (spec 0036): always embed again with the current model.
+        // Retry button for 'Indexing failed': always embed again with the current model.
         try {
             $this->ragService->indexArticle($article, null, true);
         } catch (EmbeddingFailedException|IndexingInProgressException $e) {
@@ -811,7 +811,7 @@ class KbArticleController extends Controller
             $request->ip()
         );
 
-        // 7. Re-index embeddings (spec 0036, AC-6): the new set is built inactive and swapped in
+        // 7. Re-index embeddings: the new set is built inactive and swapped in
         // atomically, activated if Published. On failure the old set keeps serving customers.
         $indexError = null;
         try {

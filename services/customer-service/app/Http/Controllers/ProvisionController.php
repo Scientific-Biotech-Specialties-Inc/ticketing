@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Client;
 use App\Models\ClientCredential;
+use App\Models\CustomerOrganization;
 use App\Mail\CustomerProvisionedMail;
 use App\Services\Mail\ConfigServiceMailer;
 use Illuminate\Http\Request;
@@ -21,8 +22,15 @@ class ProvisionController extends Controller
         $validator = Validator::make($request->all(), [
             'client_name'    => 'required|string|max:255',
             'email'          => 'required|email|max:255',
-            'address'        => 'required|string|max:500',
-            'contact_number' => 'required|string|max:50',
+            // Optional: the CRMS machine sync only knows a customer's name and email.
+            'address'        => 'nullable|string|max:500',
+            'contact_number' => 'nullable|string|max:50',
+            // Spec 3.1: the CMS equipment sync creates accounts silently (false). Default true keeps
+            // every other caller's welcome email with the temporary password.
+            'send_welcome_email' => 'sometimes|boolean',
+            // The hospital to link the new login to. Without it the hospital is found, or created,
+            // by the normalized client_name, so every caller groups logins by hospital.
+            'organization_id' => 'nullable|integer|exists:customer_organizations,id',
         ]);
 
         if ($validator->fails()) {
@@ -41,7 +49,8 @@ class ProvisionController extends Controller
             return response()->json([
                 'id'      => $client->id,
                 'message' => 'Customer already exists.',
-                'status'  => 'exists'
+                'status'  => 'exists',
+                'organization_id' => $client->organization_id,
             ], 200);
         }
 
@@ -50,11 +59,17 @@ class ProvisionController extends Controller
 
         DB::beginTransaction();
         try {
+            $organization = !empty($validated['organization_id'])
+                ? CustomerOrganization::find($validated['organization_id'])
+                : CustomerOrganization::resolveByName($validated['client_name']);
+
             $client = Client::create([
-                'client_name'    => $validated['client_name'],
+                // The hospital's display name, so every login of one hospital reads the same.
+                'client_name'    => $organization?->name ?? $validated['client_name'],
+                'organization_id' => $organization?->id,
                 'email'          => $validated['email'],
-                'address'        => $validated['address'],
-                'contact_number' => $validated['contact_number'],
+                'address'        => $validated['address'] ?? '',
+                'contact_number' => $validated['contact_number'] ?? '',
                 'status'         => true,
             ]);
 
@@ -77,6 +92,20 @@ class ProvisionController extends Controller
             ], 500);
         }
 
+        // Spec 3.1: no welcome email when the caller opts out. The customer gets in later through
+        // Forgot Password (an OTP to their own email), which replaces the unsent temporary password.
+        if (!filter_var($validated['send_welcome_email'] ?? true, FILTER_VALIDATE_BOOLEAN)) {
+            Log::info('Customer provisioned without a welcome email', ['client_id' => $client->id]);
+
+            return response()->json([
+                'id'      => $client->id,
+                'message' => 'Customer provisioned successfully.',
+                'status'  => 'created',
+                'welcome_email_sent' => false,
+                'organization_id' => $client->organization_id,
+            ], 201);
+        }
+
         // Send Email notification
         try {
             // Spec 0040: configuration-service (Brevo API) first, Brevo SMTP relay as backup.
@@ -93,7 +122,8 @@ class ProvisionController extends Controller
         return response()->json([
             'id'      => $client->id,
             'message' => 'Customer provisioned successfully.',
-            'status'  => 'created'
+            'status'  => 'created',
+            'organization_id' => $client->organization_id,
         ], 201);
     }
 }

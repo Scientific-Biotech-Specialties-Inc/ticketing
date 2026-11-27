@@ -48,6 +48,8 @@ services:
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${CUSTOMER_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       REVERB_APP_ID: ${REVERB_APP_ID:-local}
       REVERB_APP_KEY: ${REVERB_APP_KEY:-local}
       REVERB_APP_SECRET: ${REVERB_APP_SECRET:-local}
@@ -70,9 +72,10 @@ services:
     container_name: customer-service-prod
     restart: always
     environment:
-      PHP_CLI_SERVER_WORKERS: 4
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${CUSTOMER_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       DB_CONNECTION: mysql
       DB_HOST: db
       DB_PORT: 3306
@@ -107,6 +110,8 @@ services:
         condition: service_started
       reverb:
         condition: service_started
+      employee-service:
+        condition: service_started
     networks:
       default:
       shared-capstone-network:
@@ -122,6 +127,8 @@ services:
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${CUSTOMER_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       DB_CONNECTION: mysql
       DB_HOST: db
       DB_PORT: 3306
@@ -146,6 +153,8 @@ services:
         condition: service_started
       reverb:
         condition: service_started
+      employee-service:
+        condition: service_started
     networks:
       - default
 
@@ -158,6 +167,8 @@ services:
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${TICKET_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       DB_CONNECTION: mysql
       DB_HOST: db
       DB_PORT: 3306
@@ -196,6 +207,8 @@ services:
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${TICKET_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       DB_CONNECTION: mysql
       DB_HOST: db
       DB_PORT: 3306
@@ -209,7 +222,6 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       INTERNAL_TOKEN: ${INTERNAL_TOKEN}
-      PHP_CLI_SERVER_WORKERS: 4
       REVERB_APP_ID: ${REVERB_APP_ID:-local}
       REVERB_APP_KEY: ${REVERB_APP_KEY:-local}
       REVERB_APP_SECRET: ${REVERB_APP_SECRET:-local}
@@ -230,6 +242,8 @@ services:
         condition: service_started
       reverb:
         condition: service_started
+      employee-service:
+        condition: service_started
     networks:
       default:
       shared-capstone-network:
@@ -245,6 +259,8 @@ services:
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${TICKET_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       DB_CONNECTION: mysql
       DB_HOST: db
       DB_PORT: 3306
@@ -269,6 +285,8 @@ services:
         condition: service_started
       reverb:
         condition: service_started
+      employee-service:
+        condition: service_started
     networks:
       - default
 
@@ -281,6 +299,8 @@ services:
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${EMPLOYEE_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       DB_CONNECTION: mysql
       DB_HOST: db
       DB_PORT: 3306
@@ -299,7 +319,6 @@ services:
       REVERB_HOST: reverb
       REVERB_PORT: 6001
       INTERNAL_TOKEN: ${INTERNAL_TOKEN}
-      PHP_CLI_SERVER_WORKERS: 4
       MAIL_MAILER: smtp
       MAIL_HOST: ${MAIL_HOST:-smtp-relay.brevo.com}
       MAIL_PORT: ${MAIL_PORT:-587}
@@ -328,9 +347,10 @@ services:
     container_name: configuration-service-prod
     restart: always
     environment:
-      PHP_CLI_SERVER_WORKERS: 4
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${CONFIGURATION_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       DB_CONNECTION: mysql
       DB_HOST: db
       DB_PORT: 3306
@@ -360,9 +380,10 @@ services:
     container_name: notification-service-prod
     restart: always
     environment:
-      PHP_CLI_SERVER_WORKERS: 4
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${NOTIFICATION_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       DB_CONNECTION: mysql
       DB_HOST: db
       DB_PORT: 3306
@@ -394,6 +415,8 @@ services:
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${NOTIFICATION_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       DB_CONNECTION: mysql
       DB_HOST: db
       DB_PORT: 3306
@@ -421,9 +444,10 @@ services:
     container_name: analytics-service-prod
     restart: always
     environment:
-      PHP_CLI_SERVER_WORKERS: 4
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${ANALYTICS_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       DB_CONNECTION: mysql
       DB_HOST: db
       DB_PORT: 3306
@@ -457,6 +481,8 @@ services:
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${ANALYTICS_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       DB_CONNECTION: mysql
       DB_HOST: db
       DB_PORT: 3306
@@ -498,9 +524,10 @@ services:
     volumes:
       - attachment_data_prod:/var/www/storage/app/public
     environment:
-      PHP_CLI_SERVER_WORKERS: 4
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${ATTACHMENT_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       DB_CONNECTION: mysql
       DB_HOST: db
       DB_PORT: 3306
@@ -542,9 +569,10 @@ services:
     container_name: ai-service-prod
     restart: always
     environment:
-      PHP_CLI_SERVER_WORKERS: 4
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${AI_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       DB_CONNECTION: mysql
       DB_HOST: db
       DB_PORT: 3306
@@ -605,6 +633,8 @@ services:
     environment:
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${MESSAGING_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       REVERB_APP_ID: ${MESSAGING_REVERB_APP_ID:-messaging-local}
       REVERB_APP_KEY: ${MESSAGING_REVERB_APP_KEY:-messaging-local-key}
       REVERB_APP_SECRET: ${MESSAGING_REVERB_APP_SECRET:-messaging-local-secret}
@@ -627,9 +657,10 @@ services:
     container_name: messaging-service-prod
     restart: always
     environment:
-      PHP_CLI_SERVER_WORKERS: 4
       APP_ENV: production
       APP_DEBUG: "false"
+      APP_KEY: ${MESSAGING_SERVICE_APP_KEY}
+      LOG_CHANNEL: stderr
       DB_CONNECTION: mongodb
       MONGODB_URI: mongodb://${MONGO_ROOT_USERNAME:-root}:${MONGO_ROOT_PASSWORD:-secret}@mongodb:27017/messaging?authSource=admin
       MONGODB_DATABASE: messaging

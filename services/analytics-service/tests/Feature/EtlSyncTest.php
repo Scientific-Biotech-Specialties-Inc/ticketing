@@ -10,7 +10,7 @@ use Tests\TestCase;
 use Ticketing\Auth\Dto\AuthenticatedUserDto;
 
 /**
- * POST /etl/sync (spec 0050 AC-4, AC-12): the branch rules, messages and response shape of ticket-service's
+ * POST /etl/sync: the branch rules, messages and response shape of ticket-service's
  * old etl/trigger, with a 7 day horizon, clearing only analytics' report caches.
  */
 class EtlSyncTest extends TestCase
