@@ -20,6 +20,21 @@ jobs:
       - name: Validate docker-compose.prod.yml
         run: docker compose -f docker-compose.prod.yml config
 
+      # Each service image has its own build context, so the php-fpm runtime files are copied
+      # into every service. Fail if any copy differs from ticket-service's.
+      - name: Check php-fpm runtime files are identical across services
+        run: |
+          status=0
+          for svc in services/*/; do
+            for f in nginx.conf php-fpm.conf start.sh; do
+              if ! diff -q "services/ticket-service/docker/runtime/$f" "${svc}docker/runtime/$f" >/dev/null 2>&1; then
+                echo "::error file=${svc}docker/runtime/$f::differs from services/ticket-service/docker/runtime/$f (or is missing)"
+                status=1
+              fi
+            done
+          done
+          exit $status
+
   frontend-build:
     name: 'Frontend Build Check'
     runs-on: ubuntu-latest

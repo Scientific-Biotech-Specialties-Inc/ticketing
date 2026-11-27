@@ -45,7 +45,7 @@ for SERVICE in "${MIGRATION_SERVICES[@]}"; do
     echo "Running migrations for: $SERVICE..."
     # No "|| true": a failed migration must stop the deploy (set -e) instead of
     # leaving a service running against a schema it does not expect.
-    docker exec -i "$SERVICE" php artisan migrate --force
+    docker exec -i -u www-data "$SERVICE" php artisan migrate --force
 done
 
 # 5. Optimize production caches
