@@ -88,6 +88,31 @@ class ProvisionInternalSecretTest extends TestCase
         $this->assertDatabaseHas('clients', ['email' => $this->payload['email']]);
     }
 
+    public function test_send_welcome_email_false_creates_the_account_without_any_email(): void
+    {
+        $mailer = \Mockery::mock(\App\Services\Mail\ConfigServiceMailer::class);
+        $mailer->shouldNotReceive('send');
+        $this->app->instance(\App\Services\Mail\ConfigServiceMailer::class, $mailer);
+
+        $payload = ['client_name' => 'CMS Silent', 'email' => 'cms-silent@example.com', 'send_welcome_email' => false];
+
+        $this->postJson('/api/customers/provision', $payload, ['X-Internal-Secret' => self::SECRET])
+            ->assertStatus(201)
+            ->assertJsonPath('status', 'created')
+            ->assertJsonPath('welcome_email_sent', false);
+        $this->assertDatabaseHas('clients', ['email' => 'cms-silent@example.com']);
+    }
+
+    public function test_welcome_email_is_still_sent_by_default(): void
+    {
+        $mailer = \Mockery::mock(\App\Services\Mail\ConfigServiceMailer::class);
+        $mailer->shouldReceive('send')->once();
+        $this->app->instance(\App\Services\Mail\ConfigServiceMailer::class, $mailer);
+
+        $this->postJson('/api/customers/provision', ['client_name' => 'Default', 'email' => 'default-0044@example.com'], ['X-Internal-Secret' => self::SECRET])
+            ->assertStatus(201);
+    }
+
     public function test_name_and_email_alone_are_enough_for_the_crms_machine_sync(): void
     {
         $payload = ['client_name' => 'CRMS Only', 'email' => 'crms-only@example.com'];

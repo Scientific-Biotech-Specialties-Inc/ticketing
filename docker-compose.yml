@@ -100,8 +100,10 @@ services:
       CONFIGURATION_SERVICE_URL: ${CONFIGURATION_SERVICE_URL:-http://configuration-service:8000}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN}
       INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-${INTERNAL_TOKEN}}
+    # --no-reload and variables_order=EGPCS pass the container env (INTERNAL_SERVICE_SECRET) through to
+    # the request workers; without them artisan serve only sees .env and customers/provision answers 503.
     command: >
-      sh -lc "if [ ! -f .env ] && [ -f .env.example ]; then cp .env.example .env; fi && if [ ! -f vendor/autoload.php ]; then composer install --no-interaction --prefer-dist --optimize-autoloader; fi && if grep -q '^APP_KEY=$' .env; then php artisan key:generate --force; fi && php -d upload_max_filesize=20M -d post_max_size=25M artisan serve --host=0.0.0.0 --port=8000"
+      sh -lc "if [ ! -f .env ] && [ -f .env.example ]; then cp .env.example .env; fi && if [ ! -f vendor/autoload.php ]; then composer install --no-interaction --prefer-dist --optimize-autoloader; fi && if grep -q '^APP_KEY=$' .env; then php artisan key:generate --force; fi && php -d variables_order=EGPCS -d upload_max_filesize=20M -d post_max_size=25M artisan serve --no-reload --host=0.0.0.0 --port=8000"
     depends_on:
       db:
         condition: service_healthy
@@ -194,6 +196,12 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      # Spec 3.1: cms:sync runs here and provisions customers through customer-service.
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-${INTERNAL_TOKEN}}
+      CUSTOMER_SERVICE_URL: http://customer-service:8000
+      CMS_TS_BASE_URL: ${CMS_TS_BASE_URL:-}
+      CMS_TS_INTEGRATION_KEY: ${CMS_TS_INTEGRATION_KEY:-}
+      CMS_TS_SEND_WELCOME_EMAIL: ${CMS_TS_SEND_WELCOME_EMAIL:-false}
       REVERB_APP_ID: local
       REVERB_APP_KEY: local
       REVERB_APP_SECRET: local
@@ -242,6 +250,10 @@ services:
       # CRMS machine sync: guards /internal/crms/* and calls customer-service provisioning.
       INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-${INTERNAL_TOKEN}}
       CUSTOMER_SERVICE_URL: http://customer-service:8000
+      # Spec 3.1: CMS equipment sync (read only GET). Values come from the root .env only.
+      CMS_TS_BASE_URL: ${CMS_TS_BASE_URL:-}
+      CMS_TS_INTEGRATION_KEY: ${CMS_TS_INTEGRATION_KEY:-}
+      CMS_TS_SEND_WELCOME_EMAIL: ${CMS_TS_SEND_WELCOME_EMAIL:-false}
       REVERB_APP_ID: local
       REVERB_APP_KEY: local
       REVERB_APP_SECRET: local

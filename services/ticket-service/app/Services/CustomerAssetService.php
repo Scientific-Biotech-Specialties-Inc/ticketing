@@ -148,7 +148,10 @@ class CustomerAssetService
                 $q->whereNull('status')
                   ->orWhere('status', '')
                   ->orWhereIn(DB::raw('LOWER(status)'), $statuses);
-            });
+            })
+            // Spec 3.1: hide machines whose CMS contract ended (null = not from the CMS).
+            ->where(fn ($q) => $q->whereNull('cms_contract_active')->orWhere('cms_contract_active', true))
+            ->where(fn ($q) => $q->whereNull('contract_end_date')->orWhere('contract_end_date', '>=', now()->toDateString()));
     }
 
     private function present(object $row): array

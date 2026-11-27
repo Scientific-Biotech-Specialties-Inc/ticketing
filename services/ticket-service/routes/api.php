@@ -95,6 +95,10 @@ Route::middleware('auth.subsystem')->group(function () {
     Route::get('/customer-dashboard', [TicketDashboardController::class, 'customerDashboard']);
     Route::get('/customer/filter-options', [TicketDashboardController::class, 'customerFilterOptions']);
 
+    // ─── Spec 3.1: CMS equipment sync state (banner) and admin "Sync now" ─────
+    Route::get('/integrations/cms/status', [\App\Http\Controllers\CmsIntegrationController::class, 'status'])->middleware('no-cache');
+    Route::post('/integrations/cms/sync', [\App\Http\Controllers\CmsIntegrationController::class, 'sync'])->middleware(['no-cache', 'throttle:6,1']);
+
     // ─── CS Dashboard & Incoming Queue (Token Authenticated) ──────────────────
     Route::get('/cs-dashboard', [TicketDashboardController::class, 'csDashboard'])->middleware(['no-cache', 'ticketing.employee']);
     Route::get('/cs-dashboard-summary', [TicketDashboardController::class, 'csDashboardSummary'])->middleware(['no-cache', 'ticketing.employee']);

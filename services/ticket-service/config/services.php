@@ -42,6 +42,19 @@ return [
         'secret' => env('INTERNAL_SERVICE_SECRET', env('INTERNAL_TOKEN', '')),
     ],
 
+    // Spec 3.1: CMS (Contract Management System) is the source of truth for customers' equipment.
+    // TS pulls it read only (GET). Both values live in .env only; blank disables the sync.
+    'cms_ts' => [
+        'base_url' => env('CMS_TS_BASE_URL', ''),
+        'key' => env('CMS_TS_INTEGRATION_KEY', ''),
+        'connect_timeout' => (int) env('CMS_TS_CONNECT_TIMEOUT', 3),
+        'timeout' => (int) env('CMS_TS_TIMEOUT', 5),
+        'per_page' => (int) env('CMS_TS_PER_PAGE', 200),
+        'max_pages' => (int) env('CMS_TS_MAX_PAGES', 100),
+        // New customers get customer-service's welcome email (temporary password) only when true.
+        'send_welcome_email' => filter_var(env('CMS_TS_SEND_WELCOME_EMAIL', false), FILTER_VALIDATE_BOOLEAN),
+    ],
+
     'customer' => [
         'url' => env('CUSTOMER_SERVICE_URL', 'http://customer-service:8000'),
         'timeout' => (int) env('CUSTOMER_SERVICE_TIMEOUT', 10),
