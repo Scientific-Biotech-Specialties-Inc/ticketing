@@ -343,6 +343,26 @@ class AuditTimelineService
                 $managerNames = implode(', ', array_filter(array_map(fn ($m) => $m['name'] ?? null, (array) ($details['managers'] ?? []))));
                 return 'Escalated to ' . ($managerNames !== '' ? $managerNames : 'the department managers')
                     . ($reason ? ": {$reason}" : '');
+            // Spec 0051 (AC-14): department routing with manager triage.
+            case 'department_assigned':
+                return 'Routed to ' . ($details['department'] ?? 'a department')
+                    . (!empty($details['actor_name']) ? ' by ' . $details['actor_name'] : '')
+                    . (!empty($details['note']) ? '. Note: ' . $details['note'] : '');
+            case 'department_claimed':
+                return 'Claimed by ' . ($details['manager_name'] ?? $details['actor_name'] ?? 'a manager')
+                    . (!empty($details['department']) ? " ({$details['department']})" : '');
+            case 'department_delegated':
+                $members = implode(', ', array_filter(array_map(fn ($p) => $p['name'] ?? null, (array) ($details['members'] ?? []))));
+                return 'Assigned to ' . ($members !== '' ? $members : 'department members')
+                    . ' by ' . ($details['manager_name'] ?? $details['actor_name'] ?? 'a manager')
+                    . (!empty($details['override_reason']) ? '. Override reason: ' . $details['override_reason'] : '');
+            case 'department_returned':
+                return 'Returned to CS by ' . ($details['manager_name'] ?? $details['actor_name'] ?? 'a manager')
+                    . ($reason ? ": {$reason}" : '');
+            case 'department_rerouted':
+                $target = ($details['to'] ?? '') === 'members' ? 'members' : ($details['to_department'] ?? 'another department');
+                return 'Rerouted from ' . ($details['from_department'] ?? 'the department') . " to {$target}"
+                    . (!empty($details['actor_name']) ? ' by ' . $details['actor_name'] : '');
             case 'manager_reassignment_acknowledged':
                 return 'Manager reassignment acknowledged by Customer Service';
             case 'accept':

@@ -40,6 +40,8 @@ export default function DepartmentCodesPanel({ enabled = true, onSelectCode }) {
   const [editCode, setEditCode] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState('');
+  const [routingSavingId, setRoutingSavingId] = useState(null);
+  const [routingError, setRoutingError] = useState('');
   const suggestRequest = useRef(0);
 
   const load = useCallback(async () => {
@@ -149,11 +151,27 @@ export default function DepartmentCodesPanel({ enabled = true, onSelectCode }) {
     }
   };
 
+  // Spec 0051 (AC-1): whether CS may route tickets to this department.
+  const handleToggleRouting = async (dept) => {
+    setRoutingError('');
+    setRoutingSavingId(dept.id);
+    const next = !dept.accepts_tickets;
+    setDepartments((rows) => rows.map((d) => (d.id === dept.id ? { ...d, accepts_tickets: next } : d)));
+    try {
+      await updateDepartment(dept.id, { accepts_tickets: next });
+    } catch (err) {
+      setDepartments((rows) => rows.map((d) => (d.id === dept.id ? { ...d, accepts_tickets: !next } : d)));
+      setRoutingError(err?.response?.data?.message || `Could not update ${dept.name}.`);
+    } finally {
+      setRoutingSavingId(null);
+    }
+  };
+
   return (
     <div className={`space-y-3 transition-all ${enabled ? 'opacity-100' : 'opacity-40 pointer-events-none'}`} aria-disabled={!enabled}>
       <div className="flex items-center justify-between">
         <span className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Department Codes</span>
-        <span className="text-xs text-gray-500">Pick a row to preview its number</span>
+        {onSelectCode && <span className="text-xs text-gray-500">Pick a row to preview its number</span>}
       </div>
 
       {loadError && (
@@ -169,13 +187,14 @@ export default function DepartmentCodesPanel({ enabled = true, onSelectCode }) {
               <th scope="col" className="px-4 py-2">Department</th>
               <th scope="col" className="px-4 py-2">Code</th>
               <th scope="col" className="px-4 py-2">Status</th>
+              <th scope="col" className="px-4 py-2">Accepts Routed Tickets</th>
               <th scope="col" className="px-4 py-2 sr-only">Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading && [0, 1].map((i) => (
               <tr key={`skeleton-${i}`} className="border-t border-gray-100">
-                {[0, 1, 2, 3].map((c) => (
+                {[0, 1, 2, 3, 4].map((c) => (
                   <td key={c} className="px-4 py-3"><div className="h-4 w-16 rounded bg-gray-100 animate-pulse" /></td>
                 ))}
               </tr>
@@ -210,6 +229,26 @@ export default function DepartmentCodesPanel({ enabled = true, onSelectCode }) {
                       {dept.is_active ? 'Active' : 'Inactive'}
                     </span>
                   </td>
+                  <td className="px-4 py-2" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={Boolean(dept.accepts_tickets)}
+                      aria-label={`${dept.name} accepts routed tickets`}
+                      disabled={routingSavingId === dept.id}
+                      onClick={() => handleToggleRouting(dept)}
+                      data-testid={`accepts-tickets-${dept.id}`}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2E85D8] ${
+                        dept.accepts_tickets ? 'bg-[#252578]' : 'bg-gray-200'
+                      }`}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${
+                          dept.accepts_tickets ? 'translate-x-6' : 'translate-x-1'
+                        }`}
+                      />
+                    </button>
+                  </td>
                   <td className="px-4 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                     {isEditing ? (
                       <span className="inline-flex gap-1">
@@ -235,7 +274,14 @@ export default function DepartmentCodesPanel({ enabled = true, onSelectCode }) {
           <AlertCircle size={13} /> {editError}
         </p>
       )}
-      <p className="text-xs text-gray-500">Editing a code only affects tickets created afterwards.</p>
+      {routingError && (
+        <p role="alert" className="text-xs font-semibold text-red-600 flex items-center gap-1">
+          <AlertCircle size={13} /> {routingError}
+        </p>
+      )}
+      <p className="text-xs text-gray-500">
+        Editing a code only affects tickets created afterwards. Customer Service can route tickets only to active departments that accept routed tickets.
+      </p>
 
       <div className="rounded-xl border border-dashed border-gray-200 p-4 space-y-3">
         <span className="text-xs font-semibold text-gray-700 uppercase tracking-wider block">Add Department</span>

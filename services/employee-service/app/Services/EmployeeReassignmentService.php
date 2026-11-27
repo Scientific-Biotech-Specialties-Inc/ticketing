@@ -30,6 +30,7 @@ class EmployeeReassignmentService
         $assignment = DB::table('ticket_assignments')
             ->where('ticket_ID', $ticketId)
             ->where('employee_ID', $empId)
+            ->where('assignment_status', '!=', DepartmentRoutingService::CLOSED_STATUS)
             ->first();
 
         if (!$assignment) {
@@ -65,6 +66,7 @@ class EmployeeReassignmentService
             DB::table('ticket_assignments')
                 ->where('ticket_ID', $ticketId)
                 ->where('employee_ID', $empId)
+                ->where('assignment_status', '!=', DepartmentRoutingService::CLOSED_STATUS)
                 ->update([
                     'assignment_status' => 'reassign_requested',
                     'updated_at' => now(),
@@ -142,24 +144,28 @@ class EmployeeReassignmentService
                 }
             }
 
-            $this->notificationService->notifyCustomer(
-                $customerId,
-                'Reassignment Requested',
-                "Engineer " . $empName . " has requested reassignment for your ticket {$ticketRef}: \"" . $title . "\".",
-                $ticketId
-            );
+            // Privacy: reassignment is internal handling. Only an internal ticket's employee requester hears about it,
+            // never an external customer (notifyCustomer routes internal tickets to requested_by).
+            if (!empty($ticket->is_internal)) {
+                $this->notificationService->notifyCustomer(
+                    $customerId,
+                    'Reassignment Requested',
+                    "Engineer " . $empName . " has requested reassignment for your ticket {$ticketRef}: \"" . $title . "\".",
+                    $ticketId
+                );
 
-            $catNameReas = DB::table('problem_categories')->where('problem_category_ID', $ticket->problem_category_ID)->value('category_name') ?? '';
-            $prioNameReas = DB::table('ticket_priorities')->where('priority_ID', $ticket->priority_ID ?? 1)->value('priority_name') ?? '';
-            $this->notificationService->sendCustomerEmail(
-                $customerId,
-                'Reassignment Requested',
-                "Engineer " . $empName . " has requested reassignment for your ticket {$ticketRef}: \"" . $title . "\".",
-                $ticketId,
-                $title,
-                $catNameReas,
-                $prioNameReas
-            );
+                $catNameReas = DB::table('problem_categories')->where('problem_category_ID', $ticket->problem_category_ID)->value('category_name') ?? '';
+                $prioNameReas = DB::table('ticket_priorities')->where('priority_ID', $ticket->priority_ID ?? 1)->value('priority_name') ?? '';
+                $this->notificationService->sendCustomerEmail(
+                    $customerId,
+                    'Reassignment Requested',
+                    "Engineer " . $empName . " has requested reassignment for your ticket {$ticketRef}: \"" . $title . "\".",
+                    $ticketId,
+                    $title,
+                    $catNameReas,
+                    $prioNameReas
+                );
+            }
         }
 
         return ['status' => 200, 'data' => ['message' => 'Reassignment request submitted successfully.']];
@@ -531,28 +537,31 @@ class EmployeeReassignmentService
                 );
             }
 
-            $this->notificationService->notifyCustomer(
-                $customerId,
-                $validated['action'] === 'approve' ? 'Ticket Reassigned' : 'Reassignment Rejected',
-                $validated['action'] === 'approve'
-                    ? "Reassignment request for your ticket {$ticketRef}: \"" . $title . "\" was approved. The ticket has been reassigned to a new engineer."
-                    : "Reassignment request for ticket {$ticketRef}: \"" . $title . "\" was rejected.",
-                $ticketId
-            );
+            // Privacy: only an internal ticket's employee requester hears the outcome, never an external customer.
+            if (!empty($ticket->is_internal)) {
+                $this->notificationService->notifyCustomer(
+                    $customerId,
+                    $validated['action'] === 'approve' ? 'Ticket Reassigned' : 'Reassignment Rejected',
+                    $validated['action'] === 'approve'
+                        ? "Reassignment request for your ticket {$ticketRef}: \"" . $title . "\" was approved. The ticket has been reassigned to a new engineer."
+                        : "Reassignment request for ticket {$ticketRef}: \"" . $title . "\" was rejected.",
+                    $ticketId
+                );
 
-            $reassignEmailSubject = $validated['action'] === 'approve' ? 'Ticket Reassigned' : 'Reassignment Rejected';
-            $reassignEmailMessage = $validated['action'] === 'approve'
-                ? "Reassignment request for your ticket {$ticketRef}: \"" . $title . "\" was approved. The ticket has been reassigned to a new engineer."
-                : "Reassignment request for ticket {$ticketRef}: \"" . $title . "\" was rejected.";
-            $this->notificationService->sendCustomerEmail(
-                $customerId,
-                $reassignEmailSubject,
-                $reassignEmailMessage,
-                $ticketId,
-                $title,
-                $categoryName,
-                $priorityName
-            );
+                $reassignEmailSubject = $validated['action'] === 'approve' ? 'Ticket Reassigned' : 'Reassignment Rejected';
+                $reassignEmailMessage = $validated['action'] === 'approve'
+                    ? "Reassignment request for your ticket {$ticketRef}: \"" . $title . "\" was approved. The ticket has been reassigned to a new engineer."
+                    : "Reassignment request for ticket {$ticketRef}: \"" . $title . "\" was rejected.";
+                $this->notificationService->sendCustomerEmail(
+                    $customerId,
+                    $reassignEmailSubject,
+                    $reassignEmailMessage,
+                    $ticketId,
+                    $title,
+                    $categoryName,
+                    $priorityName
+                );
+            }
         }
 
         return ['status' => 200, 'data' => ['message' => 'Reassignment request responded to successfully.']];

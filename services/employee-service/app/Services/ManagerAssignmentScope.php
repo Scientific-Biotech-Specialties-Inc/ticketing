@@ -5,46 +5,27 @@ namespace App\Services;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Department scope for assignments made by a Service or IT department manager.
+ * Department scope for assignments made by a department manager.
  *
  * A department manager may only add or remove assignees from their own department.
  * Assignees from other departments on the same ticket must be kept as they are.
  * CS, admins and non managers are not limited here (their rules live elsewhere).
+ *
+ * Spec 0051 (AC-11): the scope applies to managers of any department a superadmin set to
+ * accept routed tickets (departments.accepts_tickets), instead of a hardcoded Service and IT list.
  */
 class ManagerAssignmentScope
 {
-    /** Departments whose managers are limited to their own staff. */
-    protected const SCOPED_DEPARTMENTS = ['service', 'it'];
+    public function __construct(protected DepartmentManagerResolver $resolver) {}
 
     /**
-     * The caller's employees row when the caller is a Service or IT department manager, else null.
+     * The caller's employees row when the caller manages a department that accepts routed tickets, else null.
      */
     public function scopedManager($user): ?object
     {
-        $email = strtolower(trim((string) ($user->email ?? '')));
-        if ($email === '') {
-            return null;
-        }
+        $emp = $this->resolver->employeeForUser($user);
 
-        $emp = DB::table('employees')
-            ->whereRaw('LOWER(email) = ?', [$email])
-            ->select('emp_id', 'first_name', 'last_name', 'role', 'department', 'position_level', 'technical_role')
-            ->first();
-        if (!$emp) {
-            return null;
-        }
-
-        $role = strtolower(trim((string) ($emp->role ?? '')));
-        if (in_array($role, ['admin', 'superadmin', 'super admin'], true)) {
-            return null;
-        }
-
-        $isManager = strtolower(trim((string) ($emp->position_level ?? ''))) === 'manager'
-            || str_contains($role, 'manager')
-            || str_contains(strtolower((string) ($emp->technical_role ?? '')), 'manager');
-        $dept = strtolower(trim((string) ($emp->department ?? '')));
-
-        return $isManager && in_array($dept, self::SCOPED_DEPARTMENTS, true) ? $emp : null;
+        return $this->resolver->managedDepartment($emp, true) ? $emp : null;
     }
 
     /**

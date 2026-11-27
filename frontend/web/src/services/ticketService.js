@@ -845,6 +845,101 @@ export const assignTicketToEmployees = async ({ ticketId, employeeIds, assignedB
   return response.data;
 };
 
+// ─── Spec 0043: department codes (superadmin; employee-service owns `departments`) ───
+
+/** Every department with its code, active state and accepts_tickets switch (spec 0051). */
+export const getDepartmentsWithCodes = async () => {
+  const response = await employeeClient.get('/departments', { params: { include_inactive: 1 } });
+  return response.data?.departments ?? [];
+};
+
+/** Server suggested code for a department name (initials, first 3 letters, number suffix if taken). */
+export const suggestDepartmentCode = async (name, excludeId = null) => {
+  const params = { name };
+  if (excludeId) params.exclude_id = excludeId;
+  const response = await employeeClient.get('/departments/code-suggestion', { params });
+  return response.data?.code ?? '';
+};
+
+export const createDepartment = async ({ name, code, description }) => {
+  const response = await employeeClient.post('/departments', { name, code: code || undefined, description: description || undefined });
+  clearDepartmentsCache();
+  return response.data?.department;
+};
+
+/** PUT /departments/{id}: any of name, code, description, is_active, accepts_tickets. */
+export const updateDepartment = async (id, fields) => {
+  const response = await employeeClient.put(`/departments/${id}`, fields);
+  clearDepartmentsCache();
+  return response.data?.department;
+};
+
+// Spec 0051: department routing with manager triage.
+const departmentRoutingDone = () => {
+  clearIncomingTicketsCache();
+  clearCSDashboardCache();
+  clearEmployeeTicketsCache();
+  notifyCsTicketRefresh();
+};
+
+/** Active departments CS may route to, with manager_count and routable flags. */
+export const getAssignableDepartments = async () => {
+  const response = await employeeClient.get('/assignable-departments');
+  return response.data?.departments ?? [];
+};
+
+export const routeTicketToDepartment = async ({ ticketId, departmentId, priorityId, note } = {}) => {
+  const payload = { department_id: departmentId };
+  if (priorityId !== undefined && priorityId !== null) payload.priority_ID = priorityId;
+  if (note) payload.note = note;
+  const response = await employeeClient.post(`/tickets/${ticketId}/assign-department`, payload);
+  departmentRoutingDone();
+  return response.data;
+};
+
+/** Tickets waiting in the signed in manager's Department queue. */
+export const getDepartmentQueue = async ({ page = 1, perPage = 25 } = {}) => {
+  const response = await employeeClient.get('/department-queue', { params: { page, per_page: perPage } });
+  return response.data;
+};
+
+export const claimDepartmentTicket = async (ticketId) => {
+  const response = await employeeClient.post(`/tickets/${ticketId}/department-claim`);
+  departmentRoutingDone();
+  return response.data;
+};
+
+export const delegateDepartmentTicket = async ({ ticketId, employeeIds, overrideReason } = {}) => {
+  const payload = { employee_ids: employeeIds };
+  if (overrideReason) payload.override_reason = overrideReason;
+  const response = await employeeClient.post(`/tickets/${ticketId}/department-delegate`, payload);
+  departmentRoutingDone();
+  return response.data;
+};
+
+export const returnDepartmentTicket = async ({ ticketId, reason } = {}) => {
+  const response = await employeeClient.post(`/tickets/${ticketId}/department-return`, { reason });
+  departmentRoutingDone();
+  return response.data;
+};
+
+/** Friendly text for the department routing error codes (spec 0051, AC-5 and AC-10). */
+export const departmentRoutingErrorMessage = (err, fallback = 'Something went wrong. Please try again.') => {
+  const data = err?.response?.data || {};
+  const messages = {
+    DEPARTMENT_NOT_ROUTABLE: 'This department no longer accepts routed tickets. Pick another one.',
+    DEPARTMENT_HAS_NO_MANAGER: 'This department has no active manager right now. Pick another one.',
+    NEEDS_CLASSIFICATION: 'Classify this ticket before you route it.',
+    INVALID_TICKET_TRANSITION: 'This ticket cannot be routed from its current status.',
+    DEPARTMENT_ALREADY_CLAIMED: 'Another manager already acted on this ticket.',
+    ROUTE_MODE_CONFLICT: 'Choose members or a department, not both.',
+    OVERRIDE_REASON_REQUIRED: 'Someone you picked is outside the category track. Add an override reason.',
+    SELF_DELEGATION: 'To work this ticket yourself, use Accept instead.',
+  };
+  if (err?.response?.status === 403) return data.message || 'You are not allowed to do this.';
+  return messages[data.code] || data.message || fallback;
+};
+
 export const acceptTicket = async ({ ticketId, employeeIds, assignedByEmail, priorityId } = {}) => {
   const normalizedId = ticketId || Number(String(ticketId || '').replace(/\D/g, ''));
   const payload = {};

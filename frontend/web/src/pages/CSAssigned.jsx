@@ -854,6 +854,15 @@ export default function CSAssigned() {
                     </TableCell>
                     <TableCell className="max-w-[16rem]">
                       {(() => {
+                        // Spec 0051 (AC-15): the department's managers hold it until one of them acts.
+                        if (t.waiting_on_department) {
+                          return (
+                            <span className="text-xs font-semibold px-2 py-1 rounded-md border border-primary/20 bg-primary/5 text-primary" data-testid="waiting-on-department">
+                              Waiting on {t.waiting_on_department}
+                            </span>
+                          );
+                        }
+
                         const list = Array.isArray(t.assigned_employees) && t.assigned_employees.length > 0
                           ? t.assigned_employees
                           : (t.assigned_employee ? [{ name: t.assigned_employee, assignment_status: t.accepted ? 'accepted' : 'assigned' }] : []);
@@ -1025,6 +1034,7 @@ export default function CSAssigned() {
           priorityOptions={priorityOptions}
           onClose={() => setModal(null)}
           onSave={handleSave}
+          onRouted={() => loadLiveData({ forceRefresh: true, source: 'poll' })}
         />
       )}
     </div>

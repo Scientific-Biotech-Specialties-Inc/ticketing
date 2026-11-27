@@ -229,8 +229,10 @@ class EmployeeAssignmentService
                     'updated_at' => now(),
                 ]);
 
+            // Spec 0051: closed department manager rows are history; never reuse or delete them.
             $existing = DB::table('ticket_assignments')
                 ->where('ticket_ID', $ticketId)
+                ->where('assignment_status', '!=', DepartmentRoutingService::CLOSED_STATUS)
                 ->get()
                 ->keyBy('employee_ID');
 
@@ -243,6 +245,7 @@ class EmployeeAssignmentService
                 DB::table('ticket_assignments')
                     ->where('ticket_ID', $ticketId)
                     ->whereIn('employee_ID', $toRemove)
+                    ->where('assignment_status', '!=', DepartmentRoutingService::CLOSED_STATUS)
                     ->delete();
             }
 
@@ -459,17 +462,6 @@ class EmployeeAssignmentService
                     $assignedBy
                 );
             }
-
-            if ($ticket->requested_by) {
-                $this->notificationService->notifyRecipient(
-                    $ticket->requested_by,
-                    'employee',
-                    'Ticket Assigned',
-                    "Your requested ticket {$ticketRef}: \"" . $title . "\" has been assigned to " . $empNamesStr . ".",
-                    $ticketId,
-                    $notificationData
-                );
-            }
         }
 
         // Notify unassigned employees about ticket reassignment
@@ -555,6 +547,7 @@ class EmployeeAssignmentService
             $assignment = DB::table('ticket_assignments')
                 ->where('ticket_ID', $ticketId)
                 ->where('employee_ID', $empId)
+                ->where('assignment_status', '!=', DepartmentRoutingService::CLOSED_STATUS)
                 ->first();
 
             if (!$assignment) {
@@ -581,6 +574,7 @@ class EmployeeAssignmentService
                     $assignment = DB::table('ticket_assignments')
                         ->where('ticket_ID', $ticketId)
                         ->where('employee_ID', $empId)
+                        ->where('assignment_status', '!=', DepartmentRoutingService::CLOSED_STATUS)
                         ->first();
                 } else {
                     return ['status' => 403, 'data' => ['message' => 'You are not assigned to this ticket.']];
@@ -613,6 +607,7 @@ class EmployeeAssignmentService
                 DB::table('ticket_assignments')
                     ->where('ticket_ID', $ticketId)
                     ->where('employee_ID', $empId)
+                    ->where('assignment_status', '!=', DepartmentRoutingService::CLOSED_STATUS)
                     ->update([
                         'assignment_status' => 'accepted',
                         'accepted_at' => now(),
@@ -683,7 +678,7 @@ class EmployeeAssignmentService
                 );
             }
 
-            $allActiveEmpIds = DB::table('ticket_assignments')->where('ticket_ID', $ticketId)->pluck('employee_ID')->all();
+            $allActiveEmpIds = DB::table('ticket_assignments')->where('ticket_ID', $ticketId)->where('assignment_status', '!=', DepartmentRoutingService::CLOSED_STATUS)->pluck('employee_ID')->all();
             $this->notificationService->broadcastTicketChange('accepted', $ticketId, [
                 'ticket_id' => $ticketId,
                 'assigned_to' => $empId,
@@ -774,6 +769,7 @@ class EmployeeAssignmentService
             if ($employees->count() > 0) {
                 $existing = DB::table('ticket_assignments')
                     ->where('ticket_ID', $ticketId)
+                    ->where('assignment_status', '!=', DepartmentRoutingService::CLOSED_STATUS)
                     ->get()
                     ->keyBy('employee_ID');
 
@@ -786,6 +782,7 @@ class EmployeeAssignmentService
                     DB::table('ticket_assignments')
                         ->where('ticket_ID', $ticketId)
                         ->whereIn('employee_ID', $toRemove)
+                        ->where('assignment_status', '!=', DepartmentRoutingService::CLOSED_STATUS)
                         ->delete();
                 }
 
@@ -954,6 +951,7 @@ class EmployeeAssignmentService
         $assignment = DB::table('ticket_assignments')
             ->where('ticket_ID', $ticketId)
             ->where('employee_ID', $empId)
+            ->where('assignment_status', '!=', DepartmentRoutingService::CLOSED_STATUS)
             ->first();
 
         if (!$assignment) {
@@ -1397,7 +1395,11 @@ class EmployeeAssignmentService
             'event_type' => 'manager_reassigned',
             'action_by_ID' => (int) $manager->emp_id,
             'actor_type' => 'employee',
-            'actor_role' => strtolower($department) === 'it' ? 'it_manager' : 'service_manager',
+            'actor_role' => match (strtolower(trim($department))) {
+                'it' => 'it_manager',
+                'service' => 'service_manager',
+                default => 'department_manager',
+            },
             'before_state' => json_encode(['assignees' => array_column($people($beforeIds), 'name')]),
             'after_state' => json_encode(['assignees' => array_column($people($afterIds), 'name')]),
             'details' => json_encode([
@@ -1416,7 +1418,7 @@ class EmployeeAssignmentService
     private function recordAssignmentChange(int $ticketId, array $removedEmpIds, array $addedEmpIds, int $assignedBy): void
     {
         if (!empty($removedEmpIds)) {
-            $stillAssigned = DB::table('ticket_assignments')->where('ticket_ID', $ticketId)->exists();
+            $stillAssigned = DB::table('ticket_assignments')->where('ticket_ID', $ticketId)->where('assignment_status', '!=', DepartmentRoutingService::CLOSED_STATUS)->exists();
             $this->periods()->release(
                 $ticketId,
                 $stillAssigned ? AssignmentPeriodRecorder::REASON_REASSIGNED : AssignmentPeriodRecorder::REASON_RETURNED_TO_CS,
@@ -1429,7 +1431,7 @@ class EmployeeAssignmentService
         }
     }
 
-    private function requestSlaRecalculation(int $ticketId): void
+    public function requestSlaRecalculation(int $ticketId): void
     {
         try {
             $ticketServiceUrl = rtrim((string) env('TICKET_SERVICE_URL', 'http://ticket-service:8000'), '/');
@@ -1584,7 +1586,8 @@ class EmployeeAssignmentService
         $query = DB::table('tickets as t')
             ->leftJoin('ticket_assignments as ta', function ($join) use ($employeeId) {
                 $join->on('ta.ticket_ID', '=', 't.ticket_ID')
-                     ->where('ta.employee_ID', '=', $employeeId);
+                     ->where('ta.employee_ID', '=', $employeeId)
+                     ->where('ta.assignment_status', '!=', DepartmentRoutingService::CLOSED_STATUS);
             })
             ->leftJoin('problem_categories as pc', 'pc.problem_category_ID', '=', 't.problem_category_ID')
             ->leftJoin('ticket_statuses as ts', 'ts.ticket_status_ID', '=', 't.ticket_status_ID')

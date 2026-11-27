@@ -6,6 +6,7 @@ use Ticketing\Reporting\TechnicalDepartments;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Ticketing\Reporting\BranchScope;
 use Ticketing\Reporting\BranchEmployees;
 use Ticketing\Reporting\ForecastReader;
@@ -479,8 +480,17 @@ class TicketDashboardService
                     't.hold_reason',
                     't.escalation_reason',
                     DB::raw("COALESCE(b.name, 'Main Branch') as branch"),
-                    DB::raw("COALESCE(b.name, 'Main Branch') as branch_name")
+                    DB::raw("COALESCE(b.name, 'Main Branch') as branch_name"),
                 );
+
+            // Spec 0051: the department a ticket was routed to (columns may be missing on a
+            // ticket-service only database, e.g. before employee-service has migrated).
+            if ($this->departmentRoutingReady()) {
+                $query->leftJoin('departments as ad', 'ad.id', '=', 't.assigned_department_id')
+                    ->addSelect('t.assigned_department_id', 'ad.name as assigned_department_name');
+            } else {
+                $query->addSelect(DB::raw('NULL as assigned_department_id'), DB::raw('NULL as assigned_department_name'));
+            }
 
             if ($typeFilter === 'internal') {
                 $query->where('t.is_internal', true);
@@ -644,9 +654,11 @@ class TicketDashboardService
             $pendingReassigns = collect();
 
             if (!empty($ticketIds)) {
+                // Spec 0051: closed department manager rows are history, not assignees.
                 $assignments = DB::table('ticket_assignments as ta')
                     ->leftJoin('employees as e', 'e.emp_id', '=', 'ta.employee_ID')
                     ->whereIn('ta.ticket_ID', $ticketIds)
+                    ->where('ta.assignment_status', '!=', 'department_closed')
                     ->select(
                         'ta.*',
                         DB::raw("CONCAT(e.first_name, ' ', e.last_name) as employee_name"),
@@ -671,7 +683,9 @@ class TicketDashboardService
                     ->map(fn($group) => $group->sortByDesc('request_id')->first());
             }
 
-            $incomingTickets = $rows->map(function ($row) use ($assignments, $pendingReassigns) {
+            $departmentWaiting = $this->departmentWaitingTickets($rows);
+
+            $incomingTickets = $rows->map(function ($row) use ($assignments, $pendingReassigns, $departmentWaiting) {
                 $assignedList = isset($assignments[$row->ticket_ID]) ? $assignments[$row->ticket_ID] : collect();
 
                 $assignedIds = $assignedList->pluck('employee_ID')->map(fn($id) => (int)$id)->all();
@@ -764,6 +778,10 @@ class TicketDashboardService
                     'is_internal' => (bool)$row->is_internal,
                     'requested_by' => $row->requested_by,
                     'last_reminder_sent_at' => $row->last_reminder_sent_at ? Carbon::parse($row->last_reminder_sent_at)->toIso8601String() : null,
+                    // Spec 0051 (AC-15): routed to a department and no manager has acted yet.
+                    'assigned_department_id' => $row->assigned_department_id !== null ? (int) $row->assigned_department_id : null,
+                    'assigned_department' => $row->assigned_department_name ?? null,
+                    'waiting_on_department' => isset($departmentWaiting[(int) $row->ticket_ID]) ? $row->assigned_department_name : null,
                 ];
             })->values()->toArray();
 
@@ -803,6 +821,48 @@ class TicketDashboardService
             : Cache::remember($cacheKey, 60, $fetchQuery);
     }
 
+    private ?bool $departmentRoutingReady = null;
+
+    private function departmentRoutingReady(): bool
+    {
+        return $this->departmentRoutingReady ??= Schema::hasColumn('tickets', 'assigned_department_id')
+            && Schema::hasTable('departments');
+    }
+
+    /**
+     * Spec 0051 (AC-15): ticket ids still waiting on a department, meaning assigned_department_id is
+     * set and the latest department_* audit event is department_assigned (no manager acted, no reroute).
+     *
+     * @return array<int, true>
+     */
+    private function departmentWaitingTickets($rows): array
+    {
+        $routedIds = collect($rows)
+            ->filter(fn ($row) => !empty($row->assigned_department_id))
+            ->pluck('ticket_ID')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+        if (empty($routedIds)) {
+            return [];
+        }
+
+        $latest = [];
+        DB::table('ticket_audit_logs')
+            ->whereIn('ticket_ID', $routedIds)
+            ->whereIn('action_type', ['department_assigned', 'department_claimed', 'department_delegated', 'department_returned', 'department_rerouted'])
+            ->orderBy('log_ID')
+            ->get(['ticket_ID', 'action_type'])
+            ->each(function ($event) use (&$latest) {
+                $latest[(int) $event->ticket_ID] = $event->action_type;
+            });
+
+        return collect($latest)
+            ->filter(fn ($action) => $action === 'department_assigned')
+            ->map(fn () => true)
+            ->all();
+    }
+
     /** A pending reassignment request exists for the ticket. */
     private function pendingReassignSql(): string
     {
@@ -811,7 +871,7 @@ class TicketDashboardService
 
     private function hasAssignmentSql(): string
     {
-        return 'EXISTS (SELECT 1 FROM ticket_assignments ta WHERE ta.ticket_ID = t.ticket_ID)';
+        return "EXISTS (SELECT 1 FROM ticket_assignments ta WHERE ta.ticket_ID = t.ticket_ID AND ta.assignment_status <> 'department_closed')";
     }
 
     private function acceptedAssignmentSql(): string

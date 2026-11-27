@@ -662,6 +662,10 @@ class MessageController extends Controller
 
                 $recipients = []; // array of ['id' => X, 'type' => 'client'|'employee']
 
+                // The internal requester plays the customer's part: their messages must reach CS too.
+                $senderIsRequester = $senderType === 'customer'
+                    || (!empty($ticket->is_internal) && !empty($ticket->requested_by) && (int) $ticket->requested_by === (int) $senderId && $senderType === 'employee');
+
                 // 1. Thread participant: Requester
                 if (!empty($ticket->is_internal) && !empty($ticket->requested_by)) {
                     $recipients[] = ['id' => (int)$ticket->requested_by, 'type' => 'employee'];
@@ -720,7 +724,7 @@ class MessageController extends Controller
 
                 foreach ($routingTokens as $token) {
                     if ($token === 'contextual_assigned') {
-                        if ($senderType === 'customer' && empty($assignedEmpIds)) {
+                        if ($senderIsRequester && empty($assignedEmpIds)) {
                             // Fallback to CS if no employee assigned so customer message is never lost
                             $csIds = \Illuminate\Support\Facades\DB::connection('mysql')
                                 ->table('employees')
@@ -793,7 +797,7 @@ class MessageController extends Controller
                 }
 
                 // Fallback: If sender is employee/CS and no recipients resolved, always ensure customer/requester gets notified
-                if ($senderType !== 'customer' && empty($recipients)) {
+                if (!$senderIsRequester && empty($recipients)) {
                     if ($ticket->is_internal) {
                         $recipients[] = ['id' => (int)$ticket->requested_by, 'type' => 'employee'];
                     } else {
@@ -802,7 +806,7 @@ class MessageController extends Controller
                 }
 
                 // Fallback: If sender is customer and no recipients resolved (unassigned ticket), notify CS
-                if ($senderType === 'customer' && empty($recipients)) {
+                if ($senderIsRequester && empty($recipients)) {
                     $csIds = \Illuminate\Support\Facades\DB::connection('mysql')
                         ->table('employees')
                         ->whereRaw('LOWER(role) IN (?, ?, ?, ?, ?)', ['customer service', 'cs', 'customer support', 'head of cs', 'head of customer service'])
