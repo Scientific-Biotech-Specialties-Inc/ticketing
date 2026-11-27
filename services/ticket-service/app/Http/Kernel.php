@@ -72,5 +72,6 @@ class Kernel extends HttpKernel
         'internal.token' => \App\Http\Middleware\VerifyInternalToken::class,
         'internal.serms' => \App\Http\Middleware\VerifySermsInternalAccess::class,
         'internal.prs' => \App\Http\Middleware\VerifyPrsInternalAccess::class,
+        'internal.secret' => \App\Http\Middleware\VerifyInternalSecret::class,
     ];
 }

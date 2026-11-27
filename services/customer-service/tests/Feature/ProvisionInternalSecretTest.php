@@ -87,4 +87,18 @@ class ProvisionInternalSecretTest extends TestCase
         $response->assertStatus(201, $response->getContent());
         $this->assertDatabaseHas('clients', ['email' => $this->payload['email']]);
     }
+
+    public function test_name_and_email_alone_are_enough_for_the_crms_machine_sync(): void
+    {
+        $payload = ['client_name' => 'CRMS Only', 'email' => 'crms-only@example.com'];
+
+        $this->postJson('/api/customers/provision', $payload, ['X-Internal-Secret' => self::SECRET])
+            ->assertStatus(201)
+            ->assertJsonPath('status', 'created');
+        $this->assertDatabaseHas('clients', ['email' => 'crms-only@example.com', 'address' => '', 'contact_number' => '']);
+
+        $this->postJson('/api/customers/provision', $payload, ['X-Internal-Secret' => self::SECRET])
+            ->assertStatus(200)
+            ->assertJsonPath('status', 'exists');
+    }
 }

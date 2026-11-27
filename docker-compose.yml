@@ -99,6 +99,7 @@ services:
       MAIL_FROM_NAME: "${MAIL_FROM_NAME:-Enterprise Ticketing System}"
       CONFIGURATION_SERVICE_URL: ${CONFIGURATION_SERVICE_URL:-http://configuration-service:8000}
       INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-${INTERNAL_TOKEN}}
     command: >
       sh -lc "if [ ! -f .env ] && [ -f .env.example ]; then cp .env.example .env; fi && if [ ! -f vendor/autoload.php ]; then composer install --no-interaction --prefer-dist --optimize-autoloader; fi && if grep -q '^APP_KEY=$' .env; then php artisan key:generate --force; fi && php -d upload_max_filesize=20M -d post_max_size=25M artisan serve --host=0.0.0.0 --port=8000"
     depends_on:
@@ -238,6 +239,9 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+      # CRMS machine sync: guards /internal/crms/* and calls customer-service provisioning.
+      INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET:-${INTERNAL_TOKEN}}
+      CUSTOMER_SERVICE_URL: http://customer-service:8000
       REVERB_APP_ID: local
       REVERB_APP_KEY: local
       REVERB_APP_SECRET: local

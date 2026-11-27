@@ -36,6 +36,17 @@ return [
     ],
 
 
+    // Shared service to service secret sent as X-Internal-Secret (spec 0044). Guards the CRMS
+    // machine sync endpoint and is forwarded to customer-service's customers/provision.
+    'internal' => [
+        'secret' => env('INTERNAL_SERVICE_SECRET', env('INTERNAL_TOKEN', '')),
+    ],
+
+    'customer' => [
+        'url' => env('CUSTOMER_SERVICE_URL', 'http://customer-service:8000'),
+        'timeout' => (int) env('CUSTOMER_SERVICE_TIMEOUT', 10),
+    ],
+
     // Spec 0044: refuse customer tokens on staff gateway traffic (X-Ticketing-Edge: staff).
     'edge' => [
         'enforce' => (bool) env('TICKETING_EDGE_ENFORCE', false),
