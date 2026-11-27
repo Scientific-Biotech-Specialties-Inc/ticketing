@@ -11,7 +11,7 @@ use Illuminate\Console\Command;
 use Illuminate\Support\Str;
 
 /**
- * Spec 0036 (AC-9): embed every Knowledge Base article again with the configured model.
+ * Embed every Knowledge Base article again with the configured model.
  *
  * Safe to run more than once. Each article keeps serving its current set until its new set is
  * swapped in by RagService::indexArticle(). Published articles are probed afterwards, and the

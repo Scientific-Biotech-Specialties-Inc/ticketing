@@ -31,7 +31,7 @@ class FeedbackController extends Controller
     /**
      * Fetch a ticket's ownership from ticket-service as the caller. Returns [httpStatus, ticketArray|null].
      *
-     * Spec 0038 AC-35: uses the lightweight GET /tickets/{id}/ownership (ticket_ID, ticket_number,
+     * Uses the lightweight GET /tickets/{id}/ownership (ticket_ID, ticket_number,
      * client_ID, status_name, is_internal), which reads two tables and makes no outbound calls,
      * instead of the full ticket detail that timed out and never carried client_ID.
      */
@@ -101,7 +101,7 @@ class FeedbackController extends Controller
         $ratings = $validated['ratings'] ?? [];
         $comments = $validated['comments'] ?? [];
 
-        // Spec 0034: the ticket must belong to the verified customer and be Resolved or Closed.
+        // The ticket must belong to the verified customer and be Resolved or Closed.
         // If ticket-service cannot answer, refuse the request. The ownership check is never skipped.
         try {
             [$ticketStatus, $ticketObj] = $this->fetchTicketAsCaller($request, (string) $validated['ticket_id']);
@@ -384,7 +384,7 @@ class FeedbackController extends Controller
         $avgScore = (clone $query)->avg('overall_rating');
         $totalReviews = (clone $query)->count();
         $satisfiedCount = (clone $query)->where('overall_rating', '>=', 4)->count();
-        // No reviews means no score: never report an invented 100% or 5.0 (spec 0031 AC-14).
+        // No reviews means no score: never report an invented 100% or 5.0.
         $satisfactionPercentage = $totalReviews > 0 ? round(($satisfiedCount / $totalReviews) * 100, 1) : null;
 
         // Average rating per ticket, used by ticket-service for per employee and per department CSAT.

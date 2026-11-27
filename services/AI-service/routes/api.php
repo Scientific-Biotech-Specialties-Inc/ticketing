@@ -16,7 +16,7 @@ Route::middleware('auth:api')->get('/user', function (Request $request) {
 });
 
 // AI Chat & Support Triage Routes
-// Spec 0034: a verified token or a valid X-Internal-Token is required; nothing else reaches the controller.
+// A verified token or a valid X-Internal-Token is required; nothing else reaches the controller.
 Route::middleware('auth.token_or_internal')->group(function () {
     Route::post('/chat', [AiChatController::class, 'chat']);
     Route::post('/classify-department', [AiChatController::class, 'classifyDepartment']);
@@ -32,14 +32,14 @@ Route::middleware('auth.token_or_internal')->group(function () {
 
 // Knowledge Base Article & RAG Lifecycle Routes
 $registerKbRoutes = function () {
-    // Reads are unchanged by spec 0036 (restricting them to staff is a listed follow up).
+    // Reads are unchanged (restricting them to staff is a listed follow up).
     Route::get('/articles', [KbArticleController::class, 'index']);
     Route::get('/articles/categories', [KbArticleController::class, 'categories']);
     Route::get('/articles/template-csv', [KbArticleController::class, 'downloadTemplateCsv']);
     Route::get('/articles/{id}', [KbArticleController::class, 'show']);
     Route::get('/articles/{id}/file', [KbArticleController::class, 'downloadFile']);
 
-    // Spec 0036 (AC-11): every KB write needs a verified token or a valid X-Internal-Token.
+    // Every KB write needs a verified token or a valid X-Internal-Token.
     // The controller then requires the verified user to be a superadmin (403 otherwise).
     Route::middleware('auth.token_or_internal')->group(function () {
         Route::post('/articles/scan-file', [KbArticleController::class, 'scanFile']);

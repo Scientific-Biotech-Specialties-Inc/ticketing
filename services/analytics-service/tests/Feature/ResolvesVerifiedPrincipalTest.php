@@ -9,7 +9,7 @@ use Ticketing\Auth\Dto\AuthenticatedUserDto;
 use Tests\TestCase;
 
 /**
- * Spec 0034: the analytics copy of the helper that turns the verified user into an id, type and role,
+ * The analytics copy of the helper that turns the verified user into an id, type and role,
  * and finds the caller's token to pass on to other services.
  */
 class ResolvesVerifiedPrincipalTest extends TestCase

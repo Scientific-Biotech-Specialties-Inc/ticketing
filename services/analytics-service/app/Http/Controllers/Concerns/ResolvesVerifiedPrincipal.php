@@ -6,7 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 /**
- * Spec 0034: identity comes only from the verified user that AuthenticateSubsystem sets.
+ * Identity comes only from the verified user that AuthenticateSubsystem sets.
  *
  * Never read X-User-*, X-Client-Id headers, or body keys such as user_id / customer_id /
  * sender_id to decide who is calling. A principal is staff when the verified user has an

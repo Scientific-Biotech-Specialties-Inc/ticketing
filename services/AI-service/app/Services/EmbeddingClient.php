@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Spec 0036: the single place that turns text into embedding vectors.
+ * The single place that turns text into embedding vectors.
  *
  * Calls Gemini `batchEmbedContents` (up to 100 texts per request) with the API key in the
  * `x-goog-api-key` header. Any failure (no key, non 2xx, timeout, empty or wrong sized

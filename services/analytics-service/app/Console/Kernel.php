@@ -12,7 +12,7 @@ class Kernel extends ConsoleKernel
      */
     protected function schedule(Schedule $schedule): void
     {
-        // Spec 0050 AC-2: moved from ticket-service, name unchanged so forecast_job_runs.job_name history stays continuous.
+        // Moved from ticket-service, name unchanged so forecast_job_runs.job_name history stays continuous.
         // Precompute the longest horizon the UI offers (30 days) so both the 7 and 30 day views are served from fresh rows.
         // Run by the analytics-scheduler container (php artisan schedule:work).
         $schedule->command('tickets:calculate-forecasts', ['--horizon' => 30])->dailyAt('02:00')->onOneServer()->runInBackground();

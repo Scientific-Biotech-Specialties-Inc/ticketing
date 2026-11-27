@@ -10,7 +10,7 @@ use Illuminate\Support\Str;
 use Tests\TestCase;
 
 /**
- * Spec 0034 (AC-10, AC-13): AI chat routes take identity from the verified token, or from a valid
+ * AI chat routes take identity from the verified token, or from a valid
  * X-Internal-Token, and never from a user_id the caller supplies.
  */
 class ChatVerifiedIdentityTest extends TestCase

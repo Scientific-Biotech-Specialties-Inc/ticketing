@@ -8,7 +8,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
- * Predictive insights (spec 0050 slice 1, AC-3), moved from ticket-service's
+ * Predictive insights, moved from ticket-service's
  * AdminReportController::predictiveInsights with the same inputs, checks and JSON.
  */
 class PredictiveInsightsController extends Controller

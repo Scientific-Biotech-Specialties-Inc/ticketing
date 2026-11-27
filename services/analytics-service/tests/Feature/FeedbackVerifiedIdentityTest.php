@@ -11,7 +11,7 @@ use Tests\RefreshReportingDatabase;
 use Tests\TestCase;
 
 /**
- * Spec 0034 (AC-4 to AC-7, AC-13): feedback and stats routes take identity from the verified token only.
+ * Feedback and stats routes take identity from the verified token only.
  */
 class FeedbackVerifiedIdentityTest extends TestCase
 {
@@ -40,7 +40,7 @@ class FeedbackVerifiedIdentityTest extends TestCase
     {
         Http::fake([
             '*feedback-form/status*' => Http::response(['is_enabled' => true], 200),
-            // Spec 0038 AC-34: the real GET /tickets/{id}/ownership response shape (flat, not wrapped).
+            // The real GET /tickets/{id}/ownership response shape (flat, not wrapped).
             '*/api/tickets/*/ownership' => Http::response([
                 'ticket_ID' => 5001,
                 'ticket_number' => 'TKT-0001',

@@ -54,7 +54,7 @@ class AuthenticateSubsystem
             }
         }
 
-        // Spec 0044 (AC-13): traffic from the staff gateway (behind the central auth front door) never
+        // Traffic from the staff gateway (behind the central auth front door) never
         // authenticates with a customer (Passport) token. Enabled with TICKETING_EDGE_ENFORCE=true.
         if (config('services.edge.enforce') && strcasecmp((string) $request->header('X-Ticketing-Edge'), 'staff') === 0) {
             return response()->json(['message' => 'Unauthenticated.'], 401);

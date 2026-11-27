@@ -9,11 +9,11 @@ use Illuminate\Http\Request;
 use Ticketing\Reporting\BranchScope;
 
 /**
- * Synchronous ETL sync (spec 0050 slice 1, AC-4), moved from ticket-service's
+ * Synchronous ETL sync, moved from ticket-service's
  * TicketDashboardController::triggerEtl with the same role checks, branch rules, messages and response.
  *
  * It clears only analytics-service's report caches. The pages that call it reload their dashboards with
- * their own force refresh option afterwards (AC-5), so no call back to ticket-service is needed.
+ * their own force refresh option afterwards, so no call back to ticket-service is needed.
  */
 class EtlSyncController extends Controller
 {
@@ -61,7 +61,7 @@ class EtlSyncController extends Controller
             $recordsProcessed = (int) ($forecastResult['records_processed'] ?? 0);
         }
 
-        // Invalidate analytics report caches (ticket-service caches are refreshed by the callers, AC-5)
+        // Invalidate analytics report caches (ticket-service caches are refreshed by the callers)
         $cacheService->clearReportCaches();
 
         $durationMs = (int) round((microtime(true) - $startTime) * 1000);

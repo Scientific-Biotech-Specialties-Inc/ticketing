@@ -12,7 +12,7 @@ abstract class TestCase extends BaseTestCase
     use CreatesApplication;
 
     /**
-     * Spec 0036: tests never reach the real embedding API. Set this to a callable
+     * Tests never reach the real embedding API. Set this to a callable
      * (HttpRequest $request) => response to simulate failures; null means healthy fake vectors.
      *
      * @var callable|null
@@ -67,7 +67,7 @@ abstract class TestCase extends BaseTestCase
 
     /**
      * Deterministic, word based stand in for a real embedding. It lives only in the test suite:
-     * the application never produces or stores vectors like this (spec 0036, AC-1).
+     * the application never produces or stores vectors like this.
      */
     public static function fakeEmbedding(string $text, int $dims = 768): array
     {

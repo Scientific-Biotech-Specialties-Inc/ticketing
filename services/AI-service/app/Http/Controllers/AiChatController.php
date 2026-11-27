@@ -17,7 +17,7 @@ class AiChatController extends Controller
     }
 
     /**
-     * Spec 0034: identity comes only from the verified token, or from a valid X-Internal-Token
+     * Identity comes only from the verified token, or from a valid X-Internal-Token
      * (trusted microservice). Never from a user_id the caller supplies.
      */
     protected function getAuthenticatedUser(Request $request): ?object
@@ -76,8 +76,8 @@ class AiChatController extends Controller
     }
 
     /**
-     * A user_id named in the request is honoured only for a trusted internal call or a verified staff reader
-     * (the exceptions in spec 0034). A customer token can never use it to pick the owner.
+     * A user_id named in the request is honoured only for a trusted internal call or a verified staff reader.
+     * A customer token can never use it to pick the owner.
      */
     protected function internalCallerUserId(Request $request): ?string
     {
@@ -113,7 +113,7 @@ class AiChatController extends Controller
             'messages' => 'required|array',
             'conversation_id' => 'nullable|string',
             'user_id' => 'nullable|numeric', // used only on a trusted internal call
-            'selected_asset_id' => 'nullable|integer', // spec 0047: an item the customer tapped
+            'selected_asset_id' => 'nullable|integer', // an item the customer tapped
         ]);
 
         $auth = $this->getAuthenticatedUser($request);
@@ -137,7 +137,7 @@ class AiChatController extends Controller
             return $this->conversationNotFound();
         }
 
-        // Spec 0047 (AC-7): a customer's own items, read from ticket-service for the verified customer only.
+        // A customer's own items, read from ticket-service for the verified customer only.
         $assets = null;
         if (!$isInternal && $userId !== null && is_numeric($userId)) {
             $assets = app(\App\Services\CustomerAssetClient::class)->forCustomer((int) $userId);
@@ -153,7 +153,7 @@ class AiChatController extends Controller
             ], 422);
         }
 
-        // Spec 0047: the item may already be known (tapped, remembered, or named by the customer).
+        // The item may already be known (tapped, remembered, or named by the customer).
         // Tell Gemini so it does not ask the customer for their equipment or software again.
         $gate = app(\App\Services\AssetIntakeGate::class);
         $storedAssetId = $conversation && isset($conversation->asset_machine_id) ? (int) $conversation->asset_machine_id : null;
@@ -162,7 +162,7 @@ class AiChatController extends Controller
         // Call Gemini Service
         $result = $this->geminiService->generateResponse($incomingMessages, $convId, $assets ?? [], $knownAsset);
 
-        // Spec 0047 (AC-8 to AC-12): only offer a ticket once one owned item is identified.
+        // Only offer a ticket once one owned item is identified.
         $result = $gate->apply($result, $assets, $selectedAssetId, $storedAssetId, $incomingMessages);
 
         // Retrieve or initialize conversation record and persist
@@ -542,7 +542,7 @@ class AiChatController extends Controller
                 'category_confidence' => $catConf,
                 'machine' => $machine,
                 'machine_confidence' => $machConf,
-                // Spec 0047 (AC-11): the owned item the chat identified, so the form preselects it.
+                // The owned item the chat identified, so the form preselects it.
                 'machine_ID' => isset($escalationData['machine_ID']) ? (int) $escalationData['machine_ID']
                     : (isset($conversation->asset_machine_id) ? (int) $conversation->asset_machine_id : null),
                 'origin' => 'ai_chatbot',

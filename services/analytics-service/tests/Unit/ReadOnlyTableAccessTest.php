@@ -6,7 +6,7 @@ use PHPUnit\Framework\TestCase;
 use Tests\Support\ReadOnlyTableScanner;
 
 /**
- * Spec 0050 AC-15: analytics-service code never writes to a table it does not own. Read only access to
+ * Analytics-service code never writes to a table it does not own. Read only access to
  * ticket-service and employee-service tables is enforced here, not by database grants.
  */
 class ReadOnlyTableAccessTest extends TestCase

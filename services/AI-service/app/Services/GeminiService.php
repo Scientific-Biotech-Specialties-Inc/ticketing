@@ -19,7 +19,7 @@ class GeminiService
     {
         $this->apiKey = config('services.gemini.api_key') ?? env('GEMINI_API_KEY', '');
         $this->model = config('services.gemini.model') ?? env('GEMINI_MODEL', 'gemini-3.5-flash');
-        // Spec 0036 (AC-10): at most 15 seconds, then escalate to a manual ticket.
+        // At most 15 seconds, then escalate to a manual ticket.
         $this->timeout = max(1, min((int) config('services.gemini.timeout', 15), 15));
         $this->baseUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
         $this->ragService = $ragService ?? app(RagService::class);
@@ -34,7 +34,7 @@ class GeminiService
      * @return array {content: string, escalate: bool, ticket_data: array|null, rag_matched: bool, rag_sources: array}
      */
     /**
-     * @param array $assets the customer's own equipment and software (spec 0047), so Gemini can tell
+     * @param array $assets the customer's own equipment and software, so Gemini can tell
      *                      which item the problem is about. Empty for callers with no item list.
      * @param array|null $knownAsset the item already identified for this chat, so Gemini never asks for it again
      */
@@ -92,7 +92,7 @@ class GeminiService
         ];
 
         if (!empty($lastUserQuery) && !$isGreeting) {
-            // Spec 0036 (AC-8): threshold from KB_MIN_SCORE. If the query cannot be embedded we do not
+            // Threshold from KB_MIN_SCORE. If the query cannot be embedded we do not
             // fall back to any other vector space; the customer goes straight to the manual ticket path.
             try {
                 $ragResult = $this->ragService->retrieve($lastUserQuery, 5);
@@ -174,7 +174,7 @@ class GeminiService
                 $systemInstruction .= "INSTRUCTION: Directly cite or summarize the approved steps from the sources above to resolve the user's issue.";
             }
 
-            // Spec 0047 (AC-8, AC-9): the customer's own items, so the reply names which one the problem is about.
+            // The customer's own items, so the reply names which one the problem is about.
             if (!empty($assets)) {
                 $systemInstruction .= "\n\n=== CUSTOMER'S REGISTERED EQUIPMENT AND SOFTWARE (id: name, type) ===\n";
                 foreach ($assets as $asset) {
@@ -321,7 +321,7 @@ class GeminiService
 
             $escalate = ($parsed['escalate'] ?? false) === true;
 
-            // Spec 0047: which customer item the reply is about (checked against the list by AssetIntakeGate).
+            // Which customer item the reply is about (checked against the list by AssetIntakeGate).
             $assetHints = [
                 'asset_id' => isset($parsed['asset_id']) && is_numeric($parsed['asset_id']) ? (int) $parsed['asset_id'] : null,
                 'asset_candidates' => array_values(array_filter((array) ($parsed['asset_candidates'] ?? []), 'is_numeric')),
@@ -410,7 +410,7 @@ class GeminiService
             'reply' => $replyText,
             'escalate' => true,
             'is_fallback' => true,
-            // Spec 0047 (AC-12): AI unavailable; the manual form still requires an owned item.
+            // AI unavailable; the manual form still requires an owned item.
             'ai_unavailable' => true,
             'ticket_data' => [
                 'title' => $title,

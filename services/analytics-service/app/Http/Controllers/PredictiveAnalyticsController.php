@@ -22,7 +22,7 @@ class PredictiveAnalyticsController extends Controller
      */
     public function getPredictiveMetrics(Request $request)
     {
-        // Spec 0034: staff only, decided by the verified user (never by a header).
+        // Staff only, decided by the verified user (never by a header).
         $principal = $this->verifiedPrincipal($request);
         if (!$principal) {
             return response()->json(['status' => 'error', 'message' => 'Unauthenticated.'], 401);

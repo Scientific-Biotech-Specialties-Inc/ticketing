@@ -3,12 +3,12 @@
 namespace App\Services;
 
 /**
- * Spec 0047 (AC-8 to AC-12): the AI chat may only offer a ticket once one of the customer's own
+ * The AI chat may only offer a ticket once one of the customer's own
  * equipment or software items is identified.
  *
  * Works on the final chat result, whichever path produced it (Gemini, no Knowledge Base match,
  * the safety warning), so no path can offer a ticket without an item. The one exception is the
- * "AI unavailable" fallback (AC-12): it still sends the customer to the manual form, which
+ * "AI unavailable" fallback: it still sends the customer to the manual form, which
  * requires the item itself.
  */
 class AssetIntakeGate
@@ -33,7 +33,7 @@ class AssetIntakeGate
         $result['asset'] = null;
         $result['asset_options'] = [];
 
-        // AC-12: AI unavailable, or the item list could not be read. The manual form enforces the item.
+        // AI unavailable, or the item list could not be read. The manual form enforces the item.
         if (!empty($result['ai_unavailable']) || $assets === null) {
             $result['asset_status'] = self::UNAVAILABLE;
             return $result;
@@ -104,7 +104,7 @@ class AssetIntakeGate
         $result['asset_status'] = $status;
 
         // Ask for the item whenever a ticket was about to be offered, or the customer named an item
-        // that is not theirs (AC-9), even mid troubleshooting.
+        // that is not theirs, even mid troubleshooting.
         if (!empty($result['escalate']) || $status === self::NOT_OWNED || $status === self::AMBIGUOUS) {
             $result['escalate'] = false;
             $result['asset_options'] = $options;

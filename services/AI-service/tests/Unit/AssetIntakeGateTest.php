@@ -6,7 +6,7 @@ use App\Services\AssetIntakeGate;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Spec 0047 (AC-8 to AC-12): the AI chat offers a ticket only once one owned item is identified.
+ * The AI chat offers a ticket only once one owned item is identified.
  */
 class AssetIntakeGateTest extends TestCase
 {

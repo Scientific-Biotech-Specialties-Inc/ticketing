@@ -7,7 +7,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Foundation\Testing\RefreshDatabaseState;
 
 /**
- * RefreshDatabase for analytics-service on MySQL (spec 0050 AC-16).
+ * RefreshDatabase for analytics-service on MySQL.
  *
  * analytics reads tables other services own (tickets, employees, branches, ...) and its own migrations
  * reference some of them (foreign keys to branches and employees). So on the first test of a run the

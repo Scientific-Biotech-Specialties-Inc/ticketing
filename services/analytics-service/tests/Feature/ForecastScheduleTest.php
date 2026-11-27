@@ -6,7 +6,7 @@ use Illuminate\Console\Scheduling\Schedule;
 use Tests\TestCase;
 
 /**
- * Spec 0050 AC-2: analytics-service schedules the nightly forecast job, under its old name.
+ * Analytics-service schedules the nightly forecast job, under its old name.
  */
 class ForecastScheduleTest extends TestCase
 {

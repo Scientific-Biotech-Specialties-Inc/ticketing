@@ -7,7 +7,7 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration
 {
     /**
-     * Spec 0047: remember which of the customer's items a chat is about, so later turns
+     * Remember which of the customer's items a chat is about, so later turns
      * (and the ticket handoff) do not ask for it again. The id belongs to ticket-service,
      * so it is a plain column, not a foreign key.
      */

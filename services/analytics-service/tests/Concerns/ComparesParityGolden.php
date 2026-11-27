@@ -9,7 +9,7 @@ use Illuminate\Testing\TestResponse;
 use Ticketing\Auth\Dto\AuthenticatedUserDto;
 
 /**
- * Parity checks for endpoints moved from ticket-service (spec 0050 AC-16).
+ * Parity checks for endpoints moved from ticket-service.
  *
  * Use with Tests\RefreshReportingDatabase. Call loadParityFixture() in setUp, then compare each new
  * endpoint against the golden file ticket-service's ParityCaptureTest wrote from the old endpoint:

@@ -5,7 +5,7 @@ namespace Tests\Support;
 use Illuminate\Support\Str;
 
 /**
- * Finds code that writes to a table analytics-service does not own (spec 0050 AC-15).
+ * Finds code that writes to a table analytics-service does not own.
  *
  * Flags:
  *   (a) DB::table('<non owned>') ... ->insert / update / upsert / delete / truncate / increment / decrement

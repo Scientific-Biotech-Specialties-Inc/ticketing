@@ -127,7 +127,7 @@ class RagTroubleshootingAndAutoIndexingTest extends TestCase
             'status' => 'Published',
         ]);
 
-        // 1 and 2. Spec 0036: indexing happens inside the upload, edit or replace request, so the
+        // 1 and 2. Indexing happens inside the upload, edit or replace request, so the
         // ArticlePublished and ArticleUpdated listeners only refresh caches and never index again.
         event(new ArticlePublished($article, 'Super Admin'));
         event(new ArticleUpdated($article, 'Super Admin'));

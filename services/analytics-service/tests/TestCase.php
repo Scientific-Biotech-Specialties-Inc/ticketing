@@ -21,7 +21,7 @@ abstract class TestCase extends BaseTestCase
     }
 
     /**
-     * Spec 0050 AC-16: tests only ever run on an isolated database whose name ends in _test
+     * Tests only ever run on an isolated database whose name ends in _test
      * (analytics_service_test, created by scripts/create-test-databases.sh), never on ticketing_system.
      */
     protected function assertIsolatedTestDatabase(): void
