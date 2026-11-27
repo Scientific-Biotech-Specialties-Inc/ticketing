@@ -13,20 +13,25 @@ vi.mock('@/context/AuthContext', () => ({
   }),
 }));
 
-vi.mock('@/services/ticketService', () => ({
-  getInternalNotes: vi.fn(() => Promise.resolve([])),
-  getTicketFormOptions: vi.fn(() => Promise.resolve({ problem_categories: [], ticket_priorities: [] })),
-  sendTicketReminder: vi.fn(() => Promise.resolve({ success: true })),
-  addInternalNote: vi.fn(() => Promise.resolve({ success: true })),
-  holdTicket: vi.fn(() => Promise.resolve({ success: true })),
-  resumeTicket: vi.fn(() => Promise.resolve({ success: true })),
-  reclassifyTicket: vi.fn(() => Promise.resolve({ success: true })),
-  updateEmployeeTicketOverride: vi.fn(() => Promise.resolve({ success: true })),
-  getEligibleEmployees: vi.fn(() => Promise.resolve([])),
-  updateTicket: vi.fn(() => Promise.resolve({ success: true })),
-  acceptTicket: vi.fn(() => Promise.resolve({ success: true })),
-  respondReassignment: vi.fn(() => Promise.resolve({ success: true })),
-}));
+vi.mock('@/services/ticketService', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getInternalNotes: vi.fn(() => Promise.resolve([])),
+    getTicketFormOptions: vi.fn(() => Promise.resolve({ problem_categories: [], ticket_priorities: [] })),
+    sendTicketReminder: vi.fn(() => Promise.resolve({ success: true })),
+    addInternalNote: vi.fn(() => Promise.resolve({ success: true })),
+    holdTicket: vi.fn(() => Promise.resolve({ success: true })),
+    resumeTicket: vi.fn(() => Promise.resolve({ success: true })),
+    reclassifyTicket: vi.fn(() => Promise.resolve({ success: true })),
+    updateEmployeeTicketOverride: vi.fn(() => Promise.resolve({ success: true })),
+    getEligibleEmployees: vi.fn(() => Promise.resolve([])),
+    getAssignableEmployees: vi.fn(() => Promise.resolve([])),
+    updateTicket: vi.fn(() => Promise.resolve({ success: true })),
+    acceptTicket: vi.fn(() => Promise.resolve({ success: true })),
+    respondReassignment: vi.fn(() => Promise.resolve({ success: true })),
+  };
+});
 
 const mockChannel = {
   listen: vi.fn(() => mockChannel),
@@ -163,11 +168,10 @@ describe('Multi-Assignee Support and Dedicated Assignees Tab', () => {
     expect(within(panel).getByText('Diana Prince')).toBeInTheDocument();
     expect(within(panel).getByText('Compliance Officer')).toBeInTheDocument();
 
-    // When > 2 assignees: only ONE unified "Message Group Chat" button exists in header, no individual buttons beside names
-    const groupChatBtn = within(panel).getByRole('button', { name: /message group chat/i });
-    expect(groupChatBtn).toBeInTheDocument();
-    const allMessageBtns = within(panel).getAllByRole('button', { name: /message/i });
-    expect(allMessageBtns).toHaveLength(1); // Only the single group chat button!
+    // Per-assignee action is Remind; messaging is unified in the modal's footer "Message customer" button
+    const remindBtns = within(panel).getAllByRole('button', { name: /remind/i });
+    expect(remindBtns).toHaveLength(3);
+    expect(screen.getByRole('button', { name: /message customer/i })).toBeInTheDocument();
 
     // Manage assignees button triggers onEdit
     const manageBtn = screen.getByRole('button', { name: /manage assignees/i });
@@ -176,7 +180,7 @@ describe('Multi-Assignee Support and Dedicated Assignees Tab', () => {
     expect(handleEdit).toHaveBeenCalledTimes(1);
   });
 
-  it('renders unified Message Group Chat button when 2 or more employees are assigned', () => {
+  it('renders per-assignee Remind buttons and unified footer Message customer button when 2 or more employees are assigned', () => {
     const twoAssigneesTicket = {
       ...multiAssigneeTicket,
       assigned_employees: multiAssigneeTicket.assigned_employees.slice(0, 2),
@@ -196,6 +200,7 @@ describe('Multi-Assignee Support and Dedicated Assignees Tab', () => {
     fireEvent.click(assigneesTab);
 
     const panel = document.getElementById('panel-assignees');
-    expect(within(panel).getByRole('button', { name: /message group chat/i })).toBeInTheDocument();
+    expect(within(panel).getAllByRole('button', { name: /remind/i })).toHaveLength(2);
+    expect(screen.getByRole('button', { name: /message customer/i })).toBeInTheDocument();
   });
 });

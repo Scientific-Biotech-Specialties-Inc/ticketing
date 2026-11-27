@@ -100,8 +100,6 @@ class IndexKbArticleJob implements ShouldQueue
             case 'add':
             case 'update':
             default:
-                // Spec 0036: indexArticle() embeds first, then swaps the new set in one transaction
-                // (activating it when Published), and marks 'Indexing failed' on its own if embedding fails.
                 // It must not run inside an outer transaction, since it calls the embedding API.
                 $result = $ragService->indexArticle($article, $this->contentOverride);
                 Log::info("IndexKbArticleJob: Article #{$article->id} index {$result} [Status: {$article->status}].");

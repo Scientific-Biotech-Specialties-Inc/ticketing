@@ -11,7 +11,7 @@ export const formatProperTitleCase = (str) => {
     'a', 'an', 'the', 'and', 'but', 'or', 'for', 'nor', 'on', 'at', 'to', 'from', 'by', 'in', 'of', 'with'
   ]);
   const acronyms = new Set([
-    'ai', 'id', 'uv', 'pc', 'ram', 'cpu', 'usb', 'sla', 'xl', 'cs', 'it', 'api', 'db', 'sql'
+    'ai', 'id', 'uv', 'pc', 'ram', 'cpu', 'usb', 'sla', 'xl', 'cs', 'it', 'api', 'db', 'sql', 'lis'
   ]);
 
   const words = trimmed.split(/\s+/);
@@ -55,7 +55,7 @@ export const formatProperSentenceCase = (str) => {
   if (!trimmed) return '';
 
   const acronyms = new Set([
-    'ai', 'id', 'uv', 'pc', 'ram', 'cpu', 'usb', 'sla', 'xl', 'cs', 'it', 'api', 'db', 'sql'
+    'ai', 'id', 'uv', 'pc', 'ram', 'cpu', 'usb', 'sla', 'xl', 'cs', 'it', 'api', 'db', 'sql', 'lis'
   ]);
 
   const sentences = trimmed.split(/([.!?]\s+)/);

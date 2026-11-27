@@ -80,17 +80,20 @@ describe('Customer edit ticket save (spec 0043 AC-16)', () => {
     ticketService.updateTicket.mockResolvedValue({ ticket: { ...ticket7, title: 'Bedside Monitor - Hii' } });
   });
 
-  it('switching tabs does not throw', async () => {
+  it('filtering by status and switching tabs does not throw', async () => {
     render(
       <MemoryRouter>
         <MyTickets />
       </MemoryRouter>
     );
     await screen.findAllByText('Bedside Monitor - Hii');
-    const closedTab = screen.getAllByRole('button').find((b) => /^Closed/.test(b.textContent.trim()));
-    expect(closedTab).toBeTruthy();
-    await act(async () => { fireEvent.click(closedTab); });
+    const statusFilter = screen.getByRole('combobox', { name: /Filter by status/i });
+    expect(statusFilter).toBeTruthy();
+    await act(async () => { fireEvent.change(statusFilter, { target: { value: 'Closed' } }); });
     await waitFor(() => expect(screen.queryByText('Bedside Monitor - Hii')).toBeNull());
+
+    const draftsTab = screen.getByRole('button', { name: /My Drafts/i });
+    await act(async () => { fireEvent.click(draftsTab); });
   });
 
   it('Save Changes asks to confirm, then sends the PATCH', async () => {
@@ -105,18 +108,31 @@ describe('Customer edit ticket save (spec 0043 AC-16)', () => {
     expect(ticketService.updateTicket.mock.calls[0][0]).toMatchObject({ ticketId: 7, machine_ID: 2 });
   });
 
-  it('lets the customer pick a category; Software sends the category and no machine', async () => {
+  it('displays read-only derived category and updates category when choosing a software asset (spec 0047 AC-6)', async () => {
+    ticketService.getCachedTicketFormOptions.mockReturnValue({
+      ...options,
+      assets: [
+        { machine_ID: 2, machine_name: 'Bedside Monitor', serial_number: 'MON-500-A11', asset_type: 'equipment' },
+        { machine_ID: 9, machine_name: 'LIS Portal', serial_number: 'SW-100', asset_type: 'software' },
+      ],
+      machines: [
+        { machine_ID: 2, machine_name: 'Bedside Monitor', serial_number: 'MON-500-A11' },
+        { machine_ID: 9, machine_name: 'LIS Portal', serial_number: 'SW-100' },
+      ],
+    });
     await openEditDialog();
 
-    const select = await screen.findByTestId('edit-category');
-    await waitFor(() => expect(select).not.toBeDisabled());
-    await act(async () => { fireEvent.change(select, { target: { value: '1' } }); });
-    expect(screen.queryByLabelText(/Equipment/)).toBeNull();
+    const derivedCategory = await screen.findByTestId('edit-derived-category');
+    expect(derivedCategory).toBeInTheDocument();
+
+    const equipmentSelect = screen.getByDisplayValue('Bedside Monitor - MON-500-A11');
+    await act(async () => { fireEvent.change(equipmentSelect, { target: { value: '9' } }); });
+    expect(derivedCategory).toHaveTextContent('Software');
 
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save Changes' })); });
     await act(async () => { fireEvent.click(await screen.findByRole('button', { name: 'Update Ticket' })); });
 
     await waitFor(() => expect(ticketService.updateTicket).toHaveBeenCalled());
-    expect(ticketService.updateTicket.mock.calls[0][0]).toMatchObject({ ticketId: 7, problem_category_ID: 1, machine_ID: null });
+    expect(ticketService.updateTicket.mock.calls[0][0]).toMatchObject({ ticketId: 7, machine_ID: '9' });
   });
 });

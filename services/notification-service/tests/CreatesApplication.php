@@ -16,6 +16,15 @@ trait CreatesApplication
 
         $app->make(Kernel::class)->bootstrap();
 
+        $connection = $app['config']->get('database.default');
+        $database = $app['config']->get("database.connections.{$connection}.database");
+        if ($connection !== 'sqlite' || $database !== ':memory:') {
+            throw new \RuntimeException(
+                "Refusing to run tests against database [{$connection}:{$database}]. "
+                . 'Expected in-memory SQLite. Run `php artisan config:clear` and check phpunit.xml.'
+            );
+        }
+
         return $app;
     }
 }

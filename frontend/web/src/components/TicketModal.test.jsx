@@ -60,16 +60,15 @@ describe('TicketModal title casing prompt (covers: AC-7)', () => {
     expect(screen.queryByText('Proper Casing Applied')).not.toBeInTheDocument();
   });
 
-  it('shows the casing prompt only after Submit when the title needs casing', async () => {
+  it('automatically applies proper casing on Submit when the title needs casing', async () => {
     const { onSubmit } = renderModal();
     await fillBasics();
     choose('machine_ID', 7);
 
-    expect(screen.queryByText('Proper Casing Applied')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Submit Ticket' }));
 
-    expect(await screen.findByText('Proper Casing Applied')).toBeInTheDocument();
-    expect(onSubmit).not.toHaveBeenCalled();
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].title).toBe('Printer Not Working');
   });
 
   it('submits straight away when the title is already in proper casing', async () => {

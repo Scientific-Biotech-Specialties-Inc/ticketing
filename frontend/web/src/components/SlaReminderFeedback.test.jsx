@@ -27,33 +27,38 @@ vi.mock('react-router-dom', () => ({
 }));
 
 // Mock ticketService
-vi.mock('@/services/ticketService', () => ({
-  sendTicketReminder: vi.fn(() => Promise.resolve({ success: true })),
-  getTicketFormOptions: vi.fn(() => Promise.resolve({
-    problem_categories: [
-      { id: 1, problem_category_ID: 1, category_name: 'Electrical' },
-      { id: 2, problem_category_ID: 2, category_name: 'Software' },
-    ],
-    ticket_priorities: [
-      { id: 1, priority_ID: 1, priority_name: 'Low' },
-      { id: 2, priority_ID: 2, priority_name: 'Medium' },
-      { id: 3, priority_ID: 3, priority_name: 'High' },
-      { id: 4, priority_ID: 4, priority_name: 'Critical' },
-    ],
-  })),
-  getInternalNotes: vi.fn(() => Promise.resolve([])),
-  addInternalNote: vi.fn(() => Promise.resolve({})),
-  holdTicket: vi.fn(() => Promise.resolve({})),
-  resumeTicket: vi.fn(() => Promise.resolve({})),
-  reclassifyTicket: vi.fn(() => Promise.resolve({
-    data: {
-      ticket: {
-        due_at: '2026-10-28T18:00:00Z',
-        sla_status: 'On Track',
+vi.mock('@/services/ticketService', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getAssignableEmployees: vi.fn(() => Promise.resolve([])),
+    sendTicketReminder: vi.fn(() => Promise.resolve({ success: true })),
+    getTicketFormOptions: vi.fn(() => Promise.resolve({
+      problem_categories: [
+        { id: 1, problem_category_ID: 1, category_name: 'Electrical' },
+        { id: 2, problem_category_ID: 2, category_name: 'Software' },
+      ],
+      ticket_priorities: [
+        { id: 1, priority_ID: 1, priority_name: 'Low' },
+        { id: 2, priority_ID: 2, priority_name: 'Medium' },
+        { id: 3, priority_ID: 3, priority_name: 'High' },
+        { id: 4, priority_ID: 4, priority_name: 'Critical' },
+      ],
+    })),
+    getInternalNotes: vi.fn(() => Promise.resolve([])),
+    addInternalNote: vi.fn(() => Promise.resolve({})),
+    holdTicket: vi.fn(() => Promise.resolve({})),
+    resumeTicket: vi.fn(() => Promise.resolve({})),
+    reclassifyTicket: vi.fn(() => Promise.resolve({
+      data: {
+        ticket: {
+          due_at: '2026-10-28T18:00:00Z',
+          sla_status: 'On Track',
+        },
       },
-    },
-  })),
-}));
+    })),
+  };
+});
 
 // Mock mockFeedbackData
 vi.mock('@/data/mockFeedbackData', () => ({

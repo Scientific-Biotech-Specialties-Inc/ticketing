@@ -10,6 +10,8 @@ import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import useMaxFileCount from '@/hooks/useMaxFileCount';
 
 function BoundedSelect({
+  name,
+  required = false,
   value,
   onChange,
   onBlur,
@@ -44,6 +46,28 @@ function BoundedSelect({
 
   return (
     <div ref={containerRef} className="relative w-full min-w-0">
+      {name && (
+        <select
+          name={name}
+          required={required}
+          disabled={disabled}
+          value={value ?? ''}
+          onChange={(e) => {
+            onChange(e.target.value);
+            onBlur?.();
+          }}
+          tabIndex={-1}
+          aria-hidden="true"
+          className="sr-only pointer-events-none"
+        >
+          <option value="">{placeholder}</option>
+          {options.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      )}
       <button
         type="button"
         disabled={disabled}
@@ -625,6 +649,8 @@ export default function TicketModal({
             <div className="min-w-0">
               <label className="mb-2 block text-sm font-medium text-gray-700">Category</label>
               <BoundedSelect
+                name="problem_category_ID"
+                required
                 value={formData.problem_category_ID}
                 onChange={(val) => setFormData((prev) => ({ ...prev, problem_category_ID: val }))}
                 onBlur={() => touch('category')}
@@ -661,6 +687,8 @@ export default function TicketModal({
               />
               ) : (
               <BoundedSelect
+                name="machine_ID"
+                required={!isItDepartment}
                 value={formData.machine_ID}
                 onChange={(val) => setFormData((prev) => ({ ...prev, machine_ID: val }))}
                 onBlur={() => touch('equipment')}

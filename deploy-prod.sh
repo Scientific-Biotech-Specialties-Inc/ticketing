@@ -30,15 +30,14 @@ done
 # 4. Run Laravel migrations across all microservices
 echo "=> Executing database migrations..."
 MIGRATION_SERVICES=(
+    "employee-service-prod"
     "customer-service-prod"
     "ticket-service-prod"
-    "employee-service-prod"
-    "configuration-service-prod"
     "attachment-service-prod"
+    "configuration-service-prod"
     "notification-service-prod"
     "analytics-service-prod"
     "ai-service-prod"
-    "messaging-service-prod"
 )
 
 for SERVICE in "${MIGRATION_SERVICES[@]}"; do

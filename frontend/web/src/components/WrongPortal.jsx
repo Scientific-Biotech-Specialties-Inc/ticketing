@@ -17,7 +17,12 @@ export default function WrongPortal({ portalType }) {
   const isCustomerPortal = portalType ? portalType === 'customer' : isCustomerSite;
 
   const title = isCustomerPortal ? 'Wrong Portal' : 'Access Denied';
-  const description = isCustomerPortal ? (
+  const description = isCustomerSite ? (
+    <>
+      This account can&apos;t be used here.<br />
+      This portal is for <strong>customers only</strong>.
+    </>
+  ) : isCustomerPortal ? (
     <>
       This portal is for <strong>customers only</strong>.<br />
       Employees and Customer Service agents must log in through the main company portal.
@@ -55,12 +60,12 @@ export default function WrongPortal({ portalType }) {
   const isStaffUrlOnCustomerSite = isCustomerSite && !isCustomerPortal;
   const customerDashboardUrl = `${(import.meta.env.BASE_URL || '/').replace(/\/$/, '')}/customer-dashboard`;
 
-  const ctaLabel = isCustomerPortal
-    ? 'Go to Employee Portal'
-    : (isStaffUrlOnCustomerSite ? 'Back to My Dashboard' : 'Go to Customer Portal');
-  const ctaHref = isCustomerPortal
-    ? employeePortalUrl
-    : (isStaffUrlOnCustomerSite ? customerDashboardUrl : customerPortalUrl);
+  const ctaLabel = isCustomerSite
+    ? (isStaffUrlOnCustomerSite ? 'Back to My Dashboard' : null)
+    : (isCustomerPortal ? 'Go to Employee Portal' : 'Go to Customer Portal');
+  const ctaHref = isCustomerSite
+    ? (isStaffUrlOnCustomerSite ? customerDashboardUrl : null)
+    : (isCustomerPortal ? employeePortalUrl : customerPortalUrl);
 
   const handleLogout = async () => {
     try {
@@ -69,7 +74,7 @@ export default function WrongPortal({ portalType }) {
       // Background logout cleanup failed silently
     }
     if (typeof window !== 'undefined') {
-      const destination = isCustomerPortal ? employeePortalUrl : customerPortalUrl;
+      const destination = isCustomerSite ? '/' : (isCustomerPortal ? employeePortalUrl : customerPortalUrl);
       window.location.replace(destination);
     }
   };
@@ -81,12 +86,14 @@ export default function WrongPortal({ portalType }) {
         <h1 className="text-2xl font-bold text-gray-800 mb-2">{title}</h1>
         <p className="text-gray-500 mb-6 leading-relaxed">{description}</p>
         <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-          <a
-            href={ctaHref}
-            className="inline-block px-6 py-3 bg-[#252578] text-white rounded-lg font-medium hover:bg-[#1a1a5e] transition-colors"
-          >
-            {ctaLabel}
-          </a>
+          {ctaLabel && ctaHref && (
+            <a
+              href={ctaHref}
+              className="inline-block px-6 py-3 bg-[#252578] text-white rounded-lg font-medium hover:bg-[#1a1a5e] transition-colors"
+            >
+              {ctaLabel}
+            </a>
+          )}
           <button
             type="button"
             onClick={handleLogout}

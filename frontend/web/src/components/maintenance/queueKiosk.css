@@ -1,0 +1,235 @@
+/*
+ * Queue kiosk maintenance illustration.
+ * Colors come from the ONE UI tokens in src/index.css (SBSI navy #252578,
+ * Brand Deep #3A3A85, Avatar #A7A7C8, Warning #F59E0B). Font is the app's Poppins;
+ * the flip board and ticket numbers use a monospace stack so letters line up.
+ */
+
+.qk-kiosk {
+  width: min(320px, 100%);
+  background: linear-gradient(180deg, var(--color-brand-deep) 0%, var(--color-primary) 45%);
+  border-radius: 24px;
+  padding: 16px;
+  box-shadow: 0 24px 48px -16px rgba(37, 37, 120, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  position: relative;
+  z-index: 2;
+}
+
+.qk-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 8px 8px;
+  color: var(--color-avatar-circle);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.qk-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-warning);
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.qk-led {
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--color-warning);
+  box-shadow: 0 0 8px var(--color-warning);
+  animation: qk-blink 1.4s steps(2, jump-none) infinite;
+}
+
+.qk-board {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 4px;
+  padding: 8px;
+  border-radius: 12px;
+  background: #12123f;
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+  perspective: 400px;
+}
+
+.qk-flap {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 2 / 3;
+  border-radius: 4px;
+  background: linear-gradient(180deg, #1e1e5c 0 50%, #18184e 50% 100%);
+  color: #f8f9fa;
+  font: 600 clamp(11px, 3.2vw, 16px) / 1 ui-monospace, 'Cascadia Code', Consolas, monospace;
+  backface-visibility: hidden;
+}
+
+.qk-flap::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.qk-meta {
+  display: flex;
+  justify-content: space-between;
+  padding: 16px 8px 0;
+  color: var(--color-avatar-circle);
+  font-size: 11px;
+}
+
+.qk-meta b {
+  color: #f8f9fa;
+  font-weight: 600;
+}
+
+.qk-slot {
+  width: 76%;
+  height: 8px;
+  margin: 16px auto 0;
+  border-radius: 9999px;
+  background: #08082a;
+  box-shadow: inset 0 2px 3px rgba(0, 0, 0, 0.7);
+}
+
+.qk-ticket-wrap {
+  position: relative;
+  z-index: 1;
+  width: min(232px, 72%);
+  height: 176px;
+  margin-top: -12px;
+  padding: 0 8px;
+  overflow: hidden;
+  filter: drop-shadow(0 8px 10px rgba(37, 37, 120, 0.16));
+}
+
+.qk-ticket {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 24px;
+  color: var(--color-dark-slate);
+  background:
+    radial-gradient(circle at 0 62%, #0000 8px, #ffffff 8.5px) left / 51% 100% no-repeat,
+    radial-gradient(circle at 100% 62%, #0000 8px, #ffffff 8.5px) right / 51% 100% no-repeat;
+  -webkit-mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / 16px 100%;
+  mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / 16px 100%;
+  animation: qk-print 6s infinite;
+}
+
+.qk-ticket-eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-eyebrow);
+}
+
+.qk-ticket-number {
+  font: 600 22px / 1 ui-monospace, 'Cascadia Code', Consolas, monospace;
+  color: var(--color-primary);
+}
+
+.qk-ticket-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--color-eyebrow);
+}
+
+.qk-ticket-row b {
+  color: var(--color-dark-slate);
+  font-weight: 600;
+}
+
+.qk-perf {
+  margin: 4px 0;
+  border-top: 2px dashed var(--color-gray-150);
+}
+
+.qk-barcode {
+  height: 24px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--color-dark-slate) 0 2px, #0000 2px 4px,
+    var(--color-dark-slate) 4px 5px, #0000 5px 8px,
+    var(--color-dark-slate) 8px 11px, #0000 11px 12px,
+    var(--color-dark-slate) 12px 13px, #0000 13px 16px
+  );
+}
+
+.qk-autocheck-ring {
+  transform: rotate(-90deg);
+}
+
+.qk-autocheck-fill {
+  transition: stroke-dashoffset 1s linear;
+}
+
+.qk-pulse {
+  position: relative;
+}
+
+.qk-pulse::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: qk-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@keyframes qk-blink {
+  50% { opacity: 0.25; box-shadow: none; }
+}
+
+@keyframes qk-ping {
+  75%, 100% { transform: scale(2.4); opacity: 0; }
+}
+
+/* Feeds out in printer steps, holds, tears off, then reprints. */
+@keyframes qk-print {
+  0% { transform: translateY(-104%); opacity: 1; animation-timing-function: steps(14, end); }
+  28% { transform: translateY(0); opacity: 1; }
+  72% { transform: translateY(0) rotate(0); opacity: 1; animation-timing-function: cubic-bezier(0.5, 0, 0.8, 0.4); }
+  86% { transform: translateY(24px) rotate(5deg); opacity: 0; }
+  86.1%, 100% { transform: translateY(-104%); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qk-led,
+  .qk-pulse::after {
+    animation: none;
+  }
+
+  .qk-ticket {
+    animation: none;
+    transform: none;
+    opacity: 1;
+  }
+
+  .qk-autocheck-fill {
+    transition: none;
+  }
+}
+
+/* Maintenance page: draw the whole kiosk larger. zoom (unlike transform) also grows its layout box,
+   so the text below moves down with it. Smaller on short or narrow screens so the page never scrolls. */
+.qk-scale {
+  zoom: 1.3;
+}
+@media (max-height: 820px), (max-width: 640px) {
+  .qk-scale {
+    zoom: 1.1;
+  }
+}

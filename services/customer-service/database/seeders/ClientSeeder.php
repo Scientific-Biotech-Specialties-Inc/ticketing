@@ -24,12 +24,6 @@ class ClientSeeder extends Seeder
                 'contact_number' => '09123456781',
                 'email' => 'customer@gmail.com',
             ],
-            [
-                'client_name' => 'Slosinada User',
-                'address' => 'QC',
-                'contact_number' => '09123456782',
-                'email' => 'slosinada@gmail.com',
-            ],
         ];
 
         foreach ($customers as $customerData) {

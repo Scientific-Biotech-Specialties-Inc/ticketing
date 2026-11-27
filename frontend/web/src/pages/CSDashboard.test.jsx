@@ -6,13 +6,17 @@ import CSDashboard from './CSDashboard';
 import * as ticketService from '@/services/ticketService';
 import { useAuth } from '@/context/AuthContext';
 
-vi.mock('@/services/ticketService', () => ({
-  getCSDashboardSummary: vi.fn(),
-  getTicketDetails: vi.fn(),
-  getAssignableEmployees: vi.fn(),
-  getDepartments: vi.fn(),
-  acceptTicket: vi.fn(),
-}));
+vi.mock('@/services/ticketService', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    getCSDashboardSummary: vi.fn(),
+    getTicketDetails: vi.fn(),
+    getAssignableEmployees: vi.fn(),
+    getDepartments: vi.fn(),
+    acceptTicket: vi.fn(),
+  };
+});
 
 vi.mock('@/context/AuthContext', () => ({
   useAuth: vi.fn(),

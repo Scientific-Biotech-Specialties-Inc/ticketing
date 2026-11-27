@@ -22,6 +22,7 @@ import { statusColors, priorityColors } from '@/constants/employeeTickets';
 import { useAuth } from '@/context/AuthContext';
 import useRealtimeRefresh from '@/hooks/useRealtimeRefresh';
 import { normalizeCasing } from '@/utils/normalizeCasing';
+import { formatProperTitleCase, needsProperCasing } from '@/utils/titleCaseUtils';
 import { formatDisplayDate } from '@/utils/dateUtils';
 import {
   createTicket,

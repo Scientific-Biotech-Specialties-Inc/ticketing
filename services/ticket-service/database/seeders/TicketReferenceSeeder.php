@@ -68,9 +68,8 @@ class TicketReferenceSeeder extends Seeder
             );
         }
 
-        DB::table('clients')->upsert([
+        $clientRecords = [
             [
-                'id' => 1,
                 'client_name' => 'SBSI Demo Customer',
                 'address' => 'Quezon City',
                 'contact_number' => '09123456789',
@@ -80,16 +79,22 @@ class TicketReferenceSeeder extends Seeder
                 'updated_at' => $now,
             ],
             [
-                'id' => 2,
-                'client_name' => 'Bernadette',
-                'address' => 'Manila',
-                'contact_number' => '09999999999',
-                'email' => 'slosinada@gmail.com',
+                'client_name' => 'Customer One',
+                'address' => 'Quezon City',
+                'contact_number' => '09123456781',
+                'email' => 'customer@gmail.com',
                 'status' => true,
                 'created_at' => $now,
                 'updated_at' => $now,
             ],
-        ], ['id'], ['client_name', 'address', 'contact_number', 'email', 'status', 'updated_at']);
+        ];
+
+        foreach ($clientRecords as $clientRecord) {
+            DB::table('clients')->updateOrInsert(
+                ['email' => $clientRecord['email']],
+                $clientRecord
+            );
+        }
 
         DB::table('machine_categories')->upsert([
             [

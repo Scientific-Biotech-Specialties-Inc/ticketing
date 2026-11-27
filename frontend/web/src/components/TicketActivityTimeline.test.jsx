@@ -37,7 +37,7 @@ describe('TicketActivityTimeline (spec 0028 AC-16 to AC-19)', () => {
     render(<TicketActivityTimeline ticket={{ id: 'TKTS-00015', ticket_ID: 6 }} pageSize={5} />);
 
     await screen.findByText('Status changed from Open to In Progress');
-    expect(ticketService.getTicketTimeline).toHaveBeenCalledWith(6, { page: 1, per_page: 5, order: 'asc' });
+    expect(ticketService.getTicketTimeline).toHaveBeenCalledWith(6, { page: 1, per_page: 5, order: 'desc' });
   });
 
   it('shows the actor and role from the server and the before and after values', async () => {
@@ -90,7 +90,7 @@ describe('TicketActivityTimeline (spec 0028 AC-16 to AC-19)', () => {
     fireEvent.click(screen.getByRole('button', { name: /Load More Activities/i }));
 
     await screen.findByText('Priority changed from Low to High');
-    expect(ticketService.getTicketTimeline).toHaveBeenLastCalledWith(7, { page: 2, per_page: 1, order: 'asc' });
+    expect(ticketService.getTicketTimeline).toHaveBeenLastCalledWith(7, { page: 2, per_page: 1, order: 'desc' });
     expect(screen.queryByRole('button', { name: /Load More Activities/i })).not.toBeInTheDocument();
   });
 
@@ -122,10 +122,10 @@ describe('TicketActivityTimeline (spec 0028 AC-16 to AC-19)', () => {
     render(<TicketActivityTimeline ticket={{ ticket_ID: 7 }} pageSize={4} />);
     await screen.findByText('Ava Santos');
 
-    fireEvent.click(screen.getByRole('button', { name: /Oldest First/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Newest First/i }));
 
     await waitFor(() =>
-      expect(ticketService.getTicketTimeline).toHaveBeenLastCalledWith(7, { page: 1, per_page: 4, order: 'desc' })
+      expect(ticketService.getTicketTimeline).toHaveBeenLastCalledWith(7, { page: 1, per_page: 4, order: 'asc' })
     );
   });
 });

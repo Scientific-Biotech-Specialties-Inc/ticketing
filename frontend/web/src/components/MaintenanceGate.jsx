@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Wrench, RefreshCw, LogOut, ShieldAlert, Clock, CheckCircle2 } from 'lucide-react';
+import { RefreshCw, LogOut, Loader2, CheckCircle2, CirclePause } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { getSystemStatus } from '@/services/configurationService';
 import echo from '@/services/echo';
+import QueueKiosk from '@/components/maintenance/QueueKiosk';
+
+/** Seconds between background status polls (also drives the countdown ring). */
+const POLL_SECONDS = 20;
 
 /**
  * MaintenanceGate
@@ -93,7 +97,7 @@ export default function MaintenanceGate({ children }) {
     // Polling fallback every 20 seconds to keep clients synchronized
     const interval = setInterval(() => {
       checkStatus(false);
-    }, 20000);
+    }, POLL_SECONDS * 1000);
 
     return () => {
       clearInterval(interval);
@@ -116,93 +120,124 @@ export default function MaintenanceGate({ children }) {
     return <>{children}</>;
   }
 
-  // System is Under Maintenance: display modern, friendly maintenance message
+  // System is Under Maintenance: queue kiosk illustration with the message stacked below it (no card)
   return (
-    <div className="w-full py-8 px-4 flex items-center justify-center min-h-[70vh]">
-      <div className="max-w-xl w-full bg-white rounded-3xl shadow-xl border border-amber-200/80 p-8 sm:p-10 text-center relative overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-        {/* Subtle decorative gradient top bar */}
-        <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600" />
-
-        {/* Ambient glow */}
-        <div className="absolute -top-16 -right-16 w-36 h-36 bg-amber-100 rounded-full blur-3xl opacity-60 pointer-events-none" />
-        <div className="absolute -bottom-16 -left-16 w-36 h-36 bg-blue-100 rounded-full blur-3xl opacity-60 pointer-events-none" />
-
-        {/* Icon */}
-        <div className="relative mx-auto w-20 h-20 rounded-3xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shadow-sm mb-6">
-          <Wrench className="w-10 h-10 animate-pulse text-amber-600" />
-          <span className="absolute -top-1 -right-1 flex h-4 w-4">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-4 w-4 bg-amber-500" />
-          </span>
+    <div className="w-full py-4 px-4 flex items-center justify-center">
+      <div className="max-w-3xl w-full flex flex-col items-center gap-6 animate-fadeSlideIn">
+        {/* Illustration, scaled up as a whole so its fixed inner sizes keep their proportions */}
+        <div className="qk-scale">
+          <QueueKiosk />
         </div>
 
-        {/* Status Pill */}
-        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider bg-amber-100 text-amber-800 border border-amber-200 mb-4">
-          <Clock size={13} className="text-amber-700" />
-          System Maintenance Active
-        </div>
-
-        {/* Heading */}
-        <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-900 tracking-tight">
-          Sorry, the system is under maintenance
-        </h2>
-
-        {/* Subtitle */}
-        <p className="text-sm text-gray-600 mt-3 leading-relaxed max-w-md mx-auto">
-          Our team is currently performing scheduled platform maintenance and upgrades. Customer and employee operations are temporarily paused while improvements are finalized.
-        </p>
-
-        {/* Key Info Points */}
-        <div className="mt-6 bg-amber-50/60 rounded-2xl border border-amber-200/60 p-4 text-left space-y-2.5 text-xs text-gray-700">
-          <div className="flex items-start gap-2.5">
-            <CheckCircle2 size={15} className="text-emerald-600 mt-0.5 shrink-0" />
-            <span>All tickets, messages, and drafts remain safe and preserved in our database.</span>
+        {/* Message */}
+        <div className="flex flex-col items-center gap-4 text-center">
+          <div>
+            <span className="inline-flex items-center gap-2 px-2 py-1 rounded-full text-xs font-semibold bg-warning-bg text-warning-hover border border-warning-border">
+              <span className="qk-pulse w-2 h-2 rounded-full bg-current" />
+              Under Maintenance
+            </span>
           </div>
-          <div className="flex items-start gap-2.5">
-            <ShieldAlert size={15} className="text-amber-600 mt-0.5 shrink-0" />
-            <span>Ticket submission and assignments will automatically resume once maintenance ends.</span>
-          </div>
-        </div>
 
-        {/* Real-time status feedback note */}
-        {checkNotice && (
-          <div className="mt-4 text-xs font-semibold px-3 py-2 rounded-xl bg-gray-100 text-gray-700 border border-gray-200 transition-all">
-            {checkNotice}
-          </div>
-        )}
+          <h2 className="text-2xl sm:text-4xl font-bold text-primary tracking-tight">
+            The service desk is paused for upgrades
+          </h2>
 
-        {/* Action Buttons */}
-        <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
-          <button
-            type="button"
-            onClick={() => checkStatus(true)}
-            disabled={checking}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-[#252578] hover:bg-[#1a1a5e] text-white px-5 py-2.5 text-xs font-bold transition-all shadow-md hover:shadow-lg disabled:opacity-60 cursor-pointer"
-          >
-            <RefreshCw size={14} className={checking ? 'animate-spin' : ''} />
-            {checking ? 'Checking Status…' : 'Check Status Again'}
-          </button>
-
-          <button
-            type="button"
-            onClick={async () => {
-              const isCust = user?.role === 'customer' || import.meta.env.VITE_APP_MODE === 'customer';
-              await logout();
-              window.location.replace(isCust ? '/customer' : '/');
-            }}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 px-5 py-2.5 text-xs font-bold transition-all shadow-xs cursor-pointer"
-          >
-            <LogOut size={14} className="text-gray-500" />
-            Sign Out
-          </button>
-        </div>
-
-        {lastChecked && (
-          <p className="mt-4 text-[11px] text-gray-400">
-            Last checked: {lastChecked} &bull; Auto-syncing
+          <p className="text-sm sm:text-base text-muted-slate leading-relaxed max-w-2xl">
+            You can&apos;t submit or assign tickets until scheduled maintenance is finished. This page checks on its
+            own and lets you back in as soon as the desk reopens.
           </p>
-        )}
+
+          <div className="flex flex-wrap justify-center gap-x-6 gap-y-2 text-xs text-dark-slate">
+            <div className="flex items-start gap-2">
+              <CheckCircle2 size={16} className="text-success mt-0.5 shrink-0" />
+              <span>Your tickets, messages and drafts are saved.</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <CirclePause size={16} className="text-accent mt-0.5 shrink-0" />
+              <span>New tickets and assignments resume automatically when maintenance ends.</span>
+            </div>
+          </div>
+
+          {checkNotice && (
+            <div
+              role="status"
+              className="text-xs font-semibold px-4 py-2 rounded-xl bg-brand-bg text-primary border border-gray-150 animate-fade-slide-in"
+            >
+              {checkNotice}
+            </div>
+          )}
+
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => checkStatus(true)}
+              disabled={checking}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-primary hover:bg-primary-hover active:bg-primary-pressed text-white px-6 py-2 min-h-10 text-xs font-semibold transition-colors shadow-md disabled:opacity-70 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            >
+              {checking ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+              {checking ? 'Checking status…' : 'Check status'}
+            </button>
+
+            <button
+              type="button"
+              onClick={async () => {
+                const isCust = user?.role === 'customer' || import.meta.env.VITE_APP_MODE === 'customer';
+                await logout();
+                window.location.replace(isCust ? '/customer' : '/');
+              }}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl border border-gray-150 bg-white hover:border-accent text-dark-slate px-6 py-2 min-h-10 text-xs font-semibold transition-colors cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            >
+              <LogOut size={16} className="text-muted-slate" />
+              Sign out
+            </button>
+          </div>
+
+          <AutoCheckCountdown resetKey={lastChecked} />
+        </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Small ring that counts down to the next automatic status poll. Lives in its
+ * own component so the per-second tick never re-renders the gated app tree.
+ * `resetKey` changes whenever a poll completes, restarting the countdown.
+ */
+function AutoCheckCountdown({ resetKey }) {
+  const [secondsLeft, setSecondsLeft] = useState(POLL_SECONDS);
+
+  useEffect(() => {
+    setSecondsLeft(POLL_SECONDS);
+    const tick = setInterval(() => {
+      setSecondsLeft((s) => (s <= 1 ? POLL_SECONDS : s - 1));
+    }, 1000);
+    return () => clearInterval(tick);
+  }, [resetKey]);
+
+  const circumference = 2 * Math.PI * 9;
+  const offset = circumference * (1 - secondsLeft / POLL_SECONDS);
+
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted-slate tabular-nums">
+      <svg width="24" height="24" viewBox="0 0 24 24" className="qk-autocheck-ring" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" fill="none" strokeWidth="3" className="stroke-gray-150" />
+        <circle
+          cx="12"
+          cy="12"
+          r="9"
+          fill="none"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          className="stroke-accent qk-autocheck-fill"
+        />
+      </svg>
+      <span>
+        Next automatic check in <b className="text-dark-slate font-semibold">{secondsLeft}s</b>
+        {resetKey && <span className="text-th-header"> · Last checked {resetKey}</span>}
+      </span>
     </div>
   );
 }

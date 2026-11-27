@@ -45,9 +45,9 @@ describe('xlsx writer (spec 0029 AC-16)', () => {
   it('keeps real numbers numeric and ids as text', () => {
     const sheet = open(sample())['xl/worksheets/sheet1.xml'];
 
-    expect(sheet).toContain('t="n"><v>12</v>'); // number stays a number
-    expect(sheet).toContain('t="n"><v>8</v>'); // numeric looking string becomes a number
-    expect(sheet).toContain('t="n"><v>97.5</v>');
+    expect(sheet).toMatch(/t="n"[^>]*><v>12<\/v>/); // number stays a number
+    expect(sheet).toMatch(/t="n"[^>]*><v>8<\/v>/); // numeric looking string becomes a number
+    expect(sheet).toMatch(/t="n"[^>]*><v>97\.5<\/v>/);
     expect(sheet).toMatch(/t="inlineStr"[^>]*><is><t[^>]*>TKT-0005</); // id stays text
     expect(sheet).toMatch(/t="inlineStr"[^>]*><is><t[^>]*>0012</); // leading zero is preserved
   });
@@ -61,7 +61,7 @@ describe('xlsx writer (spec 0029 AC-16)', () => {
   it('puts the header below the title and filter rows, frozen and filterable', () => {
     const sheet = open(sample())['xl/worksheets/sheet1.xml'];
     // Title row 1, two meta rows, one blank row, header on row 5.
-    expect(sheet).toContain('<row r="5">');
+    expect(sheet).toMatch(/<row r="5"[^>]*>/);
     expect(sheet).toContain('<pane ySplit="5" topLeftCell="A6" activePane="bottomLeft" state="frozen"/>');
     expect(sheet).toContain('<autoFilter ref="A5:D7"/>');
     expect(sheet).toContain('<dimension ref="A1:D7"/>');

@@ -110,6 +110,8 @@ services:
         condition: service_started
       reverb:
         condition: service_started
+      employee-service:
+        condition: service_started
     networks:
       default:
       shared-capstone-network:
@@ -150,6 +152,8 @@ services:
       redis:
         condition: service_started
       reverb:
+        condition: service_started
+      employee-service:
         condition: service_started
     networks:
       - default
@@ -238,6 +242,8 @@ services:
         condition: service_started
       reverb:
         condition: service_started
+      employee-service:
+        condition: service_started
     networks:
       default:
       shared-capstone-network:
@@ -278,6 +284,8 @@ services:
       redis:
         condition: service_started
       reverb:
+        condition: service_started
+      employee-service:
         condition: service_started
     networks:
       - default

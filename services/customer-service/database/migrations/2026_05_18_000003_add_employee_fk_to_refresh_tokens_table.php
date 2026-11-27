@@ -8,9 +8,11 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('refresh_tokens', function (Blueprint $table) {
-            $table->foreign('employee_id')->references('emp_id')->on('employees')->onDelete('cascade');
-        });
+        if (Schema::hasTable('employees')) {
+            Schema::table('refresh_tokens', function (Blueprint $table) {
+                $table->foreign('employee_id')->references('emp_id')->on('employees')->onDelete('cascade');
+            });
+        }
     }
 
     public function down(): void

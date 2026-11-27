@@ -1,8 +1,11 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render as rtlRender, screen, fireEvent, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { AssignModal } from './CSModals';
 import * as ticketService from '@/services/ticketService';
+
+const render = (ui, options) => rtlRender(<MemoryRouter>{ui}</MemoryRouter>, options);
 
 vi.mock('@/context/AuthContext', () => ({
   useAuth: () => ({
@@ -122,7 +125,7 @@ describe('AssignModal Eligibility & Reassignment Escalation Tests', () => {
     expect(screen.queryByText(/Ineligible/i)).not.toBeInTheDocument();
   });
 
-  it('displays Department Managers with contact information on the Managers tab', async () => {
+  it('displays Escalation Managers with contact information when employees are selected', async () => {
     vi.spyOn(ticketService, 'getEligibleEmployees').mockResolvedValue(mockEligibleData);
 
     render(
@@ -137,13 +140,15 @@ describe('AssignModal Eligibility & Reassignment Escalation Tests', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Department Managers')).toBeInTheDocument();
+      expect(screen.getAllByText('Juan Dela Cruz').length).toBeGreaterThan(0);
     });
 
-    fireEvent.click(screen.getByText('Department Managers'));
+    // Select Juan Dela Cruz (Service) so Service escalation manager is displayed
+    fireEvent.click(screen.getAllByRole('checkbox')[0]);
+
+    fireEvent.click(screen.getByText(/Escalation Managers/i));
 
     expect(screen.getAllByText('Reymie Gonzaga').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Ejay Detera').length).toBeGreaterThan(0);
   });
 
   it('distinguishes empty state with escalation guidance when no eligible candidates exist', async () => {

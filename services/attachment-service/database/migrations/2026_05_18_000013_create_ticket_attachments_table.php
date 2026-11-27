@@ -15,7 +15,10 @@ return new class extends Migration
 
         Schema::create('ticket_attachments', function (Blueprint $table) {
             $table->bigIncrements('attachment_id');
-            $table->foreignId('ticket_id')->nullable()->constrained('tickets', 'ticket_ID')->cascadeOnDelete();
+            $table->foreignId('ticket_id')->nullable();
+            if (Schema::hasTable('tickets')) {
+                $table->foreign('ticket_id')->references('ticket_ID')->on('tickets')->cascadeOnDelete();
+            }
             $table->string('file_name');
             $table->string('file_path');
             $table->string('file_type')->nullable();

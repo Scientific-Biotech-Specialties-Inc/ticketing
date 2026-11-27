@@ -216,8 +216,9 @@ describe('Technician TicketDetailModal (Awaiting Acceptance & Declined States)',
     expect(screen.queryByText('ACTION NEEDED')).toBeNull();
   });
 
-  it('10. renders sticky footer with "Message coordinator" button and opens message thread dialog', async () => {
-    renderModal({ ticket: mockDeclinedWithReasonTicket });
+  it('10. renders sticky footer with "Message coordinator" button and navigates to employee messages', async () => {
+    const onClose = vi.fn();
+    renderModal({ ticket: mockDeclinedWithReasonTicket, onClose });
 
     const msgBtn = screen.getByRole('button', { name: /Message coordinator/i });
     expect(msgBtn).toBeInTheDocument();
@@ -225,7 +226,6 @@ describe('Technician TicketDetailModal (Awaiting Acceptance & Declined States)',
 
     fireEvent.click(msgBtn);
 
-    expect(await screen.findByText('Conversation with Coordinator')).toBeInTheDocument();
-    expect(screen.getByTestId('internal-message-thread')).toBeInTheDocument();
+    expect(onClose).toHaveBeenCalled();
   });
 });

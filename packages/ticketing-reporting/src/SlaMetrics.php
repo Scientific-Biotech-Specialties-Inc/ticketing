@@ -46,7 +46,9 @@ final class SlaMetrics
         $now = now();
         $statusName = strtolower(trim((string) ($ticket->status_name ?? $ticket->status ?? '')));
         $isClosedOrResolved = in_array($statusName, ['closed', 'resolved'], true);
-        $isOnHold = in_array($statusName, ['on hold', 'on-hold', 'paused'], true) || ((int) ($ticket->ticket_status_ID ?? 0) === 11);
+        // A ticket paused by system maintenance counts as paused too (tickets:sync-maintenance-sla).
+        $isOnHold = in_array($statusName, ['on hold', 'on-hold', 'paused'], true) || ((int) ($ticket->ticket_status_ID ?? 0) === 11)
+            || !empty($ticket->sla_paused_by_maintenance ?? null);
 
         $resDueAtRaw = $ticket->resolution_due_at ?? null;
         $resDueAt = $resDueAtRaw ? Carbon::parse($resDueAtRaw) : null;

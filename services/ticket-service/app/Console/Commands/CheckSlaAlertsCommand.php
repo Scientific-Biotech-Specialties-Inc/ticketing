@@ -26,6 +26,14 @@ class CheckSlaAlertsCommand extends Command
      */
     public function handle(SLAService $slaService): int
     {
+        // SLA clocks are paused during system maintenance (tickets:sync-maintenance-sla), so no
+        // breach or at risk alert may fire until it ends.
+        $maintenance = app(\App\Services\MaintenanceSlaPauseService::class);
+        if ($maintenance->isUnderMaintenance($maintenance->fetchSystemStatus())) {
+            $this->info('System is Under Maintenance; SLA alerts are paused.');
+            return Command::SUCCESS;
+        }
+
         $this->info('Starting SLA alert evaluation across active tickets...');
 
         $maxAttempts = 3;

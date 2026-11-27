@@ -5,11 +5,13 @@ namespace Tests\Feature;
 use App\Models\ProofOfCompletion;
 use App\Models\TicketAttachment;
 use App\Services\ClamAVScanner;
-use Illuminate\Foundation\Testing\DatabaseTransactions;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Mockery;
 use Tests\Concerns\FakesAttachmentAccess;
@@ -21,8 +23,8 @@ use Tests\TestCase;
  */
 class PrivateAttachmentAccessTest extends TestCase
 {
-    use DatabaseTransactions;
     use FakesAttachmentAccess;
+    use RefreshDatabase;
 
     private int $ticketId;
 
@@ -34,10 +36,16 @@ class PrivateAttachmentAccessTest extends TestCase
         Storage::fake('local');
         Cache::forget('ticket:config:file_limits');
 
-        $ticketId = DB::table('tickets')->value('ticket_ID');
-        if ($ticketId === null) {
-            $this->markTestSkipped('Needs at least one ticket row for the ticket_attachments foreign key.');
+        if (!Schema::hasTable('tickets')) {
+            Schema::create('tickets', function (Blueprint $table) {
+                $table->bigIncrements('ticket_ID');
+            });
         }
+        if (DB::table('tickets')->count() === 0) {
+            DB::table('tickets')->insert(['ticket_ID' => 1]);
+        }
+
+        $ticketId = DB::table('tickets')->value('ticket_ID');
         $this->ticketId = (int) $ticketId;
     }
 

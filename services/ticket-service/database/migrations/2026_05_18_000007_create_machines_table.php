@@ -8,6 +8,7 @@ return new class extends Migration
 {
     public function up(): void
     {
+        Schema::disableForeignKeyConstraints();
         Schema::create('machines', function (Blueprint $table) {
             $table->bigIncrements('machine_ID');
             $table->foreignId('category_ID')->constrained('machine_categories', 'category_ID');
@@ -21,6 +22,7 @@ return new class extends Migration
             $table->dateTime('last_maintenance_date')->nullable();
             $table->timestamps();
         });
+        Schema::enableForeignKeyConstraints();
     }
 
     public function down(): void

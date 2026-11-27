@@ -411,4 +411,45 @@ export const buildTechnicianTimeline = (ticket) => {
   return events;
 };
 
+/**
+ * Active assignees list for spec 0038 (excludes completed and reassign_requested).
+ */
+export const getAssigneeList = (ticket) => {
+  if (!ticket || !Array.isArray(ticket.assigned_employees)) return [];
+  return ticket.assigned_employees
+    .filter((emp) => {
+      if (!emp) return false;
+      if (emp.completed_at) return false;
+      const status = String(emp.assignment_status || emp.status || 'assigned').toLowerCase();
+      return status !== 'reassign_requested' && status !== 'reassigned' && status !== 'removed';
+    })
+    .map((emp) => {
+      const name = emp.name || emp.full_name || `${emp.first_name || ''} ${emp.last_name || ''}`.trim();
+      const firstName = name.split(' ')[0] || 'Staff';
+      const status = String(emp.assignment_status || emp.status || 'assigned').toLowerCase();
+      return {
+        ...emp,
+        id: emp.id ?? emp.emp_id ?? emp.employee_id,
+        name,
+        firstName,
+        isAccepted: status === 'accepted',
+        lastReminderSentAt: emp.last_reminder_sent_at ?? null,
+      };
+    });
+};
+
+/**
+ * Role-aware messages path from current location pathname (spec 0038 AC-17 / AC-18).
+ */
+export const getMessagesPath = (pathname = '') => {
+  const path = String(pathname || '');
+  if (path.startsWith('/cs-manager')) return '/cs-manager/messages';
+  if (path.startsWith('/cs')) return '/cs/messages';
+  if (path.startsWith('/service-manager')) return '/service-manager/messages';
+  if (path.startsWith('/it-manager')) return '/it-manager/messages';
+  if (path.startsWith('/employee')) return '/employee/messages';
+  return '/messages';
+};
+
+
 

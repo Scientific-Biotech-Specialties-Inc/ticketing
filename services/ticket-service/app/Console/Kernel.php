@@ -18,6 +18,8 @@ class Kernel extends ConsoleKernel
     {
         $schedule->command('tickets:auto-close-internal')->everyFiveMinutes();
         $schedule->command('tickets:check-sla-alerts')->everyMinute();
+        // Pauses SLA clocks while the system is Under Maintenance and resumes them afterwards.
+        $schedule->command('tickets:sync-maintenance-sla')->everyMinute()->withoutOverlapping();
         // Spec 0031 AC-13: the only employee directory sync; request paths never call the auth module for it.
         $schedule->command('employees:sync-directory')->everyMinute()->withoutOverlapping();
         // tickets:calculate-forecasts moved to analytics-service (spec 0050 slice 1), run by analytics-scheduler.

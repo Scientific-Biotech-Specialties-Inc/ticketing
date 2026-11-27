@@ -836,7 +836,7 @@ class SLAService
         $sql = "(CASE"
             . " WHEN {$t}.sla_status = 'SLA Unavailable' THEN 'unavailable'"
             . " WHEN ({$noSource}) AND {$due} IS NULL THEN 'no_sla'"
-            . " WHEN {$status} IN ('on hold', 'on-hold', 'paused') OR {$t}.ticket_status_ID = 11 THEN 'paused'"
+            . " WHEN {$status} IN ('on hold', 'on-hold', 'paused') OR {$t}.ticket_status_ID = 11 OR {$t}.sla_paused_by_maintenance = 1 THEN 'paused'"
             . " WHEN {$status} IN ('closed', 'resolved') THEN"
             . "   (CASE WHEN {$due} IS NOT NULL AND COALESCE({$t}.resolved_at, {$t}.closed_at, ?) > {$due} THEN 'breached' ELSE 'compliant' END)"
             . " WHEN {$due} IS NULL THEN 'on_track'"

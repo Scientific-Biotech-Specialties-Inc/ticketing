@@ -8,6 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::getConnection()->getDriverName() === 'sqlite') {
+            return;
+        }
+
         Schema::table('ticket_attachments', function (Blueprint $table) {
             $table->foreignId('ticket_id')->nullable()->change();
         });
