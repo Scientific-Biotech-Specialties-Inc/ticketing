@@ -193,6 +193,12 @@ Route::middleware('auth.subsystem')->group(function () {
 
     // ─── Branch-specific priority levels & SLA overrides ──────────────────────
     Route::get('/superadmin/branches', [BranchPriorityController::class, 'branches']);
+
+    // Super Admin Customers page: real customer items, hospital search, duplicate checks, create.
+    Route::get('/superadmin/customers', [\App\Http\Controllers\SuperAdminCustomerController::class, 'index'])->middleware('no-cache');
+    Route::get('/superadmin/customers/organizations', [\App\Http\Controllers\SuperAdminCustomerController::class, 'organizations'])->middleware(['no-cache', 'throttle:120,1']);
+    Route::post('/superadmin/customers/check', [\App\Http\Controllers\SuperAdminCustomerController::class, 'check'])->middleware(['no-cache', 'throttle:30,1']);
+    Route::post('/superadmin/customers', [\App\Http\Controllers\SuperAdminCustomerController::class, 'store'])->middleware(['no-cache', 'throttle:30,1']);
     Route::prefix('/superadmin/branches/{branchId}/priorities')
         ->where(['branchId' => '[a-z0-9\-]{1,64}', 'id' => '[0-9]+'])
         ->group(function () {

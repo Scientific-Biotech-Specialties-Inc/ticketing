@@ -165,7 +165,8 @@ class SuperAdminDashboardService
             })
             ->count();
 
-        $slaComplianceRate = $totalTickets > 0 ? round(($compliantTickets / $totalTickets) * 100, 1) : 100.0;
+        // No tickets in range means nothing to measure: null (shown as unavailable), never a made up 100%.
+        $slaComplianceRate = $totalTickets > 0 ? round(($compliantTickets / $totalTickets) * 100, 1) : null;
 
         // Average resolution time in hours
         $resolvedRows = (clone $ticketsQuery)
@@ -180,17 +181,21 @@ class SuperAdminDashboardService
             $res = Carbon::parse($r->resolved_at);
             $totalResHours += max(0, $c->diffInMinutes($res) / 60);
         }
-        $avgResolutionHours = $resolvedCount > 0 ? round($totalResHours / $resolvedCount, 1) : 0.0;
+        $avgResolutionHours = $resolvedCount > 0 ? round($totalResHours / $resolvedCount, 1) : null;
 
-        // CSAT comes only from real feedback rows. With no source or no ratings it is null (unavailable), never a made up score.
-        $avgCsat = null;
-        if (DB::getSchemaBuilder()->hasTable('ticket_feedback')) {
-            $csatVal = DB::table('ticket_feedback')->avg('rating');
-            $avgCsat = $csatVal ? round((float) $csatVal, 1) : null;
-        }
+        // CSAT comes from analytics-service, which owns customer_feedback (the old ticket_feedback table
+        // never existed, so CSAT was always blank). Same 500 ms budgeted source as the Admin dashboard.
+        // No ratings or analytics down: null (unavailable), never a made up score.
+        $ticketIds = (clone $ticketsQuery)->pluck('ticket_ID')->all();
+        $csat = app(CsatSnapshotService::class)->forTickets(
+            $ticketIds,
+            $dateFrom ?? Carbon::create(2000, 1, 1),
+            $dateTo ?? $now->copy()->endOfDay()
+        );
+        $avgCsat = $csat['average_score'] !== null ? round((float) $csat['average_score'], 1) : null;
 
         // 4. Branch Comparisons
-        $branchComparisons = $this->getBranchComparisons($dateFrom, $dateTo, $sortBy, $sortDir);
+        $branchComparisons = $this->getBranchComparisons($dateFrom, $dateTo, $sortBy, $sortDir, $csat['ticket_ratings']);
 
         // 5. Recent Activity Feed from ticket_audit_logs
         $recentActivity = $this->getRecentActivity($activityLimit);
@@ -279,7 +284,8 @@ class SuperAdminDashboardService
         ?Carbon $dateFrom,
         ?Carbon $dateTo,
         string $sortBy = 'total_tickets',
-        string $sortDir = 'desc'
+        string $sortDir = 'desc',
+        array $ticketRatings = []
     ): array {
         // Include inactive branches that still own tickets, otherwise their tickets vanish from the comparison.
         $branchesWithTickets = DB::table('tickets')->whereNotNull('branch_id')->select('branch_id');
@@ -344,7 +350,7 @@ class SuperAdminDashboardService
                 return true;
             })->count();
 
-            $bComplianceRate = $bTotal > 0 ? round(($bCompliant / $bTotal) * 100, 1) : 100.0;
+            $bComplianceRate = $bTotal > 0 ? round(($bCompliant / $bTotal) * 100, 1) : null;
 
             // Resolution hours
             $resTickets = $bTickets->filter(fn ($t) => !empty($t->resolved_at));
@@ -352,11 +358,14 @@ class SuperAdminDashboardService
             foreach ($resTickets as $rt) {
                 $resHoursSum += max(0, Carbon::parse($rt->created_at)->diffInMinutes(Carbon::parse($rt->resolved_at)) / 60);
             }
-            $bAvgResHours = $resTickets->count() > 0 ? round($resHoursSum / $resTickets->count(), 1) : 0.0;
+            $bAvgResHours = $resTickets->count() > 0 ? round($resHoursSum / $resTickets->count(), 1) : null;
             $bResolved = $resTickets->count();
 
-            // Branch CSAT is not stored in this service; report it as unavailable instead of inventing one.
-            $bCsat = null;
+            // Branch CSAT: average of the analytics-service ratings for this branch's tickets; null when none.
+            $bRatings = $bTickets
+                ->map(fn ($t) => $ticketRatings[(int) $t->ticket_ID] ?? null)
+                ->filter(fn ($r) => $r !== null);
+            $bCsat = $bRatings->isNotEmpty() ? round((float) $bRatings->avg(), 1) : null;
 
             $results[] = [
                 'branch_id' => $branchId,
@@ -376,8 +385,13 @@ class SuperAdminDashboardService
 
         // Sort branch comparisons collection
         usort($results, function ($a, $b) use ($sortBy, $sortDir) {
-            $valA = $a[$sortBy] ?? 0;
-            $valB = $b[$sortBy] ?? 0;
+            $valA = $a[$sortBy] ?? null;
+            $valB = $b[$sortBy] ?? null;
+
+            // Branches with no data (null) always sort last, so "no tickets" never reads as 0% or 0 h.
+            if ($valA === null || $valB === null) {
+                return ($valA === null) <=> ($valB === null);
+            }
 
             if ($valA == $valB) {
                 return 0;
@@ -495,6 +509,9 @@ class SuperAdminDashboardService
                 return [$now->copy()->startOfMonth(), $now->copy()->endOfMonth(), 'this_month'];
             case 'last_30_days':
                 return [$now->copy()->subDays(29)->startOfDay(), $now->copy()->endOfDay(), 'last_30_days'];
+            // The dashboard offers "Last 90 Days"; without this case it silently fell back to 7 days.
+            case 'last_90_days':
+                return [$now->copy()->subDays(89)->startOfDay(), $now->copy()->endOfDay(), 'last_90_days'];
             case 'all_time':
             case 'all':
                 return [null, null, 'all_time'];

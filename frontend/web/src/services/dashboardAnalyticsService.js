@@ -479,7 +479,7 @@ export function adaptSystemDashboard(api, period = 'Last 7 Days') {
       totalTickets: total,
       resolvedTickets: b.resolved_tickets ?? 0,
       slaCompliance: sla,
-      avgResolutionTime: b.avg_resolution_hours ?? 0,
+      avgResolutionTime: b.avg_resolution_hours ?? null,
       avgCsat: b.csat_score ?? null,
       activeTickets: b.active_tickets ?? 0,
       escalatedTickets: b.escalated_tickets ?? 0,

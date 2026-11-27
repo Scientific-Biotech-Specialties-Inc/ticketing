@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Schema;
+use Tests\Concerns\CreatesCustomerTables;
 use Tests\TestCase;
 
 /**
@@ -12,6 +13,8 @@ use Tests\TestCase;
  */
 class ProvisionInternalSecretTest extends TestCase
 {
+    use CreatesCustomerTables;
+
     private const SECRET = 'test-internal-secret-0044';
 
     private array $payload = [
@@ -32,29 +35,7 @@ class ProvisionInternalSecretTest extends TestCase
 
     private function ensureTablesExist(): void
     {
-        if (!Schema::hasTable('clients')) {
-            Schema::create('clients', function ($table) {
-                $table->id();
-                $table->string('client_name');
-                $table->string('email')->unique();
-                $table->string('address')->nullable();
-                $table->string('contact_number')->nullable();
-                $table->boolean('status')->default(true);
-                $table->timestamps();
-            });
-        }
-        if (!Schema::hasTable('clients_credentials')) {
-            Schema::create('clients_credentials', function ($table) {
-                $table->id();
-                $table->unsignedBigInteger('client_id');
-                $table->string('password_hash');
-                $table->integer('failed_login_count')->default(0);
-                $table->timestamp('locked_until')->nullable();
-                $table->timestamp('last_login_at')->nullable();
-                $table->timestamp('password_change_at')->nullable();
-                $table->timestamps();
-            });
-        }
+        $this->createCustomerTables();
     }
 
     public function test_missing_secret_header_is_rejected_with_401(): void

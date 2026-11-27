@@ -84,6 +84,9 @@ const attachTicketInterceptors = (client) => {
 };
 
 attachTicketInterceptors(ticketClient);
+
+// Shared with feature service modules that call ticket-service with the same auth handling.
+export { ticketClient };
 attachTicketInterceptors(analyticsClient);
 
 const employeeClient = axios.create({

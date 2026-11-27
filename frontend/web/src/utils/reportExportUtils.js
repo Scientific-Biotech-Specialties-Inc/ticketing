@@ -388,7 +388,7 @@ export function buildDynamicAnalyticsCsv(data, options = {}) {
     csv += `"5. HOSPITAL BRANCH COMPARATIVE PERFORMANCE"\r\n`;
     csv += ['Branch Name', 'Total Tickets', 'Resolved Tickets', 'SLA Compliance (%)', 'Avg Resolution (hrs)', 'CSAT Rating'].map(csvCell).join(',') + '\r\n';
     branches.forEach((b) => {
-      csv += [b.name, b.total_tickets ?? b.totalTickets ?? 0, b.resolved_tickets ?? b.resolvedTickets ?? 0, `${b.sla_compliance_rate ?? b.slaCompliance ?? 0}%`, b.avg_resolution_hours ?? b.avgResolutionTime ?? '—', b.csat_score ?? b.avgCsat ?? '—'].map(csvCell).join(',') + '\r\n';
+      csv += [b.name, b.total_tickets ?? b.totalTickets ?? 0, b.resolved_tickets ?? b.resolvedTickets ?? 0, ((b.sla_compliance_rate ?? b.slaCompliance) != null ? `${b.sla_compliance_rate ?? b.slaCompliance}%` : '—'), b.avg_resolution_hours ?? b.avgResolutionTime ?? '—', b.csat_score ?? b.avgCsat ?? '—'].map(csvCell).join(',') + '\r\n';
     });
   }
 

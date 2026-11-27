@@ -176,7 +176,7 @@ class CustomerAssetService
         return $slug !== '' && DB::table('branches')->where('slug', $slug)->exists() ? $slug : null;
     }
 
-        private function softwareMachineCategoryId(): ?int
+    public function softwareMachineCategoryId(): ?int
     {
         $id = DB::table('machine_categories')->where('category_name', 'Software')->value('category_ID');
 

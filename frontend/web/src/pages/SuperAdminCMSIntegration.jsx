@@ -1,51 +1,22 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Building2,
-  FileText,
-  Clock,
-  CheckCircle2,
-  AlertTriangle,
-  RefreshCw,
-  Database,
   Search,
-  Filter,
   X,
-  ExternalLink,
-  Settings,
-  ChevronRight,
-  ChevronDown,
-  ChevronUp,
   Eye,
-  Sliders,
-  ShieldCheck,
-  Shield,
-  Layers,
-  FileCheck,
-  RotateCcw,
-  Sparkles,
-  Copy,
-  Check,
-  HardDrive,
   Cpu,
-  Mail,
-  Phone,
-  MapPin,
-  Calendar,
-  Tag,
-  Hash,
   Download,
-  AlertCircle,
-  HelpCircle,
-  Link as LinkIcon,
-  Loader2,
   UserPlus,
+  AlertTriangle,
+  UserCheck,
 } from 'lucide-react';
 
 import { PageHeader } from '@/components/ui/page-header';
-import { MetricCard } from '@/components/ui/metric-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Combobox } from '@/components/ui/combobox';
+import { DataTableSkeleton } from '@/components/ui/skeleton';
 import {
   Table,
   TableHeader,
@@ -57,615 +28,501 @@ import {
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
   DialogTitle,
   DialogDescription,
-  DialogFooter,
 } from '@/components/ui/dialog';
 import { FormModal } from '@/components/ui/form-modal';
+import { ConfirmationModal } from '@/components/ui/confirmation-modal';
 import Pagination from '@/components/Pagination';
 import { useToast } from '@/context/ToastContext';
+import { useBranch } from '@/context/BranchContext';
 import {
-  getStoredCmsCustomers,
-  saveStoredCmsCustomers,
-  fetchLatestFromCmsApi,
-  storeRecordInTicketing,
-  storeAllPendingRecords,
-  resetCmsCustomerStore,
-  getStoredIntegrationSettings,
-  saveStoredIntegrationSettings,
-  createCmsCustomerRecord,
-} from '@/data/cmsCustomerData';
+  listCustomers,
+  searchOrganizations,
+  checkCustomer,
+  createCustomerItem,
+} from '@/services/superadminCustomerService';
+
+const SEARCH_DEBOUNCE_MS = 300;
+const UNAVAILABLE = 'Unavailable';
+
+const TYPE_LABEL = { service: 'Service', software: 'Software' };
+const CONTRACT_LABEL = { active: 'Active', expired: 'Expired', none: 'No Contract' };
+const CONTRACT_VARIANT = { active: 'medium-success', expired: 'medium-destructive', none: 'medium-muted' };
+
+/** The header branch, when one specific branch is selected (not All Branches). */
+function headerBranchSlug(selectedBranch, isAllBranches, GLOBAL_BRANCH) {
+  if (isAllBranches || !selectedBranch || selectedBranch === GLOBAL_BRANCH) return '';
+  return String(selectedBranch.slug || selectedBranch.id || '');
+}
+
+function emptyForm(branchSlug) {
+  return {
+    assetType: 'equipment',
+    itemName: '',
+    brand: '',
+    serialNumber: '',
+    email: '',
+    branchId: branchSlug,
+  };
+}
+
+function errorMessage(err, fallback) {
+  return err?.response?.data?.message || fallback;
+}
 
 export default function SuperAdminCMSIntegration() {
   const toast = useToast();
+  const { branches, selectedBranch, isAllBranches, GLOBAL_BRANCH } = useBranch();
+  const branchScope = headerBranchSlug(selectedBranch, isAllBranches, GLOBAL_BRANCH);
 
-  // Primary State
-  const [customers, setCustomers] = useState([]);
+  // List state
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [directoryAvailable, setDirectoryAvailable] = useState(true);
   const [loading, setLoading] = useState(true);
-  const [isFetching, setIsFetching] = useState(false);
-  const [isStoringAll, setIsStoringAll] = useState(false);
-  const [storingRecordId, setStoringRecordId] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [selectedRow, setSelectedRow] = useState(null);
 
-  // Settings & Modals
-  const [settings, setSettings] = useState(getStoredIntegrationSettings());
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [settingsForm, setSettingsForm] = useState(settings);
-  const [selectedCustomer, setSelectedCustomer] = useState(null);
-  const [equipmentExpanded, setEquipmentExpanded] = useState(true);
-  const [showCreateUserModal, setShowCreateUserModal] = useState(false);
-  const createUserFormRef = useRef(null);
-  const [createUserForm, setCreateUserForm] = useState({
-    equipmentName: '',
-    brandAndModel: '',
-    serialNumber: '',
-    customerName: '',
-    customerEmail: '',
-    sbsiBranch: 'NCR - Main',
-  });
-
-  // Filters & Search
+  // Filters & pagination (all run on the server)
   const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [filterType, setFilterType] = useState('all');
   const [filterContractStatus, setFilterContractStatus] = useState('all');
-  const [filterStoreStatus, setFilterStoreStatus] = useState('all');
-  const [filterTier, setFilterTier] = useState('all');
-  const [filterBranch, setFilterBranch] = useState('all');
-
-  // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
-  // Initial Data Load (Simulated initial skeleton)
+  // Create User modal
+  const [showCreateUserModal, setShowCreateUserModal] = useState(false);
+  const createUserFormRef = useRef(null);
+  const [form, setForm] = useState(() => emptyForm(branchScope));
+  const [fieldErrors, setFieldErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+
+  // Customer Name (hospital) combobox
+  const [hospitalText, setHospitalText] = useState('');
+  const [hospital, setHospital] = useState(null); // { id, name } existing, or { isNew: true, name }
+  const [hospitalQuery, setHospitalQuery] = useState('');
+  const [hospitalOptions, setHospitalOptions] = useState([]);
+  const [hospitalLoading, setHospitalLoading] = useState(false);
+
+  // Duplicate check modals
+  const [existingAccount, setExistingAccount] = useState(null);
+  const [sameHospital, setSameHospital] = useState(null);
+
+  // Only active branches from the auth module (BranchContext), labelled by name, valued by slug.
+  const branchOptions = useMemo(
+    () =>
+      (branches || [])
+        .filter((b) => b && b.is_active !== false && b.is_active !== 0)
+        .map((b) => ({ slug: String(b.slug || b.id), name: b.name })),
+    [branches]
+  );
+
+  // Debounce the list search.
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setCustomers(getStoredCmsCustomers());
-      setLoading(false);
-    }, 350);
+    const timer = setTimeout(() => setDebouncedSearch(searchTerm.trim()), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, []);
+  }, [searchTerm]);
 
-  // Filtered & Searched Data
-  const filteredCustomers = useMemo(() => {
-    return customers.filter((item) => {
-      // Search Keyword match
-      if (searchTerm.trim()) {
-        const query = searchTerm.toLowerCase();
-        const matchesName = item.companyName?.toLowerCase().includes(query);
-        const matchesClientCode = item.cmsClientId?.toLowerCase().includes(query);
-        const matchesContractNo = item.contract?.contractNumber?.toLowerCase().includes(query);
-        const matchesContact = item.primaryContact?.name?.toLowerCase().includes(query);
-        const matchesEmail = item.primaryContact?.email?.toLowerCase().includes(query);
-        const matchesMachine = item.coveredEquipment?.some(
-          (eq) =>
-            eq.model?.toLowerCase().includes(query) ||
-            eq.serialNumber?.toLowerCase().includes(query) ||
-            eq.assetTag?.toLowerCase().includes(query)
-        );
-
-        if (!matchesName && !matchesClientCode && !matchesContractNo && !matchesContact && !matchesEmail && !matchesMachine) {
-          return false;
-        }
-      }
-
-      // Contract Status Filter
-      if (filterContractStatus !== 'all') {
-        if (item.contract?.status !== filterContractStatus) return false;
-      }
-
-      // Store Status Filter
-      if (filterStoreStatus !== 'all') {
-        if (item.ticketingIntegration?.storeStatus !== filterStoreStatus) return false;
-      }
-
-      // Service Tier Filter
-      if (filterTier !== 'all') {
-        if (item.contract?.tier !== filterTier) return false;
-      }
-
-      // Branch Filter
-      if (filterBranch !== 'all') {
-        if (item.assignedBranch !== filterBranch) return false;
-      }
-
-      return true;
-    });
-  }, [customers, searchTerm, filterContractStatus, filterStoreStatus, filterTier, filterBranch]);
-
-  // Pagination Slice
-  const totalPages = Math.max(1, Math.ceil(filteredCustomers.length / pageSize));
-  const paginatedCustomers = useMemo(() => {
-    const start = (currentPage - 1) * pageSize;
-    return filteredCustomers.slice(start, start + pageSize);
-  }, [filteredCustomers, currentPage, pageSize]);
-
-  // Adjust pagination when filters reduce total pages
+  // Back to page 1 whenever the scope or filters change.
   useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(1);
+    setCurrentPage(1);
+  }, [branchScope, debouncedSearch, filterType, filterContractStatus, pageSize]);
+
+  // Load the list from the server.
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    listCustomers({
+      search: debouncedSearch,
+      type: filterType,
+      contract_status: filterContractStatus,
+      branch_id: branchScope,
+      page: currentPage,
+      per_page: pageSize,
+    })
+      .then(({ rows: data, meta }) => {
+        if (cancelled) return;
+        setRows(data);
+        setTotal(meta.total || 0);
+        setDirectoryAvailable(meta.directory_available !== false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setRows([]);
+        setTotal(0);
+        toast.error(errorMessage(err, 'Could not load customers. Please try again.'), 'LOAD FAILED');
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branchScope, debouncedSearch, filterType, filterContractStatus, currentPage, pageSize, reloadKey]);
+
+  // Debounced hospital search for the combobox.
+  useEffect(() => {
+    const text = hospitalQuery.trim();
+    if (!text) {
+      setHospitalOptions([]);
+      setHospitalLoading(false);
+      return undefined;
     }
-  }, [totalPages, currentPage]);
+    setHospitalLoading(true);
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      searchOrganizations(text, { limit: 20, signal: controller.signal })
+        .then((data) => setHospitalOptions(data))
+        .catch((err) => {
+          if (err?.name === 'CanceledError' || err?.code === 'ERR_CANCELED') return;
+          setHospitalOptions([]);
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setHospitalLoading(false);
+        });
+    }, SEARCH_DEBOUNCE_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [hospitalQuery]);
 
-  // Computed Metrics
-  const metrics = useMemo(() => {
-    const total = customers.length;
-    const activeContracts = customers.filter((c) => c.contract?.status === 'Active').length;
-    const expiringSoon = customers.filter(
-      (c) => c.contract?.status === 'Expiring Soon' || c.contract?.status === 'Expired'
-    ).length;
-    const storedInDb = customers.filter((c) => c.ticketingIntegration?.storeStatus === 'Stored').length;
-    const pendingStore = customers.filter((c) => c.ticketingIntegration?.storeStatus !== 'Stored').length;
-
-    return { total, activeContracts, expiringSoon, storedInDb, pendingStore };
-  }, [customers]);
-
-  // Distinct branches for filter dropdown
-  const availableBranches = useMemo(() => {
-    const set = new Set();
-    customers.forEach((c) => {
-      if (c.assignedBranch) set.add(c.assignedBranch);
-    });
-    return Array.from(set).sort();
-  }, [customers]);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   const activeFiltersCount = useMemo(() => {
     let count = 0;
+    if (filterType !== 'all') count++;
     if (filterContractStatus !== 'all') count++;
-    if (filterStoreStatus !== 'all') count++;
-    if (filterTier !== 'all') count++;
-    if (filterBranch !== 'all') count++;
     if (searchTerm.trim()) count++;
     return count;
-  }, [filterContractStatus, filterStoreStatus, filterTier, filterBranch, searchTerm]);
+  }, [filterType, filterContractStatus, searchTerm]);
 
   const handleClearFilters = () => {
     setSearchTerm('');
+    setFilterType('all');
     setFilterContractStatus('all');
-    setFilterStoreStatus('all');
-    setFilterTier('all');
-    setFilterBranch('all');
-    setCurrentPage(1);
   };
 
-  // Action: Fetch Latest from CMS API
-  const handleFetchFromCms = async () => {
-    setIsFetching(true);
-    try {
-      const res = await fetchLatestFromCmsApi();
-      setCustomers(res.records);
-      if (res.newCount > 0) {
-        toast.success(
-          `Retrieved ${res.newCount} new customer contract(s) from CMS ready for storage.`,
-          'CMS SYNC SUCCESS'
-        );
-      } else {
-        toast.info('All customer records are already synchronized with CMS.', 'CMS UP TO DATE');
-      }
-    } catch (err) {
-      toast.error('Failed to communicate with Contract Management System.', 'CMS SYNC ERROR');
-    } finally {
-      setIsFetching(false);
-    }
-  };
-
-  // Action: Store Individual Record into Ticketing DB
-  const handleStoreRecord = (record) => {
-    setStoringRecordId(record.id);
-    setTimeout(() => {
-      const res = storeRecordInTicketing(record.id);
-      if (res.success) {
-        setCustomers(getStoredCmsCustomers());
-        if (selectedCustomer && selectedCustomer.id === record.id) {
-          setSelectedCustomer(res.record);
-        }
-        toast.success(res.message, 'STORED IN TICKETING');
-      } else {
-        toast.error(res.message || 'Failed to store record.', 'STORE ERROR');
-      }
-      setStoringRecordId(null);
-    }, 400);
-  };
-
-  // Action: Batch Store All Pending Records
-  const handleStoreAllPending = () => {
-    setIsStoringAll(true);
-    setTimeout(() => {
-      const res = storeAllPendingRecords();
-      setCustomers(res.records);
-      toast.success(
-        `Successfully committed ${res.count} pending customer record(s) into Ticketing System database.`,
-        'BATCH STORE SUCCESS'
-      );
-      setIsStoringAll(false);
-    }, 600);
-  };
-
-  // Action: Reset Demo Store
-  const handleResetDemoData = () => {
-    const baseline = resetCmsCustomerStore();
-    setCustomers(baseline);
-    setSelectedCustomer(null);
-    toast.info('Reset CMS customer store to initial demonstration baseline.', 'STORE RESET');
-  };
-
-  // Action: Save Settings
-  const handleSaveSettings = (e) => {
-    e.preventDefault();
-    const updated = saveStoredIntegrationSettings(settingsForm);
-    setSettings(updated);
-    setShowSettingsModal(false);
-    toast.success('Contract Management System integration settings updated.', 'SETTINGS SAVED');
-  };
-
-  // Action: Export JSON
   const handleExportJson = () => {
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(customers, null, 2));
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `cms_customers_export_${new Date().toISOString().split('T')[0]}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
-    toast.success('Exported CMS customer dataset to JSON file.', 'EXPORT COMPLETE');
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(rows, null, 2));
+    const anchor = document.createElement('a');
+    anchor.setAttribute('href', dataStr);
+    anchor.setAttribute('download', `customers_export_${new Date().toISOString().split('T')[0]}.json`);
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    toast.success(`Exported ${rows.length} loaded customer item(s) to JSON.`, 'EXPORT COMPLETE');
   };
 
-  // Action: Create User & Equipment Record
-  const handleCreateUser = (e) => {
-    e.preventDefault();
-    const res = createCmsCustomerRecord(createUserForm);
-    if (res.success) {
-      setCustomers(res.records);
+  // ── Create User ────────────────────────────────────────────────────────────
+  const isSoftware = form.assetType === 'software';
+  const itemNoun = isSoftware ? 'Software' : 'Service item';
+
+  const resetCreateForm = useCallback(() => {
+    setForm(emptyForm(branchScope));
+    setFieldErrors({});
+    setHospitalText('');
+    setHospital(null);
+    setHospitalQuery('');
+    setHospitalOptions([]);
+    setExistingAccount(null);
+    setSameHospital(null);
+  }, [branchScope]);
+
+  const openCreateModal = () => {
+    resetCreateForm();
+    setShowCreateUserModal(true);
+  };
+
+  const closeCreateModal = () => {
+    if (submitting) return;
+    setShowCreateUserModal(false);
+  };
+
+  const updateForm = (patch) => {
+    setForm((prev) => ({ ...prev, ...patch }));
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      Object.keys(patch).forEach((k) => delete next[k]);
+      return next;
+    });
+  };
+
+  const hospitalPayload = () =>
+    hospital && !hospital.isNew ? { organization_id: hospital.id } : { organization_name: hospital?.name || '' };
+
+  const validate = () => {
+    const errors = {};
+    if (!form.itemName.trim()) errors.itemName = isSoftware ? 'Software Name is required.' : 'Equipment Name is required.';
+    if (!isSoftware && !form.brand.trim()) errors.brand = 'Brand and Model is required.';
+    if (!isSoftware && !form.serialNumber.trim()) errors.serialNumber = 'Serial Number is required.';
+    if (!hospital) errors.hospital = 'Choose a hospital from the list or add a new one.';
+    if (!form.email.trim()) errors.email = 'Customer Email is required.';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) errors.email = 'Enter a valid email address.';
+    if (!form.branchId) errors.branchId = 'Choose an SBSI branch.';
+    setFieldErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleConflict = (data) => {
+    switch (data?.code) {
+      case 'email_exists':
+        setSameHospital(null);
+        setExistingAccount(data.account || null);
+        return true;
+      case 'hospital_has_accounts':
+        setExistingAccount(null);
+        setSameHospital({ organization: data.organization, accounts: data.accounts || [] });
+        return true;
+      case 'serial_taken':
+        setExistingAccount(null);
+        setSameHospital(null);
+        setFieldErrors((prev) => ({ ...prev, serialNumber: data.message }));
+        return true;
+      case 'attach_mismatch':
+        setExistingAccount(null);
+        toast.error('That email no longer belongs to the selected account. Please submit again.', 'ACCOUNT CHANGED');
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  const submitItem = async (mode, extra = {}) => {
+    setSubmitting(true);
+    try {
+      const payload = {
+        asset_type: form.assetType,
+        item_name: form.itemName.trim(),
+        brand: form.brand.trim() || null,
+        serial_number: isSoftware ? null : form.serialNumber.trim(),
+        branch_id: form.branchId,
+        email: form.email.trim(),
+        mode,
+        ...(mode === 'new' ? hospitalPayload() : {}),
+        ...extra,
+      };
+      const res = await createCustomerItem(payload);
+      const hospitalName = res?.item?.hospital_name || hospital?.name || 'the customer';
+      toast.success(
+        res?.account_status === 'attached'
+          ? `Added the ${itemNoun.toLowerCase()} to the existing account for ${hospitalName}.`
+          : `Created a new account for ${hospitalName}.`,
+        res?.account_status === 'attached' ? 'ITEM ADDED' : 'ACCOUNT CREATED'
+      );
+      setExistingAccount(null);
+      setSameHospital(null);
       setShowCreateUserModal(false);
-      setCreateUserForm({
-        equipmentName: '',
-        brandAndModel: '',
-        serialNumber: '',
-        customerName: '',
-        customerEmail: '',
-        sbsiBranch: 'NCR - Main',
-      });
-      toast.success(`Created customer record for "${res.record.companyName}".`, 'USER CREATED');
+      resetCreateForm();
+      setReloadKey((k) => k + 1);
+    } catch (err) {
+      const status = err?.response?.status;
+      const data = err?.response?.data;
+      if (status === 409 && handleConflict(data)) return;
+      setExistingAccount(null);
+      setSameHospital(null);
+      if (status === 422 && data?.errors) {
+        const map = { item_name: 'itemName', brand: 'brand', serial_number: 'serialNumber', email: 'email', branch_id: 'branchId', organization_name: 'hospital', organization_id: 'hospital' };
+        const errors = {};
+        Object.entries(data.errors).forEach(([key, messages]) => {
+          if (map[key]) errors[map[key]] = Array.isArray(messages) ? messages[0] : String(messages);
+        });
+        setFieldErrors((prev) => ({ ...prev, ...errors }));
+        toast.error('Please fix the highlighted fields.', 'CHECK THE FORM');
+        return;
+      }
+      toast.error(errorMessage(err, 'Customer service is unavailable, please try again.'), 'SAVE FAILED');
+    } finally {
+      setSubmitting(false);
     }
   };
 
-  // Helpers for badge variants
-  const getContractStatusBadgeVariant = (status) => {
-    switch (status) {
-      case 'Active':
-        return 'medium-success';
-      case 'Expiring Soon':
-        return 'medium-warning';
-      case 'Expired':
-      case 'Terminated':
-        return 'medium-destructive';
-      default:
-        return 'medium-info';
+  const handleCreateUser = async (e) => {
+    e.preventDefault();
+    if (submitting || !validate()) return;
+
+    setSubmitting(true);
+    let result;
+    try {
+      result = await checkCustomer({ email: form.email.trim(), ...hospitalPayload() });
+    } catch (err) {
+      setSubmitting(false);
+      toast.error(errorMessage(err, 'Customer service is unavailable, please try again.'), 'CHECK FAILED');
+      return;
     }
+    setSubmitting(false);
+
+    if (result?.email_match) {
+      setExistingAccount(result.email_match);
+      return;
+    }
+    if (Array.isArray(result?.organization_accounts) && result.organization_accounts.length > 0) {
+      setSameHospital({ organization: result.organization, accounts: result.organization_accounts });
+      return;
+    }
+    await submitItem('new');
   };
 
-  const getTierBadgeVariant = (tier) => {
-    switch (tier) {
-      case 'Enterprise Platinum':
-        return 'medium-violet';
-      case 'Premium Gold':
-        return 'medium-warning';
-      case 'Standard Silver':
-        return 'medium-muted';
-      default:
-        return 'medium-info';
+  const handleHospitalSelect = (choice) => {
+    if (choice.isNew) {
+      setHospital({ isNew: true, name: choice.name });
+      setHospitalText(choice.name);
+    } else {
+      setHospital({ id: choice.option.id, name: choice.option.name });
+      setHospitalText(choice.option.name);
     }
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      delete next.hospital;
+      return next;
+    });
   };
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  const cell = (value) => (value === null || value === undefined || value === '' ? '—' : value);
+  const directoryCell = (value) => (directoryAvailable ? cell(value) : UNAVAILABLE);
 
   return (
     <div className="w-full space-y-6 pb-12 font-sans">
-      {/* 1. Page Header with Actions */}
       <PageHeader
-        title="Customer Contracts"
-        subtitle="Sync and manage customer profiles and service contracts from CMS."
+        title="Customers"
+        subtitle="Customer accounts and the service and software items they can report problems on."
         showClock={false}
         actions={
           <div className="flex items-center gap-2 flex-wrap">
             <Button
               variant="outline"
               size="sm"
-              onClick={handleResetDemoData}
-              title="Reset to default mock customer dataset"
-              className="border-slate-300 text-dark-slate hover:bg-slate-100 h-9 px-3"
+              onClick={handleExportJson}
+              disabled={loading || rows.length === 0}
+              className="border-slate-300 text-dark-slate hover:bg-slate-100 h-9 px-4 gap-2"
             >
-              <RotateCcw className="w-3.5 h-3.5 mr-1.5 text-muted-slate" />
-              Reset
+              <Download className="w-4 h-4 text-muted-slate" />
+              Export JSON
             </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setSettingsForm(settings);
-                setShowSettingsModal(true);
-              }}
-              className="border-slate-300 text-dark-slate hover:bg-slate-100 h-9 px-3"
-            >
-              <Settings className="w-3.5 h-3.5 mr-1.5 text-muted-slate" />
-              Settings
-            </Button>
-
-            {metrics.pendingStore > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleStoreAllPending}
-                loading={isStoringAll}
-                disabled={isStoringAll}
-                className="border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100 h-9 px-3"
-              >
-                <Database className="w-3.5 h-3.5 mr-1.5 text-amber-600" />
-                Store Pending ({metrics.pendingStore})
-              </Button>
-            )}
-
-            <Button
-              variant="default"
-              size="sm"
-              onClick={handleFetchFromCms}
-              loading={isFetching}
-              disabled={isFetching}
-              className="bg-primary text-white shadow-sm hover:bg-[#2F2F8E] h-9 px-3.5"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isFetching ? 'animate-spin' : ''}`} />
-              Fetch from CMS
+            <Button variant="default" size="sm" onClick={openCreateModal} className="h-9 px-4 gap-2">
+              <UserPlus className="w-4 h-4" />
+              Create User
             </Button>
           </div>
         }
       />
 
-      {/* 2. Metric Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <MetricCard
-          title="Total CMS Customers"
-          value={metrics.total}
-          subtitle="Integrated clients"
-          icon={<Building2 className="w-5 h-5 text-accent" />}
-          loading={loading}
-        />
-        <MetricCard
-          title="Active Contracts & SLAs"
-          value={metrics.activeContracts}
-          subtitle="Priority eligible"
-          icon={<ShieldCheck className="w-5 h-5 text-emerald-600" />}
-          iconBg="bg-emerald-50 text-emerald-600"
-          loading={loading}
-        />
-        <MetricCard
-          title="Expiring / Expired"
-          value={metrics.expiringSoon}
-          subtitle="Renewal needed"
-          icon={<AlertTriangle className="w-5 h-5 text-amber-600" />}
-          iconBg="bg-amber-50 text-amber-600"
-          variant="amber"
-          loading={loading}
-        />
-        <MetricCard
-          title="Stored in Ticketing DB"
-          value={`${metrics.storedInDb} / ${metrics.total}`}
-          subtitle={metrics.pendingStore > 0 ? `${metrics.pendingStore} pending` : 'All synced'}
-          icon={<CheckCircle2 className="w-5 h-5 text-indigo-600" />}
-          iconBg="bg-indigo-50 text-indigo-600"
-          loading={loading}
-        />
-      </div>
-
-      {/* 3. Integration Live Connectivity Banner */}
-      <div className="bg-surface rounded-xl border border-slate-200/80 p-4 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3 min-w-0">
-        <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
-          <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center shrink-0 mt-0.5 sm:mt-0">
-            <Layers className="w-5 h-5 text-accent" />
-          </div>
-          <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex items-center gap-2 flex-wrap min-w-0">
-              <span className="text-sm font-bold text-dark-slate shrink-0">CMS Endpoint:</span>
-              <span
-                className="inline-flex items-center font-mono text-xs bg-slate-100 text-slate-700 px-2.5 py-0.5 rounded border border-slate-200 min-w-0 max-w-full break-all"
-                title={settings.cmsApiEndpoint}
-              >
-                {settings.cmsApiEndpoint}
-              </span>
-              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200 shrink-0">
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
-                Local Sandbox (Mock Data)
-              </span>
-            </div>
-            <p className="text-xs text-muted-slate">
-              Sync: <span className="font-medium text-slate-700">{settings.syncInterval}</span> • SLA Triage:{' '}
-              <span className="font-medium text-slate-700">{settings.autoTriageContracts ? 'Active' : 'Off'}</span>
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0 self-start md:self-center">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleExportJson}
-            className="border-slate-300 text-dark-slate hover:bg-slate-100 h-9 px-3 gap-1.5 shrink-0"
-          >
-            <Download className="w-4 h-4 text-muted-slate" />
-            Export JSON
-          </Button>
-        </div>
-      </div>
-
-      {/* 4. Search and Filter Bar */}
-      <div className="bg-surface rounded-2xl border border-slate-200/80 p-4 sm:p-5 shadow-sm space-y-4">
-        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
-          {/* Search Field */}
+      {/* Search and filters */}
+      <div className="bg-surface rounded-2xl border border-slate-200/80 p-4 sm:p-6 shadow-sm space-y-4">
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4">
           <div className="relative flex-1">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-slate" />
+            <Search className="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2 text-muted-slate" />
             <Input
               type="text"
-              placeholder="Search by company, client ID (CMS-CLI-...), contract, contact person, or machine serial..."
+              aria-label="Search customers"
+              placeholder="Search by hospital, email, item name, or serial number..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9 h-10 w-full text-sm rounded-xl border-slate-200 focus:border-accent"
+              className="pl-10 h-10 w-full text-sm rounded-xl"
             />
             {searchTerm && (
               <button
+                type="button"
+                aria-label="Clear search"
                 onClick={() => setSearchTerm('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-slate hover:text-dark-slate p-0.5"
+                className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-slate hover:text-dark-slate"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="w-4 h-4" />
               </button>
             )}
           </div>
-
-          {/* Quick Clear Button */}
           {activeFiltersCount > 0 && (
             <Button
               variant="ghost"
               size="sm"
               onClick={handleClearFilters}
-              className="text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700 h-10 px-3 self-end lg:self-auto"
+              className="text-xs text-rose-600 hover:bg-rose-50 hover:text-rose-700 h-10 px-4 self-end lg:self-auto"
             >
-              <X className="w-3.5 h-3.5 mr-1" />
+              <X className="w-4 h-4 mr-2" />
               Clear Filters ({activeFiltersCount})
             </Button>
           )}
         </div>
 
-        {/* Filter Dropdowns Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-1 border-t border-slate-100">
-          {/* Contract Status Filter */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
           <div>
-            <label htmlFor="filter-contract-status" className="text-xs font-semibold text-slate-600 mb-1 block">Contract Status</label>
+            <label htmlFor="filter-type" className="text-xs font-semibold text-slate-600 mb-2 block">Type</label>
+            <select
+              id="filter-type"
+              value={filterType}
+              onChange={(e) => setFilterType(e.target.value)}
+              className="w-full h-10 rounded-lg border border-slate-200 bg-white px-2 text-xs text-dark-slate focus:outline-none focus:ring-1 focus:ring-accent"
+            >
+              <option value="all">All Types</option>
+              <option value="service">Service</option>
+              <option value="software">Software</option>
+            </select>
+          </div>
+          <div>
+            <label htmlFor="filter-contract-status" className="text-xs font-semibold text-slate-600 mb-2 block">Contract Status</label>
             <select
               id="filter-contract-status"
-              aria-label="Filter by contract status"
               value={filterContractStatus}
-              onChange={(e) => {
-                setFilterContractStatus(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-dark-slate focus:outline-none focus:ring-1 focus:ring-accent"
+              onChange={(e) => setFilterContractStatus(e.target.value)}
+              className="w-full h-10 rounded-lg border border-slate-200 bg-white px-2 text-xs text-dark-slate focus:outline-none focus:ring-1 focus:ring-accent"
             >
               <option value="all">All Contract Statuses</option>
-              <option value="Active">Active</option>
-              <option value="Expiring Soon">Expiring Soon</option>
-              <option value="Expired">Expired</option>
-            </select>
-          </div>
-
-          {/* Store Status Filter */}
-          <div>
-            <label htmlFor="filter-store-status" className="text-xs font-semibold text-slate-600 mb-1 block">Ticketing Store Status</label>
-            <select
-              id="filter-store-status"
-              aria-label="Filter by store status"
-              value={filterStoreStatus}
-              onChange={(e) => {
-                setFilterStoreStatus(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-dark-slate focus:outline-none focus:ring-1 focus:ring-accent"
-            >
-              <option value="all">All Store Statuses</option>
-              <option value="Stored">Stored in Ticketing DB</option>
-              <option value="Pending Store">Pending Store / Staged</option>
-            </select>
-          </div>
-
-          {/* Service Tier Filter */}
-          <div>
-            <label htmlFor="filter-tier" className="text-xs font-semibold text-slate-600 mb-1 block">Service Tier (SLA)</label>
-            <select
-              id="filter-tier"
-              aria-label="Filter by service tier"
-              value={filterTier}
-              onChange={(e) => {
-                setFilterTier(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-dark-slate focus:outline-none focus:ring-1 focus:ring-accent"
-            >
-              <option value="all">All Service Tiers</option>
-              <option value="Enterprise Platinum">Enterprise Platinum</option>
-              <option value="Premium Gold">Premium Gold</option>
-              <option value="Standard Silver">Standard Silver</option>
-            </select>
-          </div>
-
-          {/* Branch Filter */}
-          <div>
-            <label htmlFor="filter-branch" className="text-xs font-semibold text-slate-600 mb-1 block">Assigned Branch</label>
-            <select
-              id="filter-branch"
-              aria-label="Filter by assigned branch"
-              value={filterBranch}
-              onChange={(e) => {
-                setFilterBranch(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="w-full h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs text-dark-slate focus:outline-none focus:ring-1 focus:ring-accent"
-            >
-              <option value="all">All Branches</option>
-              {availableBranches.map((b) => (
-                <option key={b} value={b}>
-                  {b}
-                </option>
-              ))}
+              <option value="active">Active</option>
+              <option value="expired">Expired</option>
+              <option value="none">No Contract</option>
             </select>
           </div>
         </div>
       </div>
 
-      {/* 5. Customer & Contract Records Table */}
+      {/* Customer items table */}
       <div className="bg-surface rounded-2xl border border-slate-200/80 shadow-sm overflow-hidden">
-        <div className="px-4 sm:px-6 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="px-4 sm:px-6 py-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <h2 className="text-base font-bold text-dark-slate">Fetched Customer & Contract Records</h2>
-            <p className="text-xs text-muted-slate mt-0.5">
-              Showing {paginatedCustomers.length} of {filteredCustomers.length} records
+            <h2 className="text-base font-bold text-dark-slate">Customer Items</h2>
+            <p className="text-xs text-muted-slate">
+              {loading ? 'Loading…' : `Showing ${rows.length} of ${total} items`}
+              {!isAllBranches && selectedBranch?.name ? ` • ${selectedBranch.name}` : ''}
             </p>
           </div>
-          <div className="flex items-center gap-3 text-xs text-muted-slate flex-wrap">
-            <div className="flex items-center gap-2">
-              <span>Rows per page:</span>
-              <select
-                value={pageSize}
-                onChange={(e) => {
-                  setPageSize(Number(e.target.value));
-                  setCurrentPage(1);
-                }}
-                className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-dark-slate focus:outline-none"
-              >
-                <option value={10}>10</option>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
-              </select>
-            </div>
-            <Button
-              variant="default"
-              size="sm"
-              onClick={() => setShowCreateUserModal(true)}
-              className="bg-primary text-white shadow-sm hover:bg-[#2F2F8E] h-8 px-3"
+          <div className="flex items-center gap-2 text-xs text-muted-slate">
+            <span>Rows per page:</span>
+            <select
+              aria-label="Rows per page"
+              value={pageSize}
+              onChange={(e) => setPageSize(Number(e.target.value))}
+              className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs text-dark-slate focus:outline-none"
             >
-              <UserPlus className="w-3.5 h-3.5 mr-1.5" />
-              Create User
-            </Button>
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+            </select>
           </div>
         </div>
 
-        {loading ? (
-          <div className="p-8 space-y-4">
-            <div className="h-10 bg-slate-100 rounded-lg animate-pulse" />
-            <div className="h-14 bg-slate-100 rounded-lg animate-pulse" />
-            <div className="h-14 bg-slate-100 rounded-lg animate-pulse" />
-            <div className="h-14 bg-slate-100 rounded-lg animate-pulse" />
+        {!directoryAvailable && !loading && (
+          <div className="px-6 py-2 text-xs text-amber-900 bg-amber-50 border-b border-amber-200 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-amber-600" />
+            Customer service is unavailable, so hospital and email are not shown right now.
           </div>
-        ) : filteredCustomers.length === 0 ? (
+        )}
+
+        {loading ? (
+          <div className="p-6" data-testid="customers-skeleton">
+            <DataTableSkeleton columns={6} rows={pageSize > 10 ? 8 : 5} />
+          </div>
+        ) : rows.length === 0 ? (
           <div className="p-12 text-center">
-            <Building2 className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-            <h3 className="text-base font-semibold text-dark-slate">No Customer Records Found</h3>
-            <p className="text-xs text-muted-slate max-w-md mx-auto mt-1">
-              No CMS customer records match your active search or filter criteria. Try clearing filters or fetch fresh
-              records from the CMS API.
+            <Building2 className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+            <h3 className="text-base font-semibold text-dark-slate">No Customer Items Found</h3>
+            <p className="text-xs text-muted-slate max-w-md mx-auto mt-2">
+              {activeFiltersCount > 0
+                ? 'No items match your search or filters. Try clearing them.'
+                : 'No customer items yet. Use Create User to add the first one.'}
             </p>
             {activeFiltersCount > 0 && (
               <Button variant="outline" size="sm" onClick={handleClearFilters} className="mt-4">
@@ -677,123 +534,68 @@ export default function SuperAdminCMSIntegration() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[30%]">Client / Institution</TableHead>
-                <TableHead className="w-[22%]">Primary Contact</TableHead>
-                <TableHead className="w-[18%]">Contract & SLA</TableHead>
-                <TableHead className="w-[15%]">Status & Expiry</TableHead>
-                <TableHead className="w-[15%]">Ticketing Store</TableHead>
-                <TableHead className="w-[110px] text-right">Actions</TableHead>
+                <TableHead>Hospital / Account</TableHead>
+                <TableHead>Item</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Serial Number</TableHead>
+                <TableHead>SBSI Branch</TableHead>
+                <TableHead>Contract Status</TableHead>
+                <TableHead className="w-[64px] text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {paginatedCustomers.map((cust) => {
-                const isStored = cust.ticketingIntegration?.storeStatus === 'Stored';
-                const isBeingStored = storingRecordId === cust.id;
-
-                return (
-                  <TableRow key={cust.id} className="hover:bg-slate-50/70 transition-colors">
-                    {/* Client & ID */}
-                    <TableCell>
-                      <button
-                        type="button"
-                        className="text-left font-semibold text-sm text-dark-slate hover:text-accent cursor-pointer block"
-                        onClick={() => {
-                          setSelectedCustomer(cust);
-                          setEquipmentExpanded(true);
-                        }}
-                      >
-                        {cust.companyName}
-                      </button>
-                      <div className="text-xs text-slate-500 font-mono mt-0.5">
-                        {cust.cmsClientId} • {cust.assignedBranch}
-                      </div>
-                    </TableCell>
-
-                    {/* Primary Contact */}
-                    <TableCell>
-                      <div className="text-sm font-medium text-dark-slate">{cust.primaryContact?.name}</div>
-                      <div className="text-xs text-muted-slate truncate max-w-[220px]" title={cust.primaryContact?.email}>
-                        {cust.primaryContact?.email}
-                      </div>
-                    </TableCell>
-
-                    {/* Contract & SLA */}
-                    <TableCell>
-                      <div className="text-xs font-mono font-medium text-dark-slate">
-                        {cust.contract?.contractNumber}
-                      </div>
-                      <Badge variant={getTierBadgeVariant(cust.contract?.tier)} size="sm" className="mt-1">
-                        {cust.contract?.tier}
-                      </Badge>
-                    </TableCell>
-
-                    {/* Status & Expiry */}
-                    <TableCell>
-                      <Badge variant={getContractStatusBadgeVariant(cust.contract?.status)} size="sm" className="mb-1">
-                        {cust.contract?.status}
-                      </Badge>
-                      <div className="text-[11px] text-slate-500">
-                        Expires {cust.contract?.endDate}
-                      </div>
-                    </TableCell>
-
-                    {/* Ticketing Store Status */}
-                    <TableCell>
-                      <Badge variant={isStored ? 'medium-success' : 'medium-warning'} size="sm">
-                        {isStored ? 'Stored in DB' : 'Pending Store'}
-                      </Badge>
-                    </TableCell>
-
-                    {/* Actions: No word "View", only clean icon buttons */}
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {!isStored && (
-                          <Button
-                            variant="default"
-                            size="sm"
-                            onClick={() => handleStoreRecord(cust)}
-                            disabled={isBeingStored}
-                            loading={isBeingStored}
-                            className="h-8 px-2.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white shadow-none"
-                            title="Store in Ticketing System"
-                          >
-                            <Database className="w-3.5 h-3.5 mr-1" />
-                            Store
-                          </Button>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setSelectedCustomer(cust);
-                            setEquipmentExpanded(true);
-                          }}
-                          className="h-8 w-8 p-0 text-slate-500 hover:text-accent hover:bg-blue-50"
-                          title="View details"
-                          aria-label={`View details for ${cust.companyName}`}
-                        >
-                          <Eye className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
+              {rows.map((row) => (
+                <TableRow key={row.machine_id} className="hover:bg-slate-50/70 transition-colors">
+                  <TableCell>
+                    <div className="font-semibold text-sm text-dark-slate">{directoryCell(row.hospital_name)}</div>
+                    <div className="text-xs text-muted-slate truncate max-w-[240px]" title={row.email || ''}>
+                      {directoryCell(row.email)}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-sm font-medium text-dark-slate">{row.item_name}</div>
+                    {row.brand && <div className="text-xs text-muted-slate">{row.brand}</div>}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={row.type === 'software' ? 'medium-violet' : 'medium-info'} size="sm">
+                      {TYPE_LABEL[row.type] || row.type}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs text-slate-600">{row.type === 'software' ? '' : cell(row.serial_number)}</TableCell>
+                  <TableCell className="text-xs text-slate-700">{cell(row.branch_name || row.branch_id)}</TableCell>
+                  <TableCell>
+                    <Badge variant={CONTRACT_VARIANT[row.contract_status] || 'medium-muted'} size="sm">
+                      {CONTRACT_LABEL[row.contract_status] || row.contract_status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setSelectedRow(row)}
+                      className="h-8 w-8 p-0 text-slate-500 hover:text-accent hover:bg-blue-50"
+                      title="View details"
+                      aria-label={`View details for ${row.item_name}`}
+                    >
+                      <Eye className="w-4 h-4" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         )}
 
-        {/* Pagination Footer */}
-        {filteredCustomers.length > 0 && (
+        {!loading && total > 0 && (
           <div className="px-6 py-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="text-xs text-muted-slate">
               Showing page <span className="font-semibold text-dark-slate">{currentPage}</span> of{' '}
-              <span className="font-semibold text-dark-slate">{totalPages}</span> ({filteredCustomers.length} total items)
+              <span className="font-semibold text-dark-slate">{totalPages}</span> ({total} total items)
             </div>
             <Pagination
               currentPage={currentPage}
               totalPages={totalPages}
-              totalItems={filteredCustomers.length}
+              totalItems={total}
               itemsPerPage={pageSize}
               onPageChange={setCurrentPage}
             />
@@ -801,371 +603,261 @@ export default function SuperAdminCMSIntegration() {
         )}
       </div>
 
-      {/* 6. ONE UI Customer & Equipment Detail Modal */}
-      {selectedCustomer && (
-        <Dialog open={!!selectedCustomer} onOpenChange={(open) => !open && setSelectedCustomer(null)}>
+      {/* Item detail modal */}
+      {selectedRow && (
+        <Dialog open={!!selectedRow} onOpenChange={(open) => !open && setSelectedRow(null)}>
           <DialogContent className="max-w-2xl w-[95vw] p-6 font-sans rounded-2xl bg-white border border-slate-200/80 shadow-2xl">
-            {/* ONE UI Left-Aligned Header */}
             <div className="flex items-start gap-4 pb-4 border-b border-slate-100">
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-blue-50 text-accent">
                 <Building2 className="w-5 h-5" />
               </div>
               <div className="flex-1 min-w-0 pr-6">
-                <DialogTitle className="text-xl font-bold text-dark-slate">
-                  {selectedCustomer.companyName}
-                </DialogTitle>
-                <DialogDescription className="text-xs text-muted-slate mt-0.5 font-mono">
-                  {selectedCustomer.cmsClientId} • {selectedCustomer.assignedBranch}
+                <DialogTitle className="text-xl font-bold text-dark-slate">{directoryCell(selectedRow.hospital_name)}</DialogTitle>
+                <DialogDescription className="text-xs text-muted-slate">
+                  {directoryCell(selectedRow.email)} • {cell(selectedRow.branch_name || selectedRow.branch_id)}
                 </DialogDescription>
               </div>
             </div>
 
-            {/* Modal Body: Single Page (Profile + Collapsible Equipment Chevron) */}
-            <div className="py-2 max-h-[65vh] overflow-y-auto space-y-4 pr-1 text-xs">
-              {/* Customer Profile Details */}
-              <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-3">
-                <h4 className="font-bold text-dark-slate text-sm flex items-center gap-1.5">
-                  <Building2 className="w-4 h-4 text-accent" />
-                  Customer Details
+            <div className="py-2 max-h-[65vh] overflow-y-auto space-y-4 text-xs">
+              <div className="bg-slate-50 rounded-xl p-4 border border-slate-100 space-y-4">
+                <h4 className="font-bold text-dark-slate text-sm flex items-center gap-2">
+                  <Cpu className="w-4 h-4 text-accent" />
+                  {TYPE_LABEL[selectedRow.type] || 'Item'} Details
                 </h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
-                  <div>
-                    <span className="text-muted-slate block">Customer Name:</span>
-                    <span className="font-semibold text-dark-slate">
-                      {selectedCustomer.primaryContact?.name || selectedCustomer.companyName}
-                    </span>
-                  </div>
-                  <div>
-                    <span className="text-muted-slate block">Customer Email:</span>
-                    <a
-                      href={`mailto:${selectedCustomer.primaryContact?.email}`}
-                      className="font-medium text-accent hover:underline break-all"
-                    >
-                      {selectedCustomer.primaryContact?.email || 'N/A'}
-                    </a>
-                  </div>
-                  <div>
-                    <span className="text-muted-slate block">SBSI Branch:</span>
-                    <span className="font-medium text-dark-slate">{selectedCustomer.assignedBranch || 'N/A'}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Collapsible Equipment Section (Chevron) */}
-              <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
-                <button
-                  type="button"
-                  onClick={() => setEquipmentExpanded((prev) => !prev)}
-                  aria-expanded={equipmentExpanded}
-                  className="w-full px-4 py-3 bg-slate-50 hover:bg-slate-100/80 transition-colors flex items-center justify-between text-left"
-                >
-                  <div className="flex items-center gap-2">
-                    <Cpu className="w-4 h-4 text-accent" />
-                    <span className="font-bold text-dark-slate text-sm">
-                      Equipment ({selectedCustomer.coveredEquipment?.length || 0})
-                    </span>
-                  </div>
-                  {equipmentExpanded ? (
-                    <ChevronUp className="w-4 h-4 text-muted-slate" />
-                  ) : (
-                    <ChevronDown className="w-4 h-4 text-muted-slate" />
-                  )}
-                </button>
-
-                {equipmentExpanded && (
-                  <div className="border-t border-slate-200">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>EQUIPMENT / SOFTWARE MACHINE</TableHead>
-                          <TableHead>Brand and Model</TableHead>
-                          <TableHead>Serial Number</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {selectedCustomer.coveredEquipment?.map((eq, idx) => (
-                          <TableRow key={eq.serialNumber || eq.assetTag || idx}>
-                            <TableCell className="font-medium text-dark-slate">
-                              {eq.equipmentName || eq.model}
-                            </TableCell>
-                            <TableCell className="text-slate-700">
-                              {eq.brandAndModel || eq.model}
-                            </TableCell>
-                            <TableCell className="font-mono text-slate-600">
-                              {eq.serialNumber}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                )}
+                <dl className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {[
+                    [selectedRow.type === 'software' ? 'Software Name' : 'Equipment Name', selectedRow.item_name],
+                    [selectedRow.type === 'software' ? 'Vendor / Version' : 'Brand and Model', selectedRow.brand],
+                    ...(selectedRow.type === 'software' ? [] : [['Serial Number', selectedRow.serial_number]]),
+                    ['Type', TYPE_LABEL[selectedRow.type]],
+                    ['SBSI Branch', selectedRow.branch_name || selectedRow.branch_id],
+                    ['Contract Status', CONTRACT_LABEL[selectedRow.contract_status]],
+                    ['Contract Code', selectedRow.contract_code],
+                    ['Contract End Date', selectedRow.contract_end_date],
+                    ['Added', selectedRow.created_at ? new Date(selectedRow.created_at).toLocaleDateString() : null],
+                  ].map(([label, value]) => (
+                    <div key={label}>
+                      <dt className="text-muted-slate">{label}</dt>
+                      <dd className="font-medium text-dark-slate break-words">{cell(value)}</dd>
+                    </div>
+                  ))}
+                </dl>
               </div>
             </div>
-
-            {/* Footer (only Store action if pending; no Close button) */}
-            {selectedCustomer.ticketingIntegration?.storeStatus !== 'Stored' && (
-              <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={() => handleStoreRecord(selectedCustomer)}
-                  loading={storingRecordId === selectedCustomer.id}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white h-8 text-xs"
-                >
-                  <Database className="w-3.5 h-3.5 mr-1.5" />
-                  Store in Ticketing DB
-                </Button>
-              </div>
-            )}
           </DialogContent>
         </Dialog>
       )}
 
-      {/* 7. Create User Modal (ONE UI FormModal) */}
+      {/* Create User modal */}
       <FormModal
         isOpen={showCreateUserModal}
-        onClose={() => setShowCreateUserModal(false)}
+        onClose={closeCreateModal}
         onSubmit={() => createUserFormRef.current?.requestSubmit()}
         title="Create User"
-        subtitle="Add a new customer profile and covered equipment record."
+        subtitle="Add a customer account and the item they will report problems on."
         icon={UserPlus}
         confirmLabel="Create User"
         cancelLabel="Cancel"
+        loading={submitting}
         maxWidth="max-w-xl"
       >
-        <form ref={createUserFormRef} onSubmit={handleCreateUser} className="space-y-4 text-xs">
+        <form ref={createUserFormRef} onSubmit={handleCreateUser} noValidate className="space-y-4 text-xs">
           <div>
-            <label htmlFor="create-equipment-name" className="font-semibold text-slate-700 block mb-1">
-              Equipment Name / Machine Name
-            </label>
+            <label htmlFor="create-type" className="font-semibold text-slate-700 block mb-2">Type</label>
+            <select
+              id="create-type"
+              value={form.assetType}
+              onChange={(e) => updateForm({ assetType: e.target.value, serialNumber: '' })}
+              className="w-full h-10 rounded-lg border border-slate-200 bg-white px-4 text-xs text-dark-slate focus:outline-none focus:ring-1 focus:ring-accent"
+              required
+            >
+              <option value="equipment">Service</option>
+              <option value="software">Software</option>
+            </select>
+          </div>
+
+          <Field id="create-item-name" label={isSoftware ? 'Software Name' : 'Equipment Name'} error={fieldErrors.itemName}>
             <Input
-              id="create-equipment-name"
+              id="create-item-name"
               type="text"
-              value={createUserForm.equipmentName}
-              onChange={(e) => setCreateUserForm({ ...createUserForm, equipmentName: e.target.value })}
-              placeholder="e.g. Automated Hematology Analyzer"
+              value={form.itemName}
+              onChange={(e) => updateForm({ itemName: e.target.value })}
+              placeholder={isSoftware ? 'e.g. Laboratory Information System' : 'e.g. Automated Hematology Analyzer'}
               className="text-xs"
+              error={!!fieldErrors.itemName}
+              aria-invalid={!!fieldErrors.itemName}
               required
             />
-          </div>
+          </Field>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="create-brand-model" className="font-semibold text-slate-700 block mb-1">
-                Brand and Model
-              </label>
+          <div className={isSoftware ? '' : 'grid grid-cols-1 sm:grid-cols-2 gap-4'}>
+            <Field id="create-brand" label={isSoftware ? 'Vendor / Version (optional)' : 'Brand and Model'} error={fieldErrors.brand}>
               <Input
-                id="create-brand-model"
+                id="create-brand"
                 type="text"
-                value={createUserForm.brandAndModel}
-                onChange={(e) => setCreateUserForm({ ...createUserForm, brandAndModel: e.target.value })}
-                placeholder="e.g. Sysmex XN-1000"
+                value={form.brand}
+                onChange={(e) => updateForm({ brand: e.target.value })}
+                placeholder={isSoftware ? 'e.g. LabSoft 4.2' : 'e.g. Sysmex XN-1000'}
                 className="text-xs"
-                required
+                error={!!fieldErrors.brand}
+                aria-invalid={!!fieldErrors.brand}
+                required={!isSoftware}
               />
-            </div>
+            </Field>
 
-            <div>
-              <label htmlFor="create-serial-number" className="font-semibold text-slate-700 block mb-1">
-                Serial Number
-              </label>
-              <Input
-                id="create-serial-number"
-                type="text"
-                value={createUserForm.serialNumber}
-                onChange={(e) => setCreateUserForm({ ...createUserForm, serialNumber: e.target.value })}
-                placeholder="e.g. SN-XN1K-44921"
-                className="text-xs font-mono"
-                required
-              />
-            </div>
+            {!isSoftware && (
+              <Field id="create-serial-number" label="Serial Number" error={fieldErrors.serialNumber}>
+                <Input
+                  id="create-serial-number"
+                  type="text"
+                  value={form.serialNumber}
+                  onChange={(e) => updateForm({ serialNumber: e.target.value })}
+                  placeholder="e.g. SN-XN1K-44921"
+                  className="text-xs font-mono"
+                  error={!!fieldErrors.serialNumber}
+                  aria-invalid={!!fieldErrors.serialNumber}
+                  required
+                />
+              </Field>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label htmlFor="create-customer-name" className="font-semibold text-slate-700 block mb-1">
-                Customer Name
-              </label>
-              <Input
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field id="create-customer-name" label="Customer Name" error={fieldErrors.hospital}>
+              <Combobox
                 id="create-customer-name"
-                type="text"
-                value={createUserForm.customerName}
-                onChange={(e) => setCreateUserForm({ ...createUserForm, customerName: e.target.value })}
-                placeholder="e.g. St. Luke's Medical Center"
+                value={hospitalText}
+                onInputChange={(text) => {
+                  setHospitalText(text);
+                  setHospital(null);
+                }}
+                onSearch={setHospitalQuery}
+                options={hospitalOptions}
+                loading={hospitalLoading}
+                onSelect={handleHospitalSelect}
+                renderOption={(o) => (
+                  <span className="flex items-center justify-between gap-2">
+                    <span>{o.name}</span>
+                    <span className="text-muted-slate">{o.account_count} account{o.account_count === 1 ? '' : 's'}</span>
+                  </span>
+                )}
+                createLabel={(text) => `Add new hospital: ${text}`}
+                placeholder="Search hospitals, e.g. St. Luke's"
                 className="text-xs"
-                required
+                error={!!fieldErrors.hospital}
+                aria-invalid={!!fieldErrors.hospital}
               />
-            </div>
+            </Field>
 
-            <div>
-              <label htmlFor="create-customer-email" className="font-semibold text-slate-700 block mb-1">
-                Customer Email
-              </label>
+            <Field id="create-customer-email" label="Customer Email" error={fieldErrors.email}>
               <Input
                 id="create-customer-email"
                 type="email"
-                value={createUserForm.customerEmail}
-                onChange={(e) => setCreateUserForm({ ...createUserForm, customerEmail: e.target.value })}
+                value={form.email}
+                onChange={(e) => updateForm({ email: e.target.value })}
                 placeholder="e.g. contact@hospital.com.ph"
                 className="text-xs"
+                error={!!fieldErrors.email}
+                aria-invalid={!!fieldErrors.email}
                 required
               />
-            </div>
+            </Field>
           </div>
 
-          <div>
-            <label htmlFor="create-sbsi-branch" className="font-semibold text-slate-700 block mb-1">
-              SBSI Branch
-            </label>
+          <Field id="create-sbsi-branch" label="SBSI Branch" error={fieldErrors.branchId}>
             <select
               id="create-sbsi-branch"
-              value={createUserForm.sbsiBranch}
-              onChange={(e) => setCreateUserForm({ ...createUserForm, sbsiBranch: e.target.value })}
-              className="w-full h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs text-dark-slate focus:outline-none focus:ring-1 focus:ring-accent"
+              value={form.branchId}
+              onChange={(e) => updateForm({ branchId: e.target.value })}
+              aria-invalid={!!fieldErrors.branchId}
+              className="w-full h-10 rounded-lg border border-slate-200 bg-white px-4 text-xs text-dark-slate focus:outline-none focus:ring-1 focus:ring-accent"
               required
             >
-              {[
-                'NCR - Main',
-                'Cebu Regional Branch',
-                'Davao Branch',
-                'North Luzon Branch',
-                'Western Visayas Branch',
-                ...availableBranches.filter(
-                  (b) =>
-                    ![
-                      'NCR - Main',
-                      'Cebu Regional Branch',
-                      'Davao Branch',
-                      'North Luzon Branch',
-                      'Western Visayas Branch',
-                    ].includes(b)
-                ),
-              ].map((branch) => (
-                <option key={branch} value={branch}>
-                  {branch}
+              <option value="" disabled>
+                Select a branch
+              </option>
+              {branchOptions.map((b) => (
+                <option key={b.slug} value={b.slug}>
+                  {b.name}
                 </option>
               ))}
             </select>
-          </div>
+          </Field>
         </form>
       </FormModal>
 
-      {/* 8. Integration Settings Modal */}
-      {showSettingsModal && (
-        <Dialog open={showSettingsModal} onOpenChange={setShowSettingsModal}>
-          <DialogContent className="max-w-xl w-full p-6 rounded-2xl bg-white border border-slate-200/80 shadow-2xl">
-            <DialogHeader>
-              <DialogTitle className="text-lg font-bold text-dark-slate flex items-center gap-2">
-                <Settings className="w-5 h-5 text-accent" />
-                CMS API Settings
-              </DialogTitle>
-              <DialogDescription className="text-xs text-muted-slate">
-                Configure CMS endpoint and synchronization preferences.
-              </DialogDescription>
-            </DialogHeader>
+      {/* Existing Account modal: the email already has an account */}
+      <ConfirmationModal
+        isOpen={!!existingAccount}
+        onClose={() => !submitting && setExistingAccount(null)}
+        onConfirm={() =>
+          submitItem('attach', { attach_client_id: existingAccount?.client_id })
+        }
+        title="This is an existing account"
+        description={
+          existingAccount
+            ? `Should we add this ${itemNoun} to ${existingAccount.client_name} (${existingAccount.email})?`
+            : ''
+        }
+        confirmLabel="Add to this account"
+        cancelLabel="Cancel"
+        variant="primary"
+        icon={<UserCheck className="h-6 w-6" />}
+        loading={submitting}
+      >
+        {existingAccount && (
+          <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-left text-xs space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold text-dark-slate">{existingAccount.client_name}</span>
+              {existingAccount.status === 'inactive' && (
+                <Badge variant="medium-muted" size="sm">Inactive</Badge>
+              )}
+            </div>
+            <div className="text-muted-slate break-all">{existingAccount.email}</div>
+          </div>
+        )}
+      </ConfirmationModal>
 
-            <form onSubmit={handleSaveSettings} className="space-y-4 pt-2 text-xs">
-              <div>
-                <label className="font-semibold text-slate-700 block mb-1">CMS API Base Endpoint URL</label>
-                <Input
-                  type="url"
-                  value={settingsForm.cmsApiEndpoint}
-                  onChange={(e) => setSettingsForm({ ...settingsForm, cmsApiEndpoint: e.target.value })}
-                  placeholder="https://cms.sbsi.com.ph/api/v1/customers/sync"
-                  className="text-xs font-mono"
-                  required
-                />
-              </div>
+      {/* Same hospital warning: a new email for a hospital that already has accounts */}
+      <ConfirmationModal
+        isOpen={!!sameHospital}
+        onClose={() => !submitting && setSameHospital(null)}
+        onConfirm={() => submitItem('new', { confirm_same_hospital: true })}
+        title={sameHospital?.organization?.name || hospital?.name || 'Existing hospital'}
+        description={
+          sameHospital
+            ? `This hospital already has ${sameHospital.accounts.length} account(s). Create another account for it?`
+            : ''
+        }
+        confirmLabel="Continue"
+        cancelLabel="Go back"
+        variant="warning"
+        loading={submitting}
+      >
+        {sameHospital && (
+          <ul className="mt-4 max-h-40 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-4 text-left text-xs space-y-2">
+            {sameHospital.accounts.map((a) => (
+              <li key={a.client_id} className="text-dark-slate break-all">{a.email}</li>
+            ))}
+          </ul>
+        )}
+      </ConfirmationModal>
+    </div>
+  );
+}
 
-              <div>
-                <label className="font-semibold text-slate-700 block mb-1">Integration API Secret / Bearer Token</label>
-                <Input
-                  type="password"
-                  value={settingsForm.cmsApiKey}
-                  onChange={(e) => setSettingsForm({ ...settingsForm, cmsApiKey: e.target.value })}
-                  placeholder="cms_sec_live_..."
-                  className="text-xs font-mono"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Automated Synchronization Schedule</label>
-                  <select
-                    value={settingsForm.syncInterval}
-                    onChange={(e) => setSettingsForm({ ...settingsForm, syncInterval: e.target.value })}
-                    className="w-full h-10 rounded-lg border border-slate-200 bg-white px-3 text-xs text-dark-slate focus:outline-none focus:ring-1 focus:ring-accent"
-                  >
-                    <option value="Hourly">Hourly</option>
-                    <option value="Every 6 Hours">Every 6 Hours</option>
-                    <option value="Daily at 02:00 AM">Daily at 02:00 AM</option>
-                    <option value="Manual Only">Manual Fetch Only</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-semibold text-slate-700 block mb-1">Ticketing Webhook Receiver</label>
-                  <Input
-                    type="text"
-                    value={settingsForm.webhookEndpoint}
-                    readOnly
-                    className="text-xs font-mono bg-slate-50 text-slate-500"
-                  />
-                </div>
-              </div>
-
-              {/* Toggles */}
-              <div className="pt-2 space-y-2 border-t border-slate-100">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={settingsForm.autoStoreNewRecords}
-                    onChange={(e) => setSettingsForm({ ...settingsForm, autoStoreNewRecords: e.target.checked })}
-                    className="rounded border-slate-300 text-accent focus:ring-accent"
-                  />
-                  <span className="text-slate-700 font-medium">
-                    Automatically persist newly fetched CMS records to Ticketing DB without manual review
-                  </span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={settingsForm.autoTriageContracts}
-                    onChange={(e) => setSettingsForm({ ...settingsForm, autoTriageContracts: e.target.checked })}
-                    className="rounded border-slate-300 text-accent focus:ring-accent"
-                  />
-                  <span className="text-slate-700 font-medium">
-                    Enforce contract SLA tier prioritization on incoming customer support tickets
-                  </span>
-                </label>
-
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={settingsForm.notifyOnContractExpiry}
-                    onChange={(e) => setSettingsForm({ ...settingsForm, notifyOnContractExpiry: e.target.checked })}
-                    className="rounded border-slate-300 text-accent focus:ring-accent"
-                  />
-                  <span className="text-slate-700 font-medium">
-                    Send alert notifications to SuperAdmin for contracts expiring within 30 days
-                  </span>
-                </label>
-              </div>
-
-              <DialogFooter className="pt-4 border-t border-slate-100 flex items-center justify-end gap-2">
-                <Button type="button" variant="outline" size="sm" onClick={() => setShowSettingsModal(false)}>
-                  Cancel
-                </Button>
-                <Button type="submit" variant="default" size="sm" className="bg-primary hover:bg-[#2F2F8E] text-white">
-                  Save Settings
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+function Field({ id, label, error, children }) {
+  return (
+    <div>
+      <label htmlFor={id} className="font-semibold text-slate-700 block mb-2">
+        {label}
+      </label>
+      {children}
+      {error && (
+        <p className="text-xs text-destructive mt-2" role="alert">
+          {error}
+        </p>
       )}
     </div>
   );

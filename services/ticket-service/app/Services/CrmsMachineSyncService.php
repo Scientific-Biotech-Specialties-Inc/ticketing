@@ -193,7 +193,7 @@ class CrmsMachineSyncService
         return [$id, (string) $response->json('status', 'exists')];
     }
 
-    private function defaultCategoryId(): int
+    public function defaultCategoryId(): int
     {
         $id = DB::table('machine_categories')->where('category_name', self::DEFAULT_CATEGORY)->value('category_ID');
         if ($id) {

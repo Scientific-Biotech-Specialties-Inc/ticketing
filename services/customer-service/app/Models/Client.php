@@ -16,6 +16,7 @@ class Client extends Authenticatable
         'address',
         'contact_number',
         'email',
+        'organization_id',
     ];
 
     protected $hidden = [
@@ -25,6 +26,12 @@ class Client extends Authenticatable
     protected $casts = [
         'status' => 'boolean',
     ];
+
+    /** The hospital this login belongs to (one hospital, many logins). */
+    public function organization()
+    {
+        return $this->belongsTo(CustomerOrganization::class, 'organization_id');
+    }
 
     public function credential()
     {
