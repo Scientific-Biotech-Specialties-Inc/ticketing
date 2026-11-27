@@ -863,6 +863,11 @@ export default function MyTickets({ mode = 'all' }) {
 
     let opts = getCachedTicketFormOptions();
     if (!opts) {
+      try {
+        opts = await getTicketFormOptions();
+      } catch {
+        opts = null;
+      }
     }
     setEditOptions(opts);
 

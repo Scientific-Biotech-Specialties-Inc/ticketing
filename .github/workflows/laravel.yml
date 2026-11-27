@@ -126,6 +126,8 @@ jobs:
       # gitignored, so CI generates a throwaway pair that only exists for this job.
       - name: Generate throwaway OAuth keys
         run: |
+          # Not every service commits a storage/ folder (messaging-service has none).
+          mkdir -p storage
           if [ ! -f storage/oauth-private.key ]; then
             openssl genrsa -out storage/oauth-private.key 2048
             openssl rsa -in storage/oauth-private.key -pubout -out storage/oauth-public.key
@@ -140,13 +142,24 @@ jobs:
       # Suites that force a MySQL test database expect it to be migrated already
       # (locally that database persists between runs). Migrate it here, pointing
       # explicitly at the test database named in phpunit.xml.
+      #
+      # All services share one schema, and migrations carry foreign keys across
+      # owners (machines -> clients, branch_ticket_forecasts -> branches, and
+      # refresh_tokens -> employees in the other direction). Migrating one service
+      # alone fails, so this replays every schema owner's migrations in a single
+      # run. Laravel orders them by timestamp across all paths, as they were applied
+      # to the shared database.
       - name: Migrate MySQL test database
         run: |
           conn=$(grep -oP 'name="DB_CONNECTION" value="\K[^"]+' phpunit.xml | head -1)
           db=$(grep -oP 'name="DB_DATABASE" value="\K[^"]+' phpunit.xml | head -1)
           if [ "$conn" = "mysql" ]; then
             case "$db" in *_test) ;; *) echo "Refusing to migrate non-test database '$db'"; exit 1 ;; esac
-            DB_CONNECTION=mysql DB_DATABASE="$db" php artisan migrate --force
+            paths=""
+            for owner in customer-service employee-service ticket-service analytics-service notification-service; do
+              paths="$paths --path=$GITHUB_WORKSPACE/services/$owner/database/migrations"
+            done
+            DB_CONNECTION=mysql DB_DATABASE="$db" php artisan migrate --force --realpath $paths
             if [ -f database/seeders/TicketReferenceSeeder.php ]; then
               DB_CONNECTION=mysql DB_DATABASE="$db" php artisan db:seed --class=TicketReferenceSeeder --force
             fi

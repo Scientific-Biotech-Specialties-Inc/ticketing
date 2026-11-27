@@ -44,10 +44,10 @@ describe('AssignModal close without assigning', () => {
     return onCloseTicket;
   };
 
-  it('shows Resolve and resolves after remarks confirmation when the matrix allows Open -> Closed', async () => {
+  it('shows Close Ticket and resolves after remarks confirmation when the matrix allows Open -> Closed', async () => {
     const onCloseTicket = renderModal({ ...baseTicket, allowed_transitions: ['Assigned', 'Closed'] });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Resolve' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close Ticket' }));
     expect(await screen.findByText('Resolve this ticket?')).toBeInTheDocument();
     expect(onCloseTicket).not.toHaveBeenCalled();
 
@@ -60,14 +60,14 @@ describe('AssignModal close without assigning', () => {
 
   it('hides Resolve when the matrix does not allow Open -> Closed', () => {
     renderModal({ ...baseTicket, allowed_transitions: ['Assigned'] });
-    expect(screen.queryByRole('button', { name: 'Resolve' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Close Ticket' })).not.toBeInTheDocument();
   });
 
   it('shows the backend error if resolving is rejected', async () => {
     const onCloseTicket = vi.fn(() => Promise.reject({ response: { data: { message: 'Invalid transition from Open to Closed.' } } }));
     renderModal({ ...baseTicket, allowed_transitions: ['Closed'] }, onCloseTicket);
 
-    fireEvent.click(screen.getByRole('button', { name: 'Resolve' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close Ticket' }));
     fireEvent.change(await screen.findByPlaceholderText('Explain how this ticket was resolved...'), {
       target: { value: 'Attempted to resolve.' },
     });

@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function ResponsiveTable({ columns, data, renderCard, minWidth = 900 }) {
+export default function ResponsiveTable({ columns, data, renderCard, onRowClick, minWidth = 900 }) {
   return (
     <>
       <div className="hidden sm:block overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
@@ -51,7 +51,15 @@ export default function ResponsiveTable({ columns, data, renderCard, minWidth = 
                       <span className="text-sm font-medium text-gray-800 text-right truncate">{c.cell ? c.cell(row) : row[c.key]}</span>
                     </div>
                   ))}
-                  <button className="mt-2 w-full rounded-xl bg-[#252578] text-white text-sm font-semibold py-2.5 min-h-[44px]">View details</button>
+                  {typeof onRowClick === 'function' && (
+                    <button
+                      type="button"
+                      onClick={() => onRowClick(row)}
+                      className="mt-2 w-full rounded-xl bg-[#252578] text-white text-sm font-semibold py-2.5 min-h-[44px] cursor-pointer"
+                    >
+                      View details
+                    </button>
+                  )}
                 </div>
               )}
             </div>

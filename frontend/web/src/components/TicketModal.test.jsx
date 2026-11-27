@@ -1,7 +1,7 @@
 import React from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
 import TicketModal from './TicketModal';
 
 vi.mock('@/services/ticketService', () => {
@@ -23,17 +23,42 @@ vi.mock('@/services/ticketService', () => {
 const LOWERCASE_TITLE = 'printer not working';
 const DESCRIPTION = 'The printer on floor two jams every time we print.';
 
+const OPTION_LABELS = {
+  problem_category_ID: {
+    3: 'Hardware',
+    4: 'Network',
+  },
+  machine_ID: {
+    7: 'Centrifuge - SN001',
+  },
+};
+
 const field = (name) => document.querySelector(`[name="${name}"]`);
 
 const setValue = (el, value) => fireEvent.change(el, { target: { value } });
-const choose = (name, value) => setValue(field(name), String(value));
+const choose = (name, value) => {
+  const el = field(name);
+  if (el?.tagName === 'SELECT') {
+    setValue(el, String(value));
+    return;
+  }
+  fireEvent.click(el);
+  const label = OPTION_LABELS[name]?.[value] ?? String(value);
+  fireEvent.click(screen.getByRole('option', { name: label }));
+};
+
+const selectBounded = (name, optionText) => {
+  const trigger = field(name);
+  fireEvent.click(trigger);
+  fireEvent.click(screen.getByRole('option', { name: optionText }));
+};
 
 async function fillBasics({ title = LOWERCASE_TITLE } = {}) {
-  await waitFor(() => expect(field('problem_category_ID').options.length).toBeGreaterThan(1));
+  await waitFor(() => expect(field('problem_category_ID')).not.toBeDisabled());
   const titleInput = screen.getByPlaceholderText('Brief description of the issue');
   setValue(titleInput, title);
   fireEvent.blur(titleInput);
-  choose('problem_category_ID', 3);
+  selectBounded('problem_category_ID', 'Hardware');
   setValue(field('description'), DESCRIPTION);
 }
 
@@ -54,16 +79,17 @@ describe('TicketModal title casing prompt (covers: AC-7)', () => {
     renderModal();
     await fillBasics();
 
-    fireEvent.focus(field('machine_ID'));
-    fireEvent.click(field('machine_ID'));
+    const eqBtn = field('machine_ID');
+    fireEvent.focus(eqBtn);
+    fireEvent.click(eqBtn);
 
     expect(screen.queryByText('Proper Casing Applied')).not.toBeInTheDocument();
   });
 
-  it('automatically applies proper casing on Submit when the title needs casing', async () => {
+  it('formats title casing on Submit when the title needs casing', async () => {
     const { onSubmit } = renderModal();
     await fillBasics();
-    choose('machine_ID', 7);
+    selectBounded('machine_ID', 'Centrifuge - SN001');
 
     fireEvent.click(screen.getByRole('button', { name: 'Submit Ticket' }));
 
@@ -74,7 +100,7 @@ describe('TicketModal title casing prompt (covers: AC-7)', () => {
   it('submits straight away when the title is already in proper casing', async () => {
     const { onSubmit } = renderModal();
     await fillBasics({ title: 'Printer Not Working' });
-    choose('machine_ID', 7);
+    selectBounded('machine_ID', 'Centrifuge - SN001');
 
     fireEvent.click(screen.getByRole('button', { name: 'Submit Ticket' }));
 
@@ -91,13 +117,13 @@ describe('TicketModal department rule (covers: AC-8)', () => {
     await waitFor(() => expect(field('problem_category_ID')).toBeInTheDocument());
 
     expect(field('department_id')).toBeNull();
-    expect(field('machine_ID')).toBeRequired();
+    expect(field('machine_ID')).toBeInTheDocument();
   });
 
   it('does not send department_id when the selector is off', async () => {
     const { onSubmit } = renderModal();
     await fillBasics({ title: 'Printer Not Working' });
-    choose('machine_ID', 7);
+    selectBounded('machine_ID', 'Centrifuge - SN001');
 
     fireEvent.click(screen.getByRole('button', { name: 'Submit Ticket' }));
 
@@ -110,7 +136,7 @@ describe('TicketModal department rule (covers: AC-8)', () => {
     await fillBasics({ title: 'Printer Not Working' });
 
     expect(field('department_id').value).toBe('1');
-    expect(field('machine_ID')).toBeRequired();
+    expect(field('machine_ID')).toHaveTextContent(/Select Equipment/i);
     expect(screen.getByRole('button', { name: 'Submit Ticket' })).toBeDisabled();
   });
 
@@ -121,7 +147,7 @@ describe('TicketModal department rule (covers: AC-8)', () => {
     choose('department_id', 2);
 
     expect(screen.getByText('(Optional for IT)')).toBeInTheDocument();
-    expect(field('machine_ID')).not.toBeRequired();
+    expect(field('machine_ID')).toHaveTextContent(/No equipment/i);
     fireEvent.click(screen.getByRole('button', { name: 'Submit Ticket' }));
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));

@@ -412,44 +412,106 @@ export const buildTechnicianTimeline = (ticket) => {
 };
 
 /**
- * Active assignees list for spec 0038 (excludes completed and reassign_requested).
+ * Returns active assignees in order, excluding completed or reassign_requested entries.
  */
-export const getAssigneeList = (ticket) => {
-  if (!ticket || !Array.isArray(ticket.assigned_employees)) return [];
-  return ticket.assigned_employees
+export const getAssigneeList = (ticket = {}) => {
+  const list = Array.isArray(ticket?.assigned_employees) ? ticket.assigned_employees : [];
+  return list
     .filter((emp) => {
       if (!emp) return false;
       if (emp.completed_at) return false;
-      const status = String(emp.assignment_status || emp.status || 'assigned').toLowerCase();
-      return status !== 'reassign_requested' && status !== 'reassigned' && status !== 'removed';
+      const status = String(emp.assignment_status || '').toLowerCase();
+      if (status === 'reassign_requested' || status === 'completed') return false;
+      return true;
     })
     .map((emp) => {
-      const name = emp.name || emp.full_name || `${emp.first_name || ''} ${emp.last_name || ''}`.trim();
-      const firstName = name.split(' ')[0] || 'Staff';
-      const status = String(emp.assignment_status || emp.status || 'assigned').toLowerCase();
+      const fullName = emp.name || `${emp.first_name || ''} ${emp.last_name || ''}`.trim() || '';
+      const firstName = emp.first_name || fullName.split(/\s+/)[0] || '';
+      const status = String(emp.assignment_status || '').toLowerCase();
       return {
         ...emp,
-        id: emp.id ?? emp.emp_id ?? emp.employee_id,
-        name,
         firstName,
         isAccepted: status === 'accepted',
-        lastReminderSentAt: emp.last_reminder_sent_at ?? null,
+        lastReminderSentAt: emp.last_reminder_sent_at || null,
       };
     });
 };
 
 /**
- * Role-aware messages path from current location pathname (spec 0038 AC-17 / AC-18).
+ * Maps a portal pathname to its corresponding messages route.
  */
-export const getMessagesPath = (pathname = '') => {
-  const path = String(pathname || '');
-  if (path.startsWith('/cs-manager')) return '/cs-manager/messages';
-  if (path.startsWith('/cs')) return '/cs/messages';
-  if (path.startsWith('/service-manager')) return '/service-manager/messages';
-  if (path.startsWith('/it-manager')) return '/it-manager/messages';
-  if (path.startsWith('/employee')) return '/employee/messages';
+export const getMessagesPath = (pathname = '/') => {
+  const p = String(pathname || '/');
+  if (p.startsWith('/cs-manager')) return '/cs-manager/messages';
+  if (p.startsWith('/cs')) return '/cs/messages';
+  if (p.startsWith('/service-manager')) return '/service-manager/messages';
+  if (p.startsWith('/it-manager')) return '/it-manager/messages';
+  if (p.startsWith('/employee')) return '/employee/messages';
   return '/messages';
 };
 
+/**
+ * Determine whether the given user is one of the technicians assigned to solve this ticket.
+ */
+export const isUserAssignedToTicket = (ticket, user) => {
+  if (!ticket || !user) return false;
+  const userIds = [user.emp_id, user.id, user.employee_id]
+    .filter((v) => v != null && v !== '')
+    .map(String);
+  const userEmail = user.email ? String(user.email).trim().toLowerCase() : '';
+  const userName = (
+    user.name ||
+    user.full_name ||
+    `${user.first_name || ''} ${user.last_name || ''}`.trim()
+  )
+    .trim()
+    .toLowerCase();
 
+  const scalarIds = [ticket.assigned_to, ticket.assigned_emp_id, ticket.emp_id]
+    .filter((v) => v != null && v !== '')
+    .map(String);
+  if (scalarIds.some((id) => userIds.includes(id))) {
+    return true;
+  }
+
+  const assignees = getAllAssignees(ticket);
+  return assignees.some((a) => {
+    if (a.id != null && userIds.includes(String(a.id))) return true;
+    if (userEmail && a.email && String(a.email).trim().toLowerCase() === userEmail) return true;
+    if (userName && a.name && String(a.name).trim().toLowerCase() === userName) return true;
+    return false;
+  });
+};
+
+/**
+ * Determine whether the given user is the requestor/creator of this ticket.
+ */
+export const isUserRequestorOfTicket = (ticket, user) => {
+  if (!ticket || !user) return false;
+  const userIds = [user.client_ID, user.client_id, user.id, user.emp_id]
+    .filter((v) => v != null && v !== '')
+    .map(String);
+  const creatorIds = [ticket.created_by, ticket.client_ID, ticket.client_id, ticket.requestor_id]
+    .filter((v) => v != null && v !== '')
+    .map(String);
+  if (creatorIds.some((id) => userIds.includes(id))) {
+    return true;
+  }
+
+  const userEmail = user.email ? String(user.email).trim().toLowerCase() : '';
+  const ticketEmail = String(ticket.requestor_email || ticket.customer_email || '').trim().toLowerCase();
+  if (userEmail && ticketEmail && userEmail === ticketEmail) {
+    return true;
+  }
+
+  const userName = (
+    user.name ||
+    user.full_name ||
+    `${user.first_name || ''} ${user.last_name || ''}`.trim()
+  )
+    .trim()
+    .toLowerCase();
+  const ticketRequestor = String(ticket.customer || ticket.requestor || '').trim().toLowerCase();
+  return Boolean(userName && ticketRequestor && userName === ticketRequestor);
+};
 

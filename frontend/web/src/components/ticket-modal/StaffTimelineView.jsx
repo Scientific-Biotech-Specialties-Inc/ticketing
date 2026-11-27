@@ -11,6 +11,7 @@ export default function StaffTimelineView({
   ticket,
   serverEvents = [],
   className = '',
+  showVisibilityFilter = true,
 }) {
   const [filter, setFilter] = useState('all'); // 'all' | 'customer' | 'internal'
 
@@ -165,41 +166,43 @@ export default function StaffTimelineView({
           TIMELINE ({filteredEvents.length})
         </span>
 
-        <div className="flex items-center gap-1 bg-[#F5F6FA] p-0.5 rounded-lg border border-[#D5D9E4]">
-          <button
-            type="button"
-            onClick={() => setFilter('all')}
-            className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-              filter === 'all'
-                ? 'bg-white text-[#1E2A78] shadow-xs'
-                : 'text-[#5A6178] hover:text-[#1B2033]'
-            }`}
-          >
-            All
-          </button>
-          <button
-            type="button"
-            onClick={() => setFilter('customer')}
-            className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-              filter === 'customer'
-                ? 'bg-white text-[#1E2A78] shadow-xs'
-                : 'text-[#5A6178] hover:text-[#1B2033]'
-            }`}
-          >
-            Customer-visible
-          </button>
-          <button
-            type="button"
-            onClick={() => setFilter('internal')}
-            className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
-              filter === 'internal'
-                ? 'bg-white text-[#1E2A78] shadow-xs'
-                : 'text-[#5A6178] hover:text-[#1B2033]'
-            }`}
-          >
-            Internal
-          </button>
-        </div>
+        {showVisibilityFilter && (
+          <div className="flex items-center gap-1 bg-[#F5F6FA] p-0.5 rounded-lg border border-[#D5D9E4]">
+            <button
+              type="button"
+              onClick={() => setFilter('all')}
+              className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                filter === 'all'
+                  ? 'bg-white text-[#1E2A78] shadow-xs'
+                  : 'text-[#5A6178] hover:text-[#1B2033]'
+              }`}
+            >
+              All
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilter('customer')}
+              className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                filter === 'customer'
+                  ? 'bg-white text-[#1E2A78] shadow-xs'
+                  : 'text-[#5A6178] hover:text-[#1B2033]'
+              }`}
+            >
+              Customer-visible
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilter('internal')}
+              className={`px-2.5 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                filter === 'internal'
+                  ? 'bg-white text-[#1E2A78] shadow-xs'
+                  : 'text-[#5A6178] hover:text-[#1B2033]'
+              }`}
+            >
+              Internal
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Events List */}

@@ -50,6 +50,7 @@ const ROUTE_MAP = [
   { pattern: /^\/admin\/?$/, title: 'Admin Dashboard' },
 
   // SuperAdmin Routes
+  { pattern: /^\/superadmin\/cms-integration\/?$/, title: 'Customer & Contract' },
   { pattern: /^\/superadmin\/(ticket-config|config)(\/.*)?$/, title: 'Ticket Configuration' },
   { pattern: /^\/superadmin\/audit-logs\/?$/, title: 'Audit Logs' },
   { pattern: /^\/superadmin\/history\/?$/, title: 'System History' },

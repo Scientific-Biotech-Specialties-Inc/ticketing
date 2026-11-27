@@ -20,6 +20,11 @@ return new class extends Migration
             });
         }
 
+        // CI replays every owning service's migrations into one shared test schema from another
+        // service's app, where this employee-service class is not autoloadable.
+        if (!class_exists(DepartmentCodeGenerator::class)) {
+            require_once __DIR__ . '/../../app/Services/DepartmentCodeGenerator.php';
+        }
         $generator = new DepartmentCodeGenerator();
         $fixed = ['it' => 'IT', 'service' => 'SVC'];
 

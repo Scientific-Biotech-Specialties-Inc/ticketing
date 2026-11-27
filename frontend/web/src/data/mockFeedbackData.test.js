@@ -80,9 +80,10 @@ describe('feedback requests to the analytics service (spec 0034)', () => {
 
     await deleteFeedback('5001');
 
-    const call = callTo('DELETE', '/api/ticketing/analytics/feedback/ticket/5001');
-    if (call) {
-      expect(call[1].headers).not.toHaveProperty('Authorization');
+    const match = callTo('DELETE', '/api/ticketing/analytics/feedback/ticket/5001');
+    if (match) {
+      const [, init] = match;
+      expect(init.headers).not.toHaveProperty('Authorization');
     } else {
       expect(global.fetch).not.toHaveBeenCalled();
     }

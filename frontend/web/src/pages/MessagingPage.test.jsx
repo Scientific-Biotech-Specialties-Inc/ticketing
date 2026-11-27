@@ -645,6 +645,42 @@ describe('MessagingPage Component Tests (Acceptance Criteria)', () => {
     });
   });
 
+  it('opens the deep linked internal ticket chat for CS instead of the first external chat', async () => {
+    // useLocation is mocked with state.selectedTicketId = 101; here 101 is an internal ticket.
+    ticketService.getCSIncomingTickets.mockResolvedValueOnce([
+      {
+        ticket_ID: 201,
+        id: 201,
+        subject: 'External customer printer issue',
+        status: 'In Progress',
+        is_internal: false,
+        client: { client_name: 'Acme Corp' },
+      },
+      {
+        ticket_ID: 101,
+        id: 101,
+        subject: 'Internal laptop replacement',
+        status: 'In Progress',
+        is_internal: true,
+        created_by_name: 'Juan Dela Cruz',
+      },
+    ]);
+
+    render(<MessagingPage />);
+
+    await waitFor(() => {
+      expect(messagingService.getTicketMessages).toHaveBeenCalled();
+    });
+
+    // The Internal filter is shown, so the internal ticket is listed and the external one is not.
+    expect(screen.getAllByText(/Internal laptop replacement/i).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText(/External customer printer issue/i)).not.toBeInTheDocument();
+    // The chat loaded is the deep linked ticket's, never the first external one.
+    const loadedIds = messagingService.getTicketMessages.mock.calls.map((c) => Number(String(c[0]).replace(/\D/g, '')));
+    expect(loadedIds).toContain(101);
+    expect(loadedIds).not.toContain(201);
+  });
+
   it('renders mobile hamburger menu to toggle conversation drawer and closes on close button or selection', async () => {
     render(<MessagingPage />);
 

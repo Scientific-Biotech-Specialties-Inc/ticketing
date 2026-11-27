@@ -31,6 +31,39 @@ class AttachmentController extends Controller
     }
 
     /**
+     * The uploader a trusted internal caller names for itself, or null to fall back to bearer
+     * authentication.
+     *
+     * Accepted only when X-Internal-Token matches INTERNAL_TOKEN (hash_equals; an unset expected
+     * value never matches) AND the caller supplies a well formed uploader. A malformed claim falls
+     * through to the normal bearer check rather than being honoured, so a bad internal request can
+     * never upload anonymously.
+     *
+     * @return array{user_id: int, user_type: string}|null
+     */
+    protected function internalUploaderIdentity(Request $request): ?array
+    {
+        $expected = (string) env('INTERNAL_TOKEN', '');
+        $provided = (string) $request->header('X-Internal-Token', '');
+
+        if ($expected === '' || $provided === '' || !hash_equals($expected, $provided)) {
+            return null;
+        }
+
+        $uploaderId = $request->input('uploaded_by_id');
+        $uploaderType = strtolower(trim((string) $request->input('uploaded_by_type', '')));
+
+        if (!is_numeric($uploaderId) || (int) $uploaderId <= 0) {
+            return null;
+        }
+        if (!in_array($uploaderType, ['employee', 'customer'], true)) {
+            return null;
+        }
+
+        return ['user_id' => (int) $uploaderId, 'user_type' => $uploaderType];
+    }
+
+    /**
      * The caller's bearer token: the Authorization header, else the access_token cookie
      * (the same two sources ticket-service auth.subsystem accepts).
      */
@@ -284,12 +317,22 @@ class AttachmentController extends Controller
 
         // Spec 0037 (AC-4): resolve the verified uploader before anything is scanned or stored.
         $bearer = $this->callerBearer($request);
-        $identity = $this->access->check($bearer);
-        if ($identity === AttachmentAccessClient::UNAVAILABLE) {
-            return response()->json(['message' => 'Unable to verify your identity right now. Please try again later.'], 503);
-        }
-        if (!is_array($identity)) {
-            return response()->json(['message' => 'Unauthenticated.'], 401);
+
+        // A trusted internal caller uploads on behalf of a user who has no session here: ticket-service
+        // raising a ticket for a subsystem such as PRS, which authenticates service to service and
+        // has already resolved the staff member it is acting for. It presents X-Internal-Token and
+        // names the uploader, so the row still records who the file belongs to. Nothing else is
+        // relaxed - the ClamAV scan, the size and type limits and quarantine all still apply.
+        $identity = $this->internalUploaderIdentity($request);
+
+        if ($identity === null) {
+            $identity = $this->access->check($bearer);
+            if ($identity === AttachmentAccessClient::UNAVAILABLE) {
+                return response()->json(['message' => 'Unable to verify your identity right now. Please try again later.'], 503);
+            }
+            if (!is_array($identity)) {
+                return response()->json(['message' => 'Unauthenticated.'], 401);
+            }
         }
 
         // A chat upload names its ticket. Bind it to that ticket straight away when the

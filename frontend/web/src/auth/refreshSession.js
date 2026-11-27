@@ -24,6 +24,10 @@ export const refreshAccessToken = async () => {
     return refreshInFlight;
   }
 
+  if (import.meta.env.VITE_APP_MODE !== 'customer') {
+    return false;
+  }
+
   const token = tokenStore.getToken();
   if (token === 'frontend-dev-token') {
     return false;

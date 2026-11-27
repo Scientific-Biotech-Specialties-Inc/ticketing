@@ -4,6 +4,12 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import TicketDetailModal from './TicketDetailModal';
 import * as ticketService from '@/services/ticketService';
 import { ToastProvider } from '@/context/ToastContext';
+import { isUserAssignedToTicket, isUserRequestorOfTicket } from '../ticket-modal/ticketModalUtils';
+
+const mockUseAuth = vi.fn(() => ({ user: null }));
+vi.mock('@/context/AuthContext', () => ({
+  useAuth: () => mockUseAuth(),
+}));
 
 vi.mock('@/services/ticketService', () => ({
   acceptTicket: vi.fn(),
@@ -138,7 +144,7 @@ describe('Technician TicketDetailModal (Awaiting Acceptance & Declined States)',
     expect(screen.getByText(/Your reassignment request wasn't approved/i)).toBeInTheDocument();
     expect(screen.getByText(/Reason from Sarah CS Coordinator:/i)).toBeInTheDocument();
     expect(screen.getAllByText(/Staff shortage in ICU\. Please proceed with standard diagnostic protocol\./i).length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: /ask coordinator why/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /ask coordinator why/i })).not.toBeInTheDocument();
 
     // Decision card button switches to "Request reassignment again" with helper text
     expect(screen.getByRole('button', { name: 'Request reassignment again' })).toBeInTheDocument();
@@ -227,5 +233,48 @@ describe('Technician TicketDetailModal (Awaiting Acceptance & Declined States)',
     fireEvent.click(msgBtn);
 
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('11. hides timeline visibility filters (All / Customer-visible / Internal) for employees', () => {
+    renderModal();
+
+    fireEvent.click(screen.getByRole('tab', { name: /Timeline/i }));
+
+    expect(screen.queryByRole('button', { name: 'Customer-visible' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Internal' })).not.toBeInTheDocument();
+  });
+
+  it('12. hides Accept ticket and Request reassignment when the employee is the requestor and not assigned', () => {
+    mockUseAuth.mockReturnValue({
+      user: { emp_id: 50, id: 50, name: 'General Employee', role: 'employee' },
+    });
+
+    const requestorTicket = {
+      ...mockUnacceptedTicket,
+      created_by: 50,
+      customer: 'General Employee',
+      assigned_employees: [{ emp_id: 88, name: 'Assigned Tech' }],
+    };
+
+    renderModal({ ticket: requestorTicket });
+
+    expect(screen.queryByText('ACTION NEEDED')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Accept/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Request reassignment/i })).not.toBeInTheDocument();
+    mockUseAuth.mockReturnValue({ user: null });
+  });
+
+  it('13. accurately distinguishes assigned technician vs requestor in ticketModalUtils', () => {
+    const requestorUser = { emp_id: 50, id: 50, name: 'General Employee' };
+    const assignedUser = { emp_id: 88, id: 88, name: 'Assigned Tech' };
+    const ticket = {
+      created_by: 50,
+      customer: 'General Employee',
+      assigned_employees: [{ emp_id: 88, name: 'Assigned Tech' }],
+    };
+
+    expect(isUserRequestorOfTicket(ticket, requestorUser)).toBe(true);
+    expect(isUserAssignedToTicket(ticket, requestorUser)).toBe(false);
+    expect(isUserAssignedToTicket(ticket, assignedUser)).toBe(true);
   });
 });

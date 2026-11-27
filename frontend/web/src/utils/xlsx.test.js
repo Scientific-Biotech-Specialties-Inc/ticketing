@@ -61,7 +61,7 @@ describe('xlsx writer (spec 0029 AC-16)', () => {
   it('puts the header below the title and filter rows, frozen and filterable', () => {
     const sheet = open(sample())['xl/worksheets/sheet1.xml'];
     // Title row 1, two meta rows, one blank row, header on row 5.
-    expect(sheet).toMatch(/<row r="5"[^>]*>/);
+    expect(sheet).toMatch(/<row r="5"[\s>]/);
     expect(sheet).toContain('<pane ySplit="5" topLeftCell="A6" activePane="bottomLeft" state="frozen"/>');
     expect(sheet).toContain('<autoFilter ref="A5:D7"/>');
     expect(sheet).toContain('<dimension ref="A1:D7"/>');

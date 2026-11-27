@@ -1,14 +1,22 @@
 import React, { useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import Header from './Header';
 import SidebarEmployee from './SidebarEmployee';
 import { useAuth } from '@/context/AuthContext';
 import ForceChangePasswordModal from './ForceChangePasswordModal';
 import MaintenanceGate from './MaintenanceGate';
+import { checkIsRequestor, isRequestorAllowedPath, REQUESTOR_HOME } from '@/utils/ticketingAccess';
 
 export default function EmployeeLayout() {
-  const { isFirstLogin } = useAuth();
+  const { isFirstLogin, user } = useAuth();
+  const location = useLocation();
   const [sidebarHovered, setSidebarHovered] = useState(false);
+
+  // Spec 0045 (AC-12): requestors only get My Tickets, Messages, Notifications, Profile and their
+  // own ticket history. Work queue pages redirect to My Tickets (the APIs also return 403).
+  if (checkIsRequestor(user) && !isRequestorAllowedPath(location.pathname)) {
+    return <Navigate to={REQUESTOR_HOME} replace />;
+  }
 
   return (
     <div className="min-h-screen bg-page font-sans flex flex-col text-dark-slate w-full max-w-full overflow-x-hidden">
@@ -27,4 +35,3 @@ export default function EmployeeLayout() {
     </div>
   );
 }
-

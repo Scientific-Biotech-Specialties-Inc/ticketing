@@ -18,6 +18,7 @@ import {
 } from '@/context/AuthContext';
 import { BranchProvider } from '@/context/BranchContext';
 import PrivateRoute from '@/routes/PrivateRoute';
+import { checkIsRequestor, REQUESTOR_HOME } from '@/utils/ticketingAccess';
 import GuestRoute from '@/routes/GuestRoute';
 import AuthGate from '@/routes/AuthGate';
 import WrongPortal from '@/components/WrongPortal.jsx';
@@ -83,6 +84,7 @@ const AdminLayout = React.lazy(() => import('./components/AdminLayout.jsx'));
 const AdminDashboard = React.lazy(() => import('./pages/AdminDashboard.jsx'));
 const AdminEmployees = React.lazy(() => import('./pages/AdminEmployees.jsx'));
 const AdminReports = React.lazy(() => import('./pages/AdminReports.jsx'));
+const AdminTicketingEmployees = React.lazy(() => import('./pages/AdminTicketingEmployees.jsx'));
 const ExternalFeedbackPage = React.lazy(() => import('./pages/ExternalFeedbackPage.jsx'));
 
 // ─── Employee Portal Gate ─────────────────────────────────────────────────────
@@ -137,6 +139,8 @@ function EmployeePortalGate() {
 
   if (isSuperAdmin)     return <Navigate to="/superadmin/dashboard" replace />;
   if (isAdmin)          return <Navigate to="/admin/dashboard" replace />;
+  // Spec 0045 (AC-12): non designated staff land on My Tickets, whatever their role.
+  if (checkIsRequestor(user)) return <Navigate to={REQUESTOR_HOME} replace />;
   if (isItManager)      return <Navigate to="/it-manager/dashboard" replace />;
   if (isServiceManager) return <Navigate to="/service-manager/dashboard" replace />;
   if (isCSManager)      return <Navigate to="/cs-manager/dashboard" replace />;
@@ -153,8 +157,47 @@ function EmployeePortalGate() {
   return null;
 }
 
+class RootErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('Unhandled application error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-page p-6 text-dark-slate">
+          <div className="max-w-md w-full rounded-2xl border border-border bg-white p-8 text-center shadow-sm space-y-4">
+            <h1 className="text-xl font-bold text-primary">Something went wrong</h1>
+            <p className="text-sm text-muted-slate">
+              An unexpected error occurred while rendering this page. Reload to recover your session.
+            </p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover cursor-pointer"
+            >
+              Reload Page
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function App() {
   return (
+    <RootErrorBoundary>
     <AuthProvider>
       <BranchProvider>
         <ToastProvider>
@@ -233,14 +276,16 @@ function App() {
               />
 
               {/* /superadmin/dev-login — dev-only mock login */}
-              <Route
-                path="/superadmin/dev-login"
-                element={
-                  <GuestRoute>
-                    <SuperAdminDevLogin />
-                  </GuestRoute>
-                }
-              />
+              {import.meta.env.DEV && (
+                <Route
+                  path="/superadmin/dev-login"
+                  element={
+                    <GuestRoute>
+                      <SuperAdminDevLogin />
+                    </GuestRoute>
+                  }
+                />
+              )}
 
               {/* External Customer Feedback (accessible directly via email links or portal) */}
               <Route path="/feedback/:ticketId" element={<ExternalFeedbackPage />} />
@@ -399,7 +444,8 @@ function App() {
               >
                 <Route index element={<Navigate to="dashboard" replace />} />
                 <Route path="dashboard" element={<AdminDashboard />} />
-                <Route path="cms-integration" element={<SuperAdminCMSIntegration />} />
+                <Route path="customers" element={<SuperAdminCMSIntegration />} />
+                <Route path="cms-integration" element={<Navigate to="/superadmin/customers" replace />} />
                 <Route path="departments" element={<AdminDashboard initialTab="departments" />} />
                 <Route path="employees" element={<AdminDashboard initialTab="employees" />} />
                 <Route path="predictive" element={<AdminDashboard initialTab="predictive" />} />
@@ -433,6 +479,7 @@ function App() {
                 <Route path="employees" element={<AdminDashboard initialTab="employees" />} />
                 <Route path="predictive" element={<AdminDashboard initialTab="predictive" />} />
                 <Route path="reports" element={<AdminReports />} />
+                <Route path="ticketing-employees" element={<AdminTicketingEmployees />} />
                 <Route path="profile" element={<Profile />} />
                 <Route path="notifications" element={<Notifications />} />
               </Route>
@@ -448,7 +495,21 @@ function App() {
               <Route
                 path="*"
                 element={
-                  <div className="p-8 text-center text-red-500 font-bold">404 Page Not Found</div>
+                  <div className="min-h-screen flex items-center justify-center bg-page p-6 text-dark-slate">
+                    <div className="max-w-md w-full rounded-2xl border border-border bg-white p-8 text-center shadow-sm space-y-3">
+                      <div className="text-4xl font-bold text-primary">404</div>
+                      <h1 className="text-lg font-bold text-dark-slate">Page Not Found</h1>
+                      <p className="text-sm text-muted-slate">
+                        The page you requested does not exist or has been moved.
+                      </p>
+                      <a
+                        href={import.meta.env.BASE_URL || '/'}
+                        className="inline-flex items-center justify-center rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:bg-primary-hover"
+                      >
+                        Return Home
+                      </a>
+                    </div>
+                  </div>
                 }
               />
             </Routes>
@@ -458,6 +519,7 @@ function App() {
         </ToastProvider>
     </BranchProvider>
     </AuthProvider>
+    </RootErrorBoundary>
   );
 }
 

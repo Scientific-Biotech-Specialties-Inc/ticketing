@@ -457,7 +457,7 @@ describe('Ticket History Filters & Internal Summary Modal', () => {
     );
 
     expect(screen.queryByText('Message the assigned employee')).toBeNull();
-    expect(screen.getByText('Message customer')).toBeInTheDocument();
+    expect(screen.getByText('Message')).toBeInTheDocument();
     expect(screen.getByText('Message Tech')).toBeInTheDocument();
   });
 

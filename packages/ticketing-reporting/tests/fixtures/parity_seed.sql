@@ -48,15 +48,15 @@ INSERT INTO machines (machine_ID, category_ID, client_ID, branch_id, machine_nam
 (1, 1, 1, 'main', 'Ultrasound X1', 'SN-PARITY-1', 'X1', 'Acme', 'active', '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
 (2, 1, 2, 'north', 'MRI Scanner M2', 'SN-PARITY-2', 'M2', 'Acme', 'active', '2026-01-01 00:00:00', '2026-01-01 00:00:00');
 
-INSERT INTO employees (emp_id, email, first_name, last_name, role, department, branch, branch_id, is_active, created_at, updated_at) VALUES
-(100, 'parity.super@example.test', 'Sam', 'Super', 'superadmin', 'IT', 'Main Branch', 1, 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
-(101, 'parity.admin@example.test', 'Alice', 'Admin', 'admin', 'IT', 'Main Branch', 1, 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
-(110, 'parity.svc.main@example.test', 'Ben', 'Service', 'Employee', 'Service', 'Main Branch', 1, 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
-(111, 'parity.it.main@example.test', 'Cara', 'Tech', 'Employee', 'IT', 'Main Branch', 1, 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
-(120, 'parity.svc.north@example.test', 'Dan', 'North', 'Employee', 'Service', 'North Branch', 2, 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
-(121, 'parity.idle@example.test', 'Ivy', 'Idle', 'Employee', 'Service', 'Main Branch', 1, 0, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
-(130, 'parity.cs@example.test', 'Cy', 'Support', 'Customer Service', 'Customer Service', 'Main Branch', 1, 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
-(140, 'parity.finance@example.test', 'Fay', 'Ledger', 'Employee', 'Finance', 'Main Branch', 1, 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00');
+INSERT INTO employees (emp_id, email, first_name, last_name, role, department, branch, branch_id, is_active, is_ticketing_employee, created_at, updated_at) VALUES
+(100, 'parity.super@example.test', 'Sam', 'Super', 'superadmin', 'IT', 'Main Branch', 1, 1, 0, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+(101, 'parity.admin@example.test', 'Alice', 'Admin', 'admin', 'IT', 'Main Branch', 1, 1, 0, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+(110, 'parity.svc.main@example.test', 'Ben', 'Service', 'Employee', 'Service', 'Main Branch', 1, 1, 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+(111, 'parity.it.main@example.test', 'Cara', 'Tech', 'Employee', 'IT', 'Main Branch', 1, 1, 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+(120, 'parity.svc.north@example.test', 'Dan', 'North', 'Employee', 'Service', 'North Branch', 2, 1, 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+(121, 'parity.idle@example.test', 'Ivy', 'Idle', 'Employee', 'Service', 'Main Branch', 1, 0, 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+(130, 'parity.cs@example.test', 'Cy', 'Support', 'Customer Service', 'Customer Service', 'Main Branch', 1, 1, 0, '2026-01-01 00:00:00', '2026-01-01 00:00:00'),
+(140, 'parity.finance@example.test', 'Fay', 'Ledger', 'Employee', 'Finance', 'Main Branch', 1, 1, 0, '2026-01-01 00:00:00', '2026-01-01 00:00:00');
 
 -- ticket_type_ID 1 is a customer ticket. sla_rule_id 1 marks an SLA source (no slas row is needed to read it).
 INSERT INTO tickets (ticket_ID, ticket_number, machine_ID, problem_category_ID, created_by, assigned_to, ticket_type_ID, is_internal, priority_ID, ticket_status_ID, sla_rule_id, response_due_at, resolution_due_at, sla_status, first_response_at, title, description, resolved_at, closed_at, branch_id, created_at, updated_at) VALUES

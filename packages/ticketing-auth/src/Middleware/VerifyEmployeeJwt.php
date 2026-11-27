@@ -454,6 +454,8 @@ class VerifyEmployeeJwt
                 $employee = \App\Models\Employee::where('email', $email)->first();
                 if ($employee) {
                     $updated = false;
+                    // Spec 0045 (AC-14): remember the row before the login writes a new department.
+                    $before = (object) $employee->getAttributes();
                     if (!empty($claims['role']) && $employee->role !== $claims['role']) {
                         $employee->role = $claims['role'];
                         $updated = true;
@@ -472,10 +474,15 @@ class VerifyEmployeeJwt
                     }
                     if ($updated) {
                         $employee->save();
+                        if (!empty($before->is_ticketing_employee)) {
+                            \Ticketing\Auth\Access\TicketingAccess::handleDepartmentChange($before, $employee->department, 'login');
+                            $employee->refresh();
+                        }
                     }
                     return $employee;
                 }
 
+                // Spec 0045 (AC-9): first login inserts with is_ticketing_employee false (column default).
                 $newEmp = new \App\Models\Employee();
                 $newEmp->email = $email;
                 $newEmp->first_name = $claims['first_name'] ?? '';

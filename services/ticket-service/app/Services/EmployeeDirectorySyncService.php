@@ -101,28 +101,63 @@ class EmployeeDirectorySyncService
      */
     public static function mapRole(string $roleName, string $dept): array
     {
-        $isManager = stripos($roleName, 'manager') !== false;
         $isAdmin = stripos($roleName, 'admin') !== false;
-        $isEngineer = stripos($roleName, 'engineer') !== false || stripos($roleName, 'supervisor') !== false;
+        $isManager = stripos($roleName, 'manager') !== false;
+        $isSupervisor = stripos($roleName, 'supervisor') !== false;
+        $isEngineer = stripos($roleName, 'engineer') !== false || $isSupervisor;
+
+        // Service and IT are the only departments that work tickets. Everyone else (Sales &
+        // Marketing, Finance, HR, Operations, RA/QA, Executive, Admin support) raises internal
+        // tickets but never handles one, so they must not be labelled service staff: that mislabelled
+        // them in the directory, in audit logs and in role-grouped reports, and upsertEmployee()
+        // rewrites `role` on every sync, so it could never be corrected by hand.
+        $handlesTickets = strcasecmp($dept, 'Service') === 0 || strcasecmp($dept, 'IT') === 0;
+        $isCustomerService = strcasecmp($dept, 'Customer Service') === 0;
 
         if ($isAdmin) {
             return ['position_level' => 'Admin', 'role' => 'admin', 'technical_role' => $roleName];
         }
+
         if ($isManager) {
+            if ($isCustomerService) {
+                $managerRole = 'customer service';
+            } else {
+                $managerRole = $handlesTickets ? 'service' : 'employee';
+            }
+
             return [
                 'position_level' => 'Manager',
-                'role' => strcasecmp($dept, 'Customer Service') === 0 ? 'customer service' : 'service',
+                'role' => $managerRole,
                 'technical_role' => $dept . ' Manager',
             ];
         }
-        if ($isEngineer || strcasecmp($dept, 'Service') === 0) {
-            return ['position_level' => 'Engineer', 'role' => 'service', 'technical_role' => 'Engineer'];
-        }
-        if (strcasecmp($dept, 'Customer Service') === 0) {
-            return ['position_level' => 'Employee', 'role' => 'customer service', 'technical_role' => 'Employee'];
+
+        if ($isEngineer || $handlesTickets || $isCustomerService) {
+            if ($handlesTickets) {
+                // Unchanged: engineers, supervisors and plain staff in Service / IT keep the
+                // Engineer standing and service role their dashboards and the escalation ladder
+                // are built around. Service staff were already levelled Engineer here; IT staff who
+                // are not engineers stay at Employee level, as before.
+                return [
+                    'position_level' => ($isEngineer || strcasecmp($dept, 'Service') === 0) ? 'Engineer' : 'Employee',
+                    'role' => 'service',
+                    'technical_role' => ($isEngineer || strcasecmp($dept, 'Service') === 0) ? 'Engineer' : 'Employee',
+                ];
+            }
+
+            if ($isCustomerService) {
+                return ['position_level' => 'Employee', 'role' => 'customer service', 'technical_role' => 'Employee'];
+            }
+
+            // A supervisor or engineer in a unit that does not work tickets. They keep their
+            // standing without the service role; 'Supervisor' is a level no assignment or
+            // escalation lookup compares against, because both filter on department first.
+            return $isSupervisor
+                ? ['position_level' => 'Supervisor', 'role' => 'employee', 'technical_role' => $dept . ' Supervisor']
+                : ['position_level' => 'Employee', 'role' => 'employee', 'technical_role' => 'Employee'];
         }
 
-        return ['position_level' => 'Employee', 'role' => 'service', 'technical_role' => 'Employee'];
+        return ['position_level' => 'Employee', 'role' => 'employee', 'technical_role' => 'Employee'];
     }
 
     protected function upsertEmployee(string $email, array $u): void
@@ -153,9 +188,12 @@ class EmployeeDirectorySyncService
             $payload['first_name'] = $firstName !== '' ? $firstName : $existing->first_name;
             $payload['last_name'] = $lastName !== '' ? $lastName : $existing->last_name;
             DB::table('employees')->where('emp_id', $existing->emp_id)->update($payload);
+            // Spec 0045 (AC-14): a move to a department that does not handle tickets clears the designation.
+            \Ticketing\Auth\Access\TicketingAccess::handleDepartmentChange($existing, $dept, 'ticket-service sync');
             return;
         }
 
+        // Spec 0045 (AC-9): new staff arrive with is_ticketing_employee false (column default).
         $newId = (isset($u['id']) && (int) $u['id'] > 0 && !DB::table('employees')->where('emp_id', (int) $u['id'])->exists())
             ? (int) $u['id']
             : ((int) DB::table('employees')->max('emp_id') + 1);

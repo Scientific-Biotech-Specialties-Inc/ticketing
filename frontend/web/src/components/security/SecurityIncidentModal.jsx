@@ -40,22 +40,29 @@ export default function SecurityIncidentModal({ incident, onClose, onNavigateAud
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  if (!incident) return null;
-
-  // Extract base data from payload, handling nested notification or audit log formats
-  const rawData = incident.data
-    ? (typeof incident.data === 'string' ? JSON.parse(incident.data || '{}') : incident.data)
-    : incident;
+  // Extract base data safely so hooks below run unconditionally on every render
+  const rawData = incident?.data
+    ? (typeof incident.data === 'string'
+        ? (() => {
+            try {
+              return JSON.parse(incident.data);
+            } catch {
+              return {};
+            }
+          })()
+        : incident.data)
+    : (incident || {});
 
   const incidentId =
     detailData?.incident?.incident_id ||
     rawData.incident_id ||
     rawData.id ||
-    incident.incident_id ||
-    incident.id ||
+    incident?.incident_id ||
+    incident?.id ||
     'INC-SEC-PENDING';
 
   useEffect(() => {
+    if (!incident) return undefined;
     let isMounted = true;
     if (incidentId && incidentId !== 'INC-SEC-PENDING' && !rawData.context_data && !rawData.context) {
       setLoadingDetail(true);
@@ -75,7 +82,9 @@ export default function SecurityIncidentModal({ incident, onClose, onNavigateAud
     return () => {
       isMounted = false;
     };
-  }, [incidentId]);
+  }, [incident, incidentId]);
+
+  if (!incident) return null;
 
   const mergedIncident = detailData?.incident || rawData;
   const context = detailData?.context || rawData.context || {};

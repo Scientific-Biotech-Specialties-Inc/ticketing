@@ -67,6 +67,10 @@ class Kernel extends HttpKernel
         'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
         'auth.employee' => \App\Http\Middleware\VerifyEmployeeJwt::class,
         'auth.subsystem' => \App\Http\Middleware\AuthenticateSubsystem::class,
+        // Spec 0045: requestor guard for work queue routes
+        'ticketing.employee' => \Ticketing\Auth\Middleware\EnsureTicketingEmployee::class,
         'internal.token' => \App\Http\Middleware\VerifyInternalToken::class,
+        'internal.serms' => \App\Http\Middleware\VerifySermsInternalAccess::class,
+        'internal.prs' => \App\Http\Middleware\VerifyPrsInternalAccess::class,
     ];
 }
