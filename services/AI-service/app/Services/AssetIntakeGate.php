@@ -33,8 +33,9 @@ class AssetIntakeGate
         $result['asset'] = null;
         $result['asset_options'] = [];
 
-        // AI unavailable, or the item list could not be read. The manual form enforces the item.
-        if (!empty($result['ai_unavailable']) || $assets === null) {
+        // AI unavailable, the item list could not be read, or it is empty (nothing to choose from).
+        // The manual form enforces the item.
+        if (!empty($result['ai_unavailable']) || $assets === null || $assets === []) {
             $result['asset_status'] = self::UNAVAILABLE;
             return $result;
         }

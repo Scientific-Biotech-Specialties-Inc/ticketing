@@ -13,6 +13,7 @@ class GeminiService
     protected string $model;
     protected string $baseUrl;
     protected int $timeout;
+    protected int $connectTimeout;
     protected RagService $ragService;
 
     public function __construct(?RagService $ragService = null)
@@ -21,6 +22,8 @@ class GeminiService
         $this->model = config('services.gemini.model') ?? env('GEMINI_MODEL', 'gemini-3.5-flash');
         // At most 15 seconds, then escalate to a manual ticket.
         $this->timeout = max(1, min((int) config('services.gemini.timeout', 15), 15));
+        // Connecting must leave time for the answer itself, so it never reaches the request timeout.
+        $this->connectTimeout = max(1, min((int) config('services.gemini.connect_timeout', 12), $this->timeout));
         $this->baseUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
         $this->ragService = $ragService ?? app(RagService::class);
     }
@@ -241,7 +244,7 @@ class GeminiService
             $response = Http::withHeaders([
                 'Content-Type' => 'application/json',
                 'x-goog-api-key' => $this->apiKey,
-            ])->connectTimeout(5)->timeout($this->timeout)->post($url, $payload);
+            ])->connectTimeout($this->connectTimeout)->timeout($this->timeout)->post($url, $payload);
 
             if (!$response->successful()) {
                 Log::error('Gemini API request failed', [

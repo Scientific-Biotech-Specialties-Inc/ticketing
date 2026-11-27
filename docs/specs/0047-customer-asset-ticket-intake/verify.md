@@ -40,6 +40,9 @@ _Steps derived from spec 0047 acceptance criteria. `/check verify` runs these; `
 - [ ] AI list cache: change an item name, chat within 60 seconds (old name), then after 60 seconds (new name) → AC-7
 - [ ] Handoff: after a matched chat, `GET /api/escalate-handoff/<conversation>` returns that `machine_ID` → AC-11
 - [ ] Branch: a seeded software ticket uses the default branch; an equipment item with a branch uses that branch → AC-16
+- [ ] Branch required: `SELECT COUNT(*) FROM machines WHERE branch_id IS NULL OR branch_id NOT IN (SELECT slug FROM branches)` returns 0, and `information_schema` shows `machines.branch_id` NOT NULL with `machines_branch_id_fk` ON DELETE RESTRICT → AC-16
+- [ ] Lost category: with no "Software" machine category, listing a new customer's items recreates it and returns three software items → AC-2
+- [ ] Empty list: a customer with no items gets no "Choose one below" prompt in the AI chat, only the ticket form path → AC-17
 
 ## Acceptance-criteria coverage
-- AC-1 command 1, value check 1 · AC-2 commands 2 to 4, value checks 5, 6 · AC-3 UI 1, 2, value check 2 · AC-4 UI 3, 4 · AC-5 UI 5, 6, commands 7, 8, value checks 3, 4 · AC-6 UI 7 · AC-7 commands 5, 6, value checks 4, 7, 8 · AC-8 UI 8, 10, command 9 · AC-9 UI 9 · AC-10 UI 11 · AC-11 UI 8, value check 9 · AC-12 UI 12 · AC-13 commands 2, 3 · AC-14 UI 13, value check 1 · AC-15 UI 14 · AC-16 command 10, value check 10
+- AC-1 command 1, value check 1 · AC-2 commands 2 to 4, value checks 5, 6 · AC-3 UI 1, 2, value check 2 · AC-4 UI 3, 4 · AC-5 UI 5, 6, commands 7, 8, value checks 3, 4 · AC-6 UI 7 · AC-7 commands 5, 6, value checks 4, 7, 8 · AC-8 UI 8, 10, command 9 · AC-9 UI 9 · AC-10 UI 11 · AC-11 UI 8, value check 9 · AC-12 UI 12 · AC-13 commands 2, 3 · AC-14 UI 13, value check 1 · AC-15 UI 14 · AC-16 command 10, value checks 10, 11 · AC-17 value check 13 · AC-2 also value check 12

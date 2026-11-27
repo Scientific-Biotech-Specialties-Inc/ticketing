@@ -274,6 +274,7 @@ class TicketReferenceSeeder extends Seeder
                 'machine_ID' => 1,
                 'category_ID' => 1,
                 'client_ID' => 1,
+                'branch_id' => 'sbsi-makati-branch',
                 'machine_name' => 'MRI 3T Scanner',
                 'serial_number' => 'MRI-3T-B02',
                 'model' => 'Magnetom Vida',
@@ -288,6 +289,7 @@ class TicketReferenceSeeder extends Seeder
                 'machine_ID' => 2,
                 'category_ID' => 2,
                 'client_ID' => 1,
+                'branch_id' => 'sbsi-makati-branch',
                 'machine_name' => 'Bedside Monitor',
                 'serial_number' => 'MON-500-A11',
                 'model' => 'VS-900',
@@ -298,7 +300,7 @@ class TicketReferenceSeeder extends Seeder
                 'created_at' => $now,
                 'updated_at' => $now,
             ],
-        ], ['machine_ID'], ['category_ID', 'client_ID', 'machine_name', 'serial_number', 'model', 'brand', 'status', 'purchase_date', 'last_maintenance_date', 'updated_at']);
+        ], ['machine_ID'], ['category_ID', 'client_ID', 'branch_id', 'machine_name', 'serial_number', 'model', 'brand', 'status', 'purchase_date', 'last_maintenance_date', 'updated_at']);
 
         DB::table('slas')->upsert([
             [

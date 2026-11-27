@@ -71,6 +71,18 @@ class CustomerAssetService
             return [];
         }
 
+        // Every machine must have a branch (machines.branch_id is NOT NULL). Seeded software has no
+        // real location, so it gets the default branch, the same one TicketBranchResolver falls back to.
+        $branchId = $this->defaultBranchId();
+        if ($branchId === null) {
+            \Illuminate\Support\Facades\Log::warning('Starter software not seeded: the default branch does not exist.', [
+                'client_id' => $clientId,
+                'default_branch' => config('services.tickets.default_branch'),
+            ]);
+
+            return [];
+        }
+
         $added = [];
         foreach ((array) config('assets.seed_software', []) as $item) {
             $serial = self::seedSerial($clientId, (string) $item['code']);
@@ -85,7 +97,7 @@ class CustomerAssetService
                     'machine_name' => (string) $item['name'],
                     'serial_number' => $serial,
                     'status' => 'active',
-                    'branch_id' => null,
+                    'branch_id' => $branchId,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
@@ -153,9 +165,29 @@ class CustomerAssetService
         ];
     }
 
-    private function softwareMachineCategoryId(): ?int
+    /** The configured default branch slug, or null when that branch does not exist (machines.branch_id is a foreign key). */
+    private function defaultBranchId(): ?string
+    {
+        $slug = (string) config('services.tickets.default_branch', '');
+
+        return $slug !== '' && DB::table('branches')->where('slug', $slug)->exists() ? $slug : null;
+    }
+
+        private function softwareMachineCategoryId(): ?int
     {
         $id = DB::table('machine_categories')->where('category_name', 'Software')->value('category_ID');
+
+        // The migration adds this row, but a database reset or reseed can lose it. Without it no
+        // software is seeded, the customer's list stays empty and they cannot report a problem.
+        if ($id === null) {
+            DB::table('machine_categories')->insertOrIgnore([
+                'category_name' => 'Software',
+                'description' => 'Customer software, seeded or imported.',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+            $id = DB::table('machine_categories')->where('category_name', 'Software')->value('category_ID');
+        }
 
         return $id !== null ? (int) $id : null;
     }

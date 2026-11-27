@@ -37,6 +37,16 @@ class AssetIntakeGateTest extends TestCase
         $this->assertSame([], $result['asset_options']);
     }
 
+    public function test_an_empty_item_list_never_asks_the_customer_to_choose_from_nothing(): void
+    {
+        $result = (new AssetIntakeGate())->apply($this->escalating(), [], null, null);
+
+        $this->assertSame(AssetIntakeGate::UNAVAILABLE, $result['asset_status']);
+        $this->assertTrue($result['escalate']);
+        $this->assertSame([], $result['asset_options']);
+        $this->assertStringNotContainsString('Choose one below', $result['content']);
+    }
+
     public function test_an_id_gemini_invented_is_ignored_and_the_customer_is_asked(): void
     {
         $result = (new AssetIntakeGate())->apply($this->escalating(['asset_id' => 999]), $this->assets, null, null);

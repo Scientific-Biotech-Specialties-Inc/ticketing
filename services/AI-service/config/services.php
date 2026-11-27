@@ -36,6 +36,9 @@ return [
         'model' => env('GEMINI_MODEL', 'gemini-3.5-flash'),
         // Chat request timeout in seconds. Capped at 15.
         'timeout' => min((int) env('GEMINI_TIMEOUT_SECONDS', 15), 15),
+        // Seconds to wait for the TCP/TLS connection to Google. Slow networks can take 7 to 10s
+        // just to connect, so 5s made every chat fail. Kept below the request timeout.
+        'connect_timeout' => (int) env('GEMINI_CONNECT_TIMEOUT_SECONDS', 12),
     ],
 
     // Shared secret for service to service calls (X-Internal-Token). Read through config so it still

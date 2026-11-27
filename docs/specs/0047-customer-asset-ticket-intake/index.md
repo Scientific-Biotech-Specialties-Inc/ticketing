@@ -1,11 +1,12 @@
 # 0047. Customer asset based ticket intake
 
 **Date**: 2026-11-18
+**Updated**: 2026-11-27 (every machine has a branch; empty item list handling)
 **Status**: In Progress
 
 ## Summary
 
-Customers now report every problem against one of their own items: a piece of equipment or a piece of software. The item decides the category on its own (equipment means Service, software means Software), so the customer only double checks it. Customers can only choose, or mention to the AI, items that belong to them, and the AI must pin down one of those items before it lets them create a ticket. Until the equipment system sends real software, every customer gets three starter software items so no list is ever empty.
+Customers now report every problem against one of their own items: a piece of equipment or a piece of software. The item decides the category on its own (equipment means Service, software means Software), so the customer only double checks it. Customers can only choose, or mention to the AI, items that belong to them, and the AI must pin down one of those items before it lets them create a ticket. Until the equipment system sends real software, every customer gets three starter software items so no list is ever empty. Every item, equipment or software, belongs to a branch; seeded software gets the default branch.
 
 ## Requirements
 
@@ -16,7 +17,7 @@ Customers now report every problem against one of their own items: a piece of eq
 
 **Acceptance criteria**:
 - **AC-1**: `machines` has an `asset_type` column (`equipment` or `software`, default `equipment`). A customer's pickable items are their own `machines` rows (`client_ID` = the customer) whose `status` is `active` or empty.
-- **AC-2**: Every customer has these three software items: "Laboratory Information System (LIS)", "Equipment Control Software", "Hospital Information System (HIS)". Seeding adds only the missing ones (never duplicates), runs from a one time command for existing customers, and runs automatically the first time ticket-service lists a customer's items and finds no software. Seeded rows use a hidden serial code `SW-<client_ID>-<CODE>` (codes `LIS`, `ECS`, `HIS`) and the "Software" machine category.
+- **AC-2**: Every customer has these three software items: "Laboratory Information System (LIS)", "Equipment Control Software", "Hospital Information System (HIS)". Seeding adds only the missing ones (never duplicates), runs from a one time command for existing customers, and runs automatically the first time ticket-service lists a customer's items and finds no software. Seeded rows use a hidden serial code `SW-<client_ID>-<CODE>` (codes `LIS`, `ECS`, `HIS`) and the "Software" machine category. If that category row is missing (for example after a database reset), seeding creates it again before inserting.
 - **AC-3**: The create ticket form shows one required "Equipment / Software" picker listing only the customer's pickable items, grouped Equipment then Software. Equipment shows name and serial; software shows the name only (serial codes for software are never shown anywhere in the UI).
 - **AC-4**: After an item is picked, the Problem Category field shows "Service" (equipment) or "Software" (software) as a read only value. The AI category suggestion (`useCategoryPreview`, `classify-category`) is no longer used on this form.
 - **AC-5**: `POST /api/tickets` from a customer requires `machine_ID`. It must be one of that customer's pickable items, otherwise 422 with `errors.machine_ID`. `problem_category_ID` is set by the server from the item's `asset_type`; any value the browser sends is ignored.
@@ -30,7 +31,8 @@ Customers now report every problem against one of their own items: a piece of eq
 - **AC-13**: The seed command also links TKT-0008 (customer 4, Software, no item) to that customer's seeded LIS item. The command is a dry run by default and changes the database only with `--apply`, run only after the engineer approves touching the dev database.
 - **AC-14**: Items whose status is anything other than `active` or empty (for example retired) are left out of the picker, the AI list and the ownership check for new choices. Existing tickets that already point at such an item still display it.
 - **AC-15**: Internal employee tickets and PRS tickets (spec 0046) keep their current rules.
-- **AC-16**: Seeded software has no branch, so a ticket on it gets its branch from the existing default rule (`TicketBranchResolver`, SBSI Makati today).
+- **AC-16**: Every machine, equipment or software, has a branch: `machines.branch_id` is required (NOT NULL) and must match a `branches.slug`. Seeded software is stored with the default branch (`services.tickets.default_branch`, SBSI Makati today), so a ticket on it gets that branch through `TicketBranchResolver`. If the default branch does not exist, seeding adds nothing and logs a warning instead of creating an item with no branch. Deleting a branch that still has machines is blocked.
+- **AC-17**: When the customer's item list comes back empty, the AI treats it like an unreadable list (`asset_status: unavailable`): it never asks the customer to "choose one below" with no buttons, and the manual form (which enforces AC-3 and AC-5) stays the way forward.
 
 ## Decision
 
@@ -53,7 +55,8 @@ Reasoning and options: see [rationale.md](rationale.md).
 | `machines` | existing `serial_number` | Still required and unique. Seeded software: `SW-<client_ID>-<CODE>`. |
 | `machines` | existing `status` | Pickable when `active` or null. |
 | `machines` | existing `category_ID` | Seeded software points to the new "Software" machine category. |
-| `machine_categories` | new row | `category_name` "Software", description "Customer software, seeded or imported." Inserted by the migration if missing. |
+| `machines` | `branch_id` (required) | `varchar(64)`, NOT NULL, foreign key to `branches.slug` with ON DELETE RESTRICT. Added by `2026_11_15_000001_add_branch_id_to_machines_table` (nullable), then made required by `2026_11_27_000003_make_machines_branch_id_required`, which first moves rows with no branch, or an unknown one, to the default branch. |
+| `machine_categories` | new row | `category_name` "Software", description "Customer software, seeded or imported." Inserted by the migration if missing, and again by seeding if it was lost later. |
 | `tickets` | existing `machine_ID` | Required on customer tickets (validation, not a schema change; internal and PRS tickets unchanged). |
 | `tickets` | existing `problem_category_ID` | Set by the server: equipment → the active system "Service" category, software → the active system "Software" category (looked up by name, branch neutral). |
 
@@ -65,7 +68,7 @@ Reasoning and options: see [rationale.md](rationale.md).
 | `/api/tickets` (ticket-service, existing) | POST | `machine_ID` (req for customers), title, description; `problem_category_ID` ignored | ticket with derived `problem_category_ID` | customer token | 422 `machine_ID` (missing, not owned, not pickable) |
 | `/api/tickets/{id}` (ticket-service, existing) | PATCH | `machine_ID` | ticket with category set again | customer token, own Open unassigned ticket | 422, 403 |
 | `/api/internal/customers/{clientId}/assets` (ticket-service, new) | GET | `clientId` path | `{data: [same shape as assets above]}`; triggers seeding | `internal.token` | 401, 404 unknown client |
-| `/api/chat` (AI-service, existing) | POST | adds optional `selected_asset_id` | adds `asset: {machine_ID, name, asset_type} or null`, `asset_options: [...]`, `asset_status: matched / ambiguous / not_owned / missing`; `ticket_data.machine_ID` when escalating | customer token | 422 when `selected_asset_id` is not in the customer's list |
+| `/api/chat` (AI-service, existing) | POST | adds optional `selected_asset_id` | adds `asset: {machine_ID, name, asset_type} or null`, `asset_options: [...]`, `asset_status: matched / ambiguous / not_owned / missing / unavailable`; `ticket_data.machine_ID` when escalating | customer token | 422 when `selected_asset_id` is not in the customer's list |
 | `/api/escalate-handoff/{id}` (AI-service, existing) | GET | conversation id | adds `machine_ID` | customer token | 404 |
 | `php artisan assets:seed-customer-software` (ticket-service, new) | CLI | `--apply`, `--link-ticket=8:LIS` (repeatable) | prints planned or applied inserts and ticket links | shell access | non zero exit if a linked ticket or code does not belong to the same customer |
 
@@ -80,12 +83,15 @@ Reasoning and options: see [rationale.md](rationale.md).
 | Create / edit ticket | ownership | `machines.client_ID` compared with the authenticated `Client.id` |
 | Seeding | software names and codes | `config/assets.php` → `seed_software` list in ticket-service |
 | Seeding | serial code | `SW-` + `client_ID` + `-` + item code |
-| Seeding | machine category | `machine_categories` row named "Software" |
+| Seeding | machine category | `machine_categories` row named "Software", created by seeding if missing |
+| Seeding | machine branch | `services.tickets.default_branch` (`TICKET_DEFAULT_BRANCH`, default `sbsi-makati-branch`), used only when that slug exists in `branches` |
+| Database seeders | machine branch | set per row in `TicketReferenceSeeder` and `CustomerTicketSeeder` (SBSI Makati) and `FullPlatformMockDataSeeder` (clients spread over SBSI Makati and SBSI Cebu) |
 | AI chat | customer id for the list | the verified customer token in AI-service (`getAuthenticatedUser`), never a request field |
 | AI chat | the customer's items | ticket-service internal endpoint, cached per conversation for 60 seconds |
 | AI chat | identified item | Gemini `asset_id` checked against the fetched list, or `selected_asset_id` checked the same way |
 | Handoff | `machine_ID` | the identified item stored on the conversation |
-| Ticket branch | branch | `TicketBranchResolver` (item branch, else default) |
+| Ticket branch | branch | `TicketBranchResolver` (explicit branch, else the item's `machines.branch_id`, else requester, else default) |
+| AI chat | empty list handling | `AssetIntakeGate`: an empty list sets `asset_status` to `unavailable` and returns no `asset_options` |
 
 **Key invariants**:
 - A customer ticket always has a `machine_ID` owned by that customer and pickable at the time it was chosen.
@@ -93,6 +99,8 @@ Reasoning and options: see [rationale.md](rationale.md).
 - Every customer that lists items has at least the three seeded software items.
 - AI-service never escalates with no identified owned item, except the Gemini unavailable fallback, which lands on the form that enforces the same rule.
 - Seeding is idempotent: running it twice adds nothing the second time (match on `client_ID` + serial code).
+- Every `machines` row has a `branch_id` that exists in `branches`; the database enforces it.
+- The AI never shows a "choose one" prompt without at least one option.
 
 **Security model**:
 - Customers see and choose only their own items; enforced in ticket-service on read and on write.
@@ -105,10 +113,13 @@ Reasoning and options: see [rationale.md](rationale.md).
 - Seed list in ticket-service `config/assets.php` (no env var): the three items with name and code.
 - Existing `INTERNAL_TOKEN` in both services (AI-service reads it through `services.internal.token`, already in place).
 - After changing AI-service config, run `config:cache` again (config caching is on in the dev container).
+- Existing `TICKET_DEFAULT_BRANCH` in ticket-service (default `sbsi-makati-branch`): the branch for seeded software and for the migration's fill in. It must name a seeded branch (`2026_11_12_000001_seed_sbsi_branches`).
 
 **Critical test scenarios**:
 - Happy path: customer picks their analyzer, category shows Service, ticket saved with that machine and the Service category; verifies **AC-3**, **AC-4**, **AC-5**.
 - Software: customer picks LIS, ticket saved with the Software category and the default branch; verifies **AC-5**, **AC-16**.
+- Branch required: inserting a machine with no branch fails; seeded software rows carry `sbsi-makati-branch`; a lost "Software" category is recreated and the customer still gets three items; verifies **AC-2**, **AC-16**.
+- Empty list: the AI gets an empty item list and returns `unavailable` with no options and no "Choose one below"; verifies **AC-17**.
 - Tampering: customer posts another customer's `machine_ID`, or a retired item, gets 422; posting `problem_category_ID` for Software with an equipment item still saves Service; verifies **AC-5**, **AC-14**.
 - Seeding: a customer with no software lists items and gets exactly three; listing again adds none; verifies **AC-2**.
 - AI matched: "my BC-5390 is not printing" with that analyzer on the account escalates with its `machine_ID`; verifies **AC-8**, **AC-11**.
@@ -134,6 +145,10 @@ Build approach: none recorded in `AGENTS.md` or the scope, so this assumes Trace
 9. [x] Seed command `assets:seed-customer-software` with dry run default, `--apply`, and `--link-ticket`; satisfies **AC-2**, **AC-13**.
 10. [x] Tests: ticket-service feature tests (form options, create, edit, seeding, command) on `ticketing_system_test` with `DatabaseTransactions`; AI-service unit tests with `Http::fake` for matched, ambiguous, not owned, safety and Gemini down; satisfies every AC above.
 11. [x] After the engineer approves: run the command with `--apply --link-ticket=8:LIS` on the dev database; satisfies **AC-13**.
+12. [x] Bring `2026_11_15_000001_add_branch_id_to_machines_table` onto this line of work (it only existed on unmerged CRMS sync branches, while `TicketBranchResolver` and seeding already used the column); satisfies **AC-16**.
+13. [x] Migration `2026_11_27_000003_make_machines_branch_id_required`: fill in the default branch, then NOT NULL and ON DELETE RESTRICT; seeding stores the default branch, recreates the "Software" category, and skips with a warning when the default branch is missing; seeders set a branch on every machine; satisfies **AC-2**, **AC-16**.
+14. [x] `AssetIntakeGate` treats an empty list as `unavailable`; satisfies **AC-17**.
+15. [x] Tests: required branch, seeded branch, lost category, and empty list cases; every test that inserts a machine supplies a branch; satisfies **AC-2**, **AC-16**, **AC-17**.
 
 ## Migration plan
 
@@ -142,7 +157,8 @@ Build approach: none recorded in `AGENTS.md` or the scope, so this assumes Trace
 1. Deploy the migration and the ticket-service changes (steps 1 to 6). Existing machines read as equipment; seeding happens on the next list read.
 2. Deploy AI-service and frontend changes (steps 7, 8).
 3. Run the seed command for all customers, then link TKT-0008 (steps 9, 11), after approval.
-**Rollback**: revert the code; roll back the migration (drops `asset_type`); delete seeded rows with `serial_number LIKE 'SW-%'` only after setting any ticket that points at them back to null.
+**Branch update (2026-11-27)**: run `php artisan migrate` in ticket-service. The required branch migration fills in missing branches before changing the column, and stops with a clear message, before any schema change, if the default branch does not exist.
+**Rollback**: revert the code; roll back `2026_11_27_000003` (column becomes nullable again with ON DELETE SET NULL); roll back the migration that added `asset_type` (drops it); delete seeded rows with `serial_number LIKE 'SW-%'` only after setting any ticket that points at them back to null.
 **Risks**: a customer whose equipment has an unexpected `status` value loses it from the picker (AC-14); check `SELECT DISTINCT status FROM machines` before release (today only `active` and null).
 
 ## Consequences
@@ -157,6 +173,8 @@ Build approach: none recorded in `AGENTS.md` or the scope, so this assumes Trace
 - Seeded software is a guess: some customers will see items they do not use, and serial codes like `SW-4-LIS` sit in a column the CMS sync treats as real serials (they must never collide with or be overwritten by imported serials).
 - The AI chat makes one extra internal call per conversation and asks one more question when it cannot tell which item is meant.
 - The AI category suggestion built earlier becomes unused on the customer form (kept only if finer categories come back).
+- A branch with machines cannot be deleted until its machines move elsewhere.
+- Every path that creates machines (the CRMS sync, imports, tests, seeders) must now send a branch, or the insert fails.
 
 **Neutral**:
 - Internal and PRS tickets are untouched.
@@ -166,4 +184,5 @@ Build approach: none recorded in `AGENTS.md` or the scope, so this assumes Trace
 
 - [ ] When the equipment system starts sending software, map it to `asset_type = software` and decide whether to retire the seeded items for that customer.
 - [ ] Confirm the CMS / equipment sync never updates or deletes rows with `SW-` serials.
+- [ ] When `feat/crms-machine-sync` is merged, make its machine sync always send a valid branch (the column is now required), and drop its duplicate copy of `2026_11_15_000001` if git shows one.
 - [ ] Decide whether to delete the now unused `classify-category` endpoint and `useCategoryPreview` hook, or keep them for future sub categories.

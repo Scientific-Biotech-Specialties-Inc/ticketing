@@ -72,5 +72,6 @@ Spec: [0051](../specs/0051-department-ticket-routing.md) · code in `services/em
 - Map imported software to `asset_type = software` and decide whether to retire seeded items, from spec 0047
 - Make sure the CMS / equipment sync never updates or deletes `SW-` serial rows, from spec 0047
 - Remove or keep the unused `classify-category` endpoint and `useCategoryPreview` hook, from spec 0047
+- Make the CRMS machine sync always send a valid branch when `feat/crms-machine-sync` is merged (`machines.branch_id` is now required), from spec 0047
 - Link employees to departments by id instead of by name, from spec 0051
 - Alert the superadmin when an enabled department has no active manager, from spec 0051

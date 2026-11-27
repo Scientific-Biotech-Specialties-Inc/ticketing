@@ -72,6 +72,7 @@ class CustomerAssetIntakeTest extends TestCase
             return DB::table('machines')->insertGetId([
                 'category_ID' => DB::table('machine_categories')->value('category_ID'),
                 'client_ID' => $client->id,
+                'branch_id' => 'sbsi-makati-branch',
                 'asset_type' => 'equipment',
                 'machine_name' => 'Mindray BC-5390',
                 'serial_number' => 'SN-' . strtoupper(uniqid()),
@@ -116,6 +117,30 @@ class CustomerAssetIntakeTest extends TestCase
         $this->assertCount(3, $software);
         $this->assertNull($software[0]['serial_number'], 'Software never exposes its serial code');
         $this->assertSame(3, DB::table('machines')->where('client_ID', $client->id)->where('asset_type', 'software')->count());
+    }
+
+    public function test_a_lost_software_category_is_recreated_so_the_customer_still_gets_software(): void
+    {
+        // A database reset once dropped this row; seeding then did nothing and the AI chat had no items to offer.
+        DB::table('machine_categories')->where('category_name', 'Software')->update(['category_name' => 'Software (lost)']);
+        $client = $this->client();
+
+        $assets = app(CustomerAssetService::class)->listFor($client->id);
+
+        $this->assertCount(3, array_filter($assets, fn ($a) => $a['asset_type'] === 'software'));
+        $this->assertTrue(DB::table('machine_categories')->where('category_name', 'Software')->exists());
+    }
+
+    public function test_seeded_software_gets_the_default_branch(): void
+    {
+        DB::table('branches')->updateOrInsert(['slug' => 'sbsi-makati-branch'], ['name' => 'SBSI Makati Branch']);
+        config(['services.tickets.default_branch' => 'sbsi-makati-branch']);
+        $client = $this->client();
+
+        app(CustomerAssetService::class)->listFor($client->id);
+
+        $branches = DB::table('machines')->where('client_ID', $client->id)->where('asset_type', 'software')->pluck('branch_id')->unique()->all();
+        $this->assertSame(['sbsi-makati-branch'], array_values($branches));
     }
 
     public function test_equipment_ticket_gets_the_service_category_whatever_the_browser_sends(): void
