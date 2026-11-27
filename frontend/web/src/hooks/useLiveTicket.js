@@ -29,6 +29,16 @@ const LIVE_FIELDS = [
   // Spec 0048: the CS banner and employee page follow hold request decisions live.
   'pending_hold_request',
   'latest_rejected_hold_request',
+  'reassignmentRequested',
+  'reassignmentStatus',
+  'reassignmentReason',
+  'reassignmentRequestedBy',
+  'reassignmentDenyReason',
+  'reassignment_reject_reason',
+  'reassignmentDenied',
+  'reassignmentDisapproved',
+  'reassignmentDeniedAt',
+  'disapprovedAt',
 ];
 
 const POLL_INTERVAL_MS = 20000;

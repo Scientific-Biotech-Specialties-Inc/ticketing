@@ -64,6 +64,20 @@ Route::middleware('internal.token')
 // Spec 0048: hold request display state for employee-service ticket lists.
 Route::middleware('internal.token')
     ->get('/internal/hold-requests/states', [\App\Http\Controllers\HoldRequestController::class, 'states']);
+// TS <-> SERMS reimbursement: SERMS lists tickets and pushes claim status changes.
+Route::middleware('internal.serms')
+    ->get('/internal/tickets', [\App\Http\Controllers\InternalSermsController::class, 'tickets']);
+Route::middleware('internal.serms')
+    ->post('/internal/reimbursements/status', [\App\Http\Controllers\InternalSermsController::class, 'reimbursementStatus']);
+
+// PRS -> TS: PRS raises an equipment repair ticket for a staff member who already exists in the
+// auth service, so it lands as an internal ticket under that employee. Guarded by the PRS secret
+// alone (no customer or staff token is involved), and the read is scoped to PRS-origin tickets.
+Route::middleware('internal.prs')->group(function () {
+    Route::post('/internal/prs/tickets', [\App\Http\Controllers\InternalPrsController::class, 'store']);
+    Route::get('/internal/prs/tickets/{ticketId}', [\App\Http\Controllers\InternalPrsController::class, 'show'])
+        ->whereNumber('ticketId');
+});
 
 Route::middleware('auth.subsystem')->group(function () {
     // ─── Customer Ticket Drafts (spec 0034: verified customer token only) ────
@@ -77,16 +91,16 @@ Route::middleware('auth.subsystem')->group(function () {
     Route::get('/customer/filter-options', [TicketDashboardController::class, 'customerFilterOptions']);
 
     // ─── CS Dashboard & Incoming Queue (Token Authenticated) ──────────────────
-    Route::get('/cs-dashboard', [TicketDashboardController::class, 'csDashboard'])->middleware('no-cache');
-    Route::get('/cs-dashboard-summary', [TicketDashboardController::class, 'csDashboardSummary'])->middleware('no-cache');
-    Route::get('/cs-incoming', [TicketDashboardController::class, 'csIncoming'])->middleware('no-cache');
+    Route::get('/cs-dashboard', [TicketDashboardController::class, 'csDashboard'])->middleware(['no-cache', 'ticketing.employee']);
+    Route::get('/cs-dashboard-summary', [TicketDashboardController::class, 'csDashboardSummary'])->middleware(['no-cache', 'ticketing.employee']);
+    Route::get('/cs-incoming', [TicketDashboardController::class, 'csIncoming'])->middleware(['no-cache', 'ticketing.employee']);
 
     // ─── Admin Branch Dashboard & Reports ─────────────────────────────────────
     Route::get('/admin-dashboard', [TicketDashboardController::class, 'adminDashboard'])->middleware('no-cache');
     Route::get('/admin/dashboard', [TicketDashboardController::class, 'adminDashboard'])->middleware('no-cache');
     // Spec 0031: live summary and breached queue for Service, IT and Customer Service managers.
-    Route::get('/manager/dashboard', [\App\Http\Controllers\ManagerDashboardController::class, 'dashboard'])->middleware('no-cache');
-    Route::get('/manager/tickets', [\App\Http\Controllers\ManagerDashboardController::class, 'tickets'])->middleware('no-cache');
+    Route::get('/manager/dashboard', [\App\Http\Controllers\ManagerDashboardController::class, 'dashboard'])->middleware(['no-cache', 'ticketing.employee']);
+    Route::get('/manager/tickets', [\App\Http\Controllers\ManagerDashboardController::class, 'tickets'])->middleware(['no-cache', 'ticketing.employee']);
     Route::get('/admin-reports', [TicketDashboardController::class, 'adminReports'])->middleware('no-cache');
     Route::get('/admin/reports', [TicketDashboardController::class, 'adminReports'])->middleware('no-cache');
     Route::post('/admin/reports/export', [\App\Http\Controllers\ReportExportController::class, 'export'])->middleware(['no-cache', 'throttle:30,1']);
@@ -101,8 +115,8 @@ Route::middleware('auth.subsystem')->group(function () {
     Route::post('/admin/etl/trigger', [TicketDashboardController::class, 'triggerEtl'])->middleware('no-cache');
     Route::get('/superadmin/system-dashboard', [SuperAdminDashboardController::class, 'systemDashboard'])->middleware('no-cache');
     Route::get('/super-admin/system-dashboard', [SuperAdminDashboardController::class, 'systemDashboard'])->middleware('no-cache');
-    Route::get('/employee/dashboard', [EmployeeDashboardController::class, 'dashboard'])->middleware('no-cache');
-    Route::get('/employee-dashboard', [EmployeeDashboardController::class, 'dashboard'])->middleware('no-cache');
+    Route::get('/employee/dashboard', [EmployeeDashboardController::class, 'dashboard'])->middleware(['no-cache', 'ticketing.employee']);
+    Route::get('/employee-dashboard', [EmployeeDashboardController::class, 'dashboard'])->middleware(['no-cache', 'ticketing.employee']);
 
     // ─── Ticket Reminders (TS084) ─────────────────────────────────────────────
     Route::post('/tickets/{ticketId}/reminders', [TicketReminderController::class, 'sendReminder']);
@@ -111,6 +125,10 @@ Route::middleware('auth.subsystem')->group(function () {
     // ─── Spec 0038: proof review gate and lightweight ownership lookup ───────
     Route::post('/tickets/{ticketId}/proof-views', [\App\Http\Controllers\TicketProofReviewController::class, 'store'])->whereNumber('ticketId');
     Route::get('/tickets/{ticketId}/ownership', [\App\Http\Controllers\TicketOwnershipController::class, 'show'])->whereNumber('ticketId')->middleware('no-cache');
+
+    // ─── TS <-> SERMS expense reimbursement ──────────────────────────────────
+    Route::get('/tickets/{ticketId}/reimbursement', [\App\Http\Controllers\TicketReimbursementController::class, 'show'])->whereNumber('ticketId')->middleware('no-cache');
+    Route::post('/tickets/{ticketId}/reimbursement', [\App\Http\Controllers\TicketReimbursementController::class, 'store'])->whereNumber('ticketId')->middleware('throttle:10,1');
 
     // ─── Core Ticket Lifecycle & Status Transitions ───────────────────────────
     Route::post('/tickets', [TicketController::class, 'store']);

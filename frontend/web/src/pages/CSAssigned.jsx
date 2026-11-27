@@ -949,6 +949,7 @@ export default function CSAssigned() {
             setTickets((prev) => prev.map((t) => (
               (t.id === (updatedFields.id || modal.ticket.id) || t.ticket_ID === (updatedFields.ticket_ID || modal.ticket.ticket_ID)) ? { ...t, ...updatedFields } : t
             )));
+            setModal((prev) => (prev ? { ...prev, ticket: { ...prev.ticket, ...updatedFields } } : null));
 
             // If the status is 'On Hold', resumed, or classification updated,
             // the dedicated endpoint (POST /hold, POST /resume, or PATCH /classification) was already executed directly in TicketSummary.

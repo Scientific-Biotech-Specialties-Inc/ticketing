@@ -45,6 +45,7 @@ vi.mock('@/services/ticketService', () => ({
   addInternalNote: vi.fn(() => Promise.resolve({})),
   holdTicket: vi.fn(() => Promise.resolve({})),
   resumeTicket: vi.fn(() => Promise.resolve({})),
+  getAssignableEmployees: vi.fn(() => Promise.resolve([])),
   reclassifyTicket: vi.fn(() => Promise.resolve({
     data: {
       ticket: {

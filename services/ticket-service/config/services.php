@@ -48,4 +48,31 @@ return [
         'default_branch' => env('TICKET_DEFAULT_BRANCH', 'sbsi-makati-branch'),
     ],
 
+    // TS <-> SERMS reimbursement integration. TS sends X-Internal-Secret on calls to SERMS, and accepts
+    // the same secret from SERMS on /internal routes. SERMS_INTERNAL_SECRET overrides the shared
+    // INTERNAL_SERVICE_SECRET when the SERMS secret differs (for example a local tunnel).
+    'serms' => [
+        'url' => rtrim((string) env('SERMS_API_URL', ''), '/'),
+        'prefix' => '/' . trim((string) env('SERMS_API_PREFIX', '/api'), '/'),
+        'secret' => (string) env('SERMS_INTERNAL_SECRET', env('INTERNAL_SERVICE_SECRET', '')),
+        'timeout' => (int) env('SERMS_TIMEOUT', 15),
+    ],
+
+    'prs' => [
+        // PRS -> TS ticket intake. PRS sends X-Internal-Secret; we accept it only on /internal/prs.
+        // Its own secret, not INTERNAL_SERVICE_SECRET, so PRS can be rotated or revoked on its own.
+        'secret' => (string) env('PRS_INTERNAL_SECRET', ''),
+        // Public base of the ticketing SPA, used to build the ticket_url handed back to PRS.
+        // Left empty, ticket_url is null rather than an unusable localhost link.
+        'ticket_url_base' => rtrim((string) env('PRS_TICKET_URL_BASE', ''), '/'),
+
+        // TS -> PRS status callback. We send PRS_CALLBACK_SECRET as X-Internal-Secret; it is PRS's
+        // own secret and is unrelated to PRS_INTERNAL_SECRET, which guards our inbound routes.
+        // With no URL configured the callback is skipped entirely, so nothing is queued.
+        'callback_url' => rtrim((string) env('PRS_CALLBACK_URL', ''), '/'),
+        'callback_path' => '/' . ltrim((string) env('PRS_CALLBACK_PATH', '/api/internal/ts/tickets/status'), '/'),
+        'callback_secret' => (string) env('PRS_CALLBACK_SECRET', ''),
+        'callback_timeout' => (int) env('PRS_CALLBACK_TIMEOUT', 15),
+    ],
+
 ];

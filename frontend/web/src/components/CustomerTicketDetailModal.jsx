@@ -78,9 +78,11 @@ export default function CustomerTicketDetailModal({
   const navigate = useNavigate();
   const { user } = useAuth();
 
+  const isCSUser = useMemo(() => checkUserIsCS(user), [user]);
+
   const isCSSide = useMemo(() => {
     if (import.meta.env.VITE_APP_MODE === 'employee') return true;
-    if (checkUserIsCS(user)) return true;
+    if (isCSUser) return true;
     const role = String(user?.role || '').toLowerCase();
     const dept = String(user?.department || '').toLowerCase();
     const staffRoles = [
@@ -186,6 +188,10 @@ export default function CustomerTicketDetailModal({
 
     return false;
   }, [user, effectiveTicket]);
+
+  const isRequestorView = isRequestor && (!isCSUser || (typeof window !== 'undefined' && window.location.pathname.toLowerCase().includes('/my-tickets')));
+  const isStaffView = isCSSide && !isRequestorView;
+  const canAssign = typeof onAssign === 'function' && isStaffView;
 
   const isAssignedToMe = useMemo(() => {
     if (!user || !effectiveTicket) return false;
@@ -482,11 +488,20 @@ export default function CustomerTicketDetailModal({
     const tId = effectiveTicket.ticket_ID || effectiveTicket.id;
     let path = '/messages';
     if (typeof window !== 'undefined') {
-      if (window.location.pathname.startsWith('/cs-manager')) path = '/cs-manager/messages';
-      else if (window.location.pathname.startsWith('/service-manager')) path = '/service-manager/messages';
-      else if (window.location.pathname.startsWith('/it-manager')) path = '/it-manager/messages';
-      else if (window.location.pathname.startsWith('/cs')) path = '/cs/messages';
-      else if (window.location.pathname.startsWith('/employee')) path = '/employee/messages';
+      const pathname = window.location.pathname;
+      if (pathname.startsWith('/cs-manager')) path = '/cs-manager/messages';
+      else if (pathname.startsWith('/service-manager')) path = '/service-manager/messages';
+      else if (pathname.startsWith('/it-manager')) path = '/it-manager/messages';
+      else if (pathname.startsWith('/cs')) path = '/cs/messages';
+      else if (pathname.startsWith('/employee')) path = '/employee/messages';
+      else if (import.meta.env.VITE_APP_MODE === 'employee') {
+        const role = String(user?.role || user?.role_name || '').toLowerCase();
+        if (role === 'cs_manager') path = '/cs-manager/messages';
+        else if (role === 'service_manager') path = '/service-manager/messages';
+        else if (role === 'it_manager') path = '/it-manager/messages';
+        else if (role === 'cs') path = '/cs/messages';
+        else path = '/employee/messages';
+      }
     }
     navigate(path, { state: { selectedTicketId: tId } });
   };
@@ -544,15 +559,29 @@ export default function CustomerTicketDetailModal({
         footer={
           <ModalFooter
             leftContent={
-              isCSSide ? (
+              isStaffView ? (
                 <button
                   type="button"
                   onClick={handleRedirectToMessages}
                   className="h-9 px-3.5 rounded-lg border border-[#D5D9E4] hover:bg-[#F5F6FA] text-xs font-semibold text-[#1B2033] transition-colors cursor-pointer inline-flex items-center gap-1.5"
-                  title="Message customer"
+                  title={
+                    effectiveTicket?.is_internal ||
+                    effectiveTicket?.ticket_type === 'Internal' ||
+                    effectiveTicket?.type === 'Internal' ||
+                    String(effectiveTicket?.title || '').startsWith('[Internal]')
+                      ? 'Message requestor'
+                      : 'Message customer'
+                  }
                 >
                   <MessageSquare className="w-3.5 h-3.5 text-[#1E2A78]" />
-                  <span>Message customer</span>
+                  <span>
+                    {effectiveTicket?.is_internal ||
+                    effectiveTicket?.ticket_type === 'Internal' ||
+                    effectiveTicket?.type === 'Internal' ||
+                    String(effectiveTicket?.title || '').startsWith('[Internal]')
+                      ? 'Message requestor'
+                      : 'Message customer'}
+                  </span>
                   {unreadMessageCount > 0 && (
                     <span
                       className="ml-1 inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full bg-accent text-white text-[11px] font-bold leading-none"
@@ -567,10 +596,26 @@ export default function CustomerTicketDetailModal({
                   type="button"
                   onClick={handleRedirectToMessages}
                   className="h-9 px-3.5 rounded-lg border border-[#D5D9E4] hover:bg-[#F5F6FA] text-xs font-semibold text-[#1B2033] transition-colors cursor-pointer inline-flex items-center gap-1.5"
-                  title="Connect with Customer Support regarding this ticket"
+                  title={
+                    effectiveTicket?.is_internal ||
+                    effectiveTicket?.ticket_type === 'Internal' ||
+                    effectiveTicket?.type === 'Internal' ||
+                    String(effectiveTicket?.title || '').startsWith('[Internal]') ||
+                    import.meta.env.VITE_APP_MODE === 'employee'
+                      ? 'Open ticket messages with coordinator and assigned employee'
+                      : 'Connect with Customer Support regarding this ticket'
+                  }
                 >
                   <MessageSquare className="w-3.5 h-3.5 text-[#1E2A78]" />
-                  <span>Message Customer Support</span>
+                  <span>
+                    {effectiveTicket?.is_internal ||
+                    effectiveTicket?.ticket_type === 'Internal' ||
+                    effectiveTicket?.type === 'Internal' ||
+                    String(effectiveTicket?.title || '').startsWith('[Internal]') ||
+                    import.meta.env.VITE_APP_MODE === 'employee'
+                      ? 'Message coordinator'
+                      : 'Message Customer Support'}
+                  </span>
                   {unreadMessageCount > 0 && (
                     <span
                       className="ml-1 inline-flex items-center justify-center min-w-5 h-5 px-1 rounded-full bg-accent text-white text-[11px] font-bold leading-none"
@@ -593,7 +638,7 @@ export default function CustomerTicketDetailModal({
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>Done</span>
                 </button>
-              ) : typeof onAssign === 'function' && effectiveTicket.status !== 'Closed' && effectiveTicket.status !== 'Discarded' ? (
+              ) : canAssign && effectiveTicket.status !== 'Closed' && effectiveTicket.status !== 'Discarded' ? (
                 <button
                   type="button"
                   onClick={() => onAssign(effectiveTicket)}
@@ -702,7 +747,7 @@ export default function CustomerTicketDetailModal({
             {/* WHAT YOU REPORTED / PROBLEM DESCRIPTION */}
             <div>
               <p className="text-[11px] font-bold uppercase tracking-wider text-[#5A6178] mb-1.5">
-                {isCSSide ? 'PROBLEM DESCRIPTION' : 'WHAT YOU REPORTED'}
+                {isStaffView ? 'PROBLEM DESCRIPTION' : 'WHAT YOU REPORTED'}
               </p>
               <div className="rounded-xl bg-[#F5F6FA] border border-[#D5D9E4] p-3.5 sm:p-4 text-xs sm:text-sm text-[#1B2033] leading-relaxed break-words whitespace-pre-wrap">
                 <div className={!descExpanded && (effectiveTicket.description || '').length > 200 ? 'line-clamp-3' : ''}>
@@ -748,7 +793,7 @@ export default function CustomerTicketDetailModal({
                 <Users className="w-8 h-8 text-[#5A6178] mx-auto opacity-40" />
                 <p className="text-xs font-semibold text-[#1B2033]">No employee currently assigned</p>
                 <p className="text-[11px] text-[#5A6178]">This ticket is unassigned and awaiting staff dispatch.</p>
-                {typeof onAssign === 'function' && (
+                {canAssign && (
                   <button
                     type="button"
                     onClick={() => onAssign(effectiveTicket)}
@@ -775,7 +820,7 @@ export default function CustomerTicketDetailModal({
                   </div>
 
                   <div className="flex items-center gap-2">
-                    {typeof onAssign === 'function' && (
+                    {canAssign && (
                       <button
                         type="button"
                         onClick={() => onAssign(effectiveTicket)}
@@ -843,7 +888,7 @@ export default function CustomerTicketDetailModal({
               ticketId={ticketNumericId}
               pageSize={8}
               collapsible={false}
-              showFilter={isCSSide}
+              showFilter={isCSUser && !isRequestorView}
             />
           </div>
         )}
@@ -888,21 +933,21 @@ export default function CustomerTicketDetailModal({
           </div>
         )}
 
-        {/* Feedback Section (when closed/resolved) */}
-        {(effectiveTicket.status === 'Closed' || effectiveTicket.status === 'Resolved') && (
+        {/* Feedback Section (only for requestor when closed/resolved) */}
+        {(effectiveTicket.status === 'Closed' || effectiveTicket.status === 'Resolved') && isRequestor && (
           <div className="pt-2 border-t border-[#D5D9E4]">
             <TicketFeedbackSection
               key={feedbackSubmitted ? 'submitted' : 'pending'}
               ticket={effectiveTicket}
-              readOnly={!isRequestor}
-              onLeaveFeedback={isRequestor ? () => {
+              readOnly={false}
+              onLeaveFeedback={() => {
                 setEditingFeedback(null);
                 setShowFeedbackModal(true);
-              } : null}
-              onEditFeedback={isRequestor ? (fb) => {
+              }}
+              onEditFeedback={(fb) => {
                 setEditingFeedback(fb);
                 setShowFeedbackModal(true);
-              } : null}
+              }}
             />
           </div>
         )}

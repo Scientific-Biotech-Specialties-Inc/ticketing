@@ -6,6 +6,7 @@ import useLockBodyScroll from '@/hooks/useLockBodyScroll';
 import useMaxFileCount from '@/hooks/useMaxFileCount';
 import ActionErrorModal, { getActionError } from './ActionErrorModal';
 import SermsReimbursementModal from './SermsReimbursementModal';
+import { ConfirmationModal } from '@/components/ui/confirmation-modal';
 
 function ProofFileItem({ file, onRemove }) {
   const [previewUrl, setPreviewUrl] = useState(null);
@@ -53,6 +54,7 @@ export default function ProofCompletionModal({
   ticket,
   onClose,
   onStatusChange,
+  onProofSubmitted,
 }) {
   useLockBodyScroll(Boolean(ticket));
   const navigate = useNavigate();
@@ -63,6 +65,7 @@ export default function ProofCompletionModal({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [remarks, setRemarks] = useState('');
   const [submitError, setSubmitError] = useState(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showReimbursementPrompt, setShowReimbursementPrompt] = useState(false);
   const [showSermsModal, setShowSermsModal] = useState(false);
 
@@ -73,6 +76,7 @@ export default function ProofCompletionModal({
     setIsSubmitting(false);
     setRemarks('');
     setSubmitError(null);
+    setShowConfirmModal(false);
     setShowReimbursementPrompt(false);
     setShowSermsModal(false);
   }, [ticket]);
@@ -82,7 +86,7 @@ export default function ProofCompletionModal({
   const isInternal = Boolean(ticket?.title?.startsWith('[Internal]') || ticket?.is_internal || ticket?.ticket_type === 'Internal' || ticket?.type === 'Internal');
   const isProofRejected = ticket.proofRejected === true && ticket.status === 'In Progress';
 
-  const ALLOWED_EXTENSIONS = ['pdf', 'png', 'docx', 'doc'];
+  const ALLOWED_EXTENSIONS = ['pdf', 'png', 'jpg', 'jpeg', 'docx', 'doc'];
   const MAX_FILE_SIZE_MB = 15;
   const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024; // 15MB
   const MAX_TOTAL_SIZE_MB = 45;
@@ -91,14 +95,14 @@ export default function ProofCompletionModal({
   const totalSizeBytes = proofFiles.reduce((acc, f) => acc + (f.size || 0), 0);
   const totalSizeMB = (totalSizeBytes / (1024 * 1024)).toFixed(2);
 
-  // Handle file validation (max 15MB each, max 45MB total, allowed PDF, PNG, Word)
+  // Handle file validation (max 15MB each, max 45MB total, allowed PDF, PNG, JPEG, Word)
   const validateFiles = (incomingFiles, currentFiles = []) => {
     for (let i = 0; i < incomingFiles.length; i++) {
       const file = incomingFiles[i];
       const extension = file.name.split('.').pop().toLowerCase();
       
       if (!ALLOWED_EXTENSIONS.includes(extension)) {
-        return `Invalid file type: "${file.name}". Supported formats: PDF, PNG, Word (.docx, .doc).`;
+        return `Invalid file type: "${file.name}". Supported formats: PDF, PNG, JPG/JPEG, Word (.docx, .doc).`;
       }
       if (file.size > MAX_FILE_SIZE_BYTES) {
         return `File too large: "${file.name}" (${(file.size / (1024 * 1024)).toFixed(2)} MB). Maximum allowed size is ${MAX_FILE_SIZE_MB}MB per file.`;
@@ -121,7 +125,7 @@ export default function ProofCompletionModal({
     navigate('/employee/machine', isInternal ? undefined : { state: { tab: 'pending_evaluation' } });
   };
 
-  const handleProofSubmit = async (e) => {
+  const handleProofSubmit = (e) => {
     e.preventDefault();
     if (proofFiles.length === 0) {
       setErrorMessage('Please select at least one proof of completion file.');
@@ -140,6 +144,11 @@ export default function ProofCompletionModal({
       return;
     }
 
+    setErrorMessage('');
+    setShowConfirmModal(true);
+  };
+
+  const handleConfirmedSubmit = async () => {
     setIsSubmitting(true);
     setErrorMessage('');
     setSuccessMessage('');
@@ -156,13 +165,17 @@ export default function ProofCompletionModal({
 
     try {
       await updateEmployeeTicket(numericId, formData);
-      
+
       if (typeof onStatusChange === 'function') {
         onStatusChange(ticket.id, targetStatus);
+      }
+      if (typeof onProofSubmitted === 'function') {
+        onProofSubmitted(ticket.id, targetStatus);
       }
 
       setErrorMessage('');
       setProofFiles([]);
+      setShowConfirmModal(false);
 
       // External tickets now await CS evaluation: go straight to that tab.
       if (!isInternal) {
@@ -171,8 +184,9 @@ export default function ProofCompletionModal({
       }
 
       setSuccessMessage(`Proof of completion submitted successfully! Status updated to ${targetStatus}.`);
-      setShowReimbursementPrompt(true);
+      onClose();
     } catch (err) {
+      setShowConfirmModal(false);
       // Every failed submission opens a modal explaining why; the inline text stays as a reminder.
       const notice = getActionError(err, 'Failed to submit proof.');
       setSubmitError(notice);
@@ -439,6 +453,19 @@ export default function ProofCompletionModal({
       </div>
     </div>
     {/* Sibling of the backdrop so clicks in the notice do not bubble to the backdrop's onClose. */}
+    <ConfirmationModal
+      isOpen={showConfirmModal}
+      onClose={() => !isSubmitting && setShowConfirmModal(false)}
+      onConfirm={handleConfirmedSubmit}
+      variant="success"
+      loading={isSubmitting}
+      contentClassName="z-[120]"
+      title="Confirm Proof Upload"
+      description={`Are you sure you want to upload ${proofFiles.length} proof of completion ${proofFiles.length === 1 ? 'file' : 'files'} and update this ticket's status to "${isInternal ? 'Resolved' : 'Pending Evaluation'}"?`}
+      confirmLabel={isSubmitting ? 'Uploading...' : 'Yes, Upload Proof'}
+      cancelLabel="Cancel"
+    />
+
     <ActionErrorModal error={submitError} onClose={() => setSubmitError(null)} />
 
     {/* SERMS Expense Reimbursement Dialog */}
