@@ -22,6 +22,14 @@ class EmployeeAssignmentController extends Controller
             return response()->json(['message' => 'Unauthorized. Please log in.'], 401);
         }
 
+        // Spec 0051 (AC-3): members or a department, never both in one request.
+        if ($request->filled('department_id')) {
+            return response()->json([
+                'message' => 'Choose members or a department, not both.',
+                'code' => 'ROUTE_MODE_CONFLICT',
+            ], 422);
+        }
+
         $validated = $request->validate([
             'employee_ids' => ['required', 'array', 'min:1'],
             'employee_ids.*' => ['integer', 'exists:employees,emp_id'],
@@ -102,6 +110,13 @@ class EmployeeAssignmentController extends Controller
                 ->where('email', $validated['assigned_by_email'] ?? '')
                 ->value('emp_id') ?? ($user ? $user->emp_id : 2));
 
+        // Spec 0051 (AC-12): CS assigning members to a department routed ticket takes it back
+        // from the department: open manager rows close and assigned_department_id clears.
+        $routing = app(\App\Services\DepartmentRoutingService::class);
+        if (!$manager && !empty($ticket->assigned_department_id) && $routing->canRoute($user)) {
+            $routing->releaseForMemberReroute($ticketId, (int) $assignedBy);
+        }
+
         $result = $this->assignmentService->assignTicket($ticketId, $validated, $assignedBy, $manager);
         return response()->json($result['data'], $result['status']);
     }
@@ -146,7 +161,23 @@ class EmployeeAssignmentController extends Controller
                 }
             }
 
+            // Spec 0051 (AC-12): CS assigning members takes a department routed ticket back.
+            $routing = app(\App\Services\DepartmentRoutingService::class);
+            if ($ticket && !empty($ticket->assigned_department_id) && $routing->canRoute($user)) {
+                $routing->releaseForMemberReroute($ticketId, (int) ($user->emp_id ?? 0));
+            }
+
             $result = $this->assignmentService->acceptTicket($ticketId, $user, $validated);
+            return response()->json($result['data'], $result['status']);
+        }
+
+        // Spec 0051 (AC-7, AC-10): a manager accepting a ticket still waiting in a Department
+        // queue goes through the first to act claim, so the other managers' rows close.
+        $routing = app(\App\Services\DepartmentRoutingService::class);
+        $waiting = $routing->waitingRoute(DB::table('tickets')->where('ticket_ID', $ticketId)->first());
+        $actor = $waiting ? app(\App\Services\DepartmentManagerResolver::class)->employeeForUser($user) : null;
+        if ($waiting && $actor && in_array((int) $actor->emp_id, $waiting->manager_ids, true)) {
+            $result = $routing->claim($ticketId, $actor, $user);
             return response()->json($result['data'], $result['status']);
         }
 

@@ -25,6 +25,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useBranch } from '@/context/BranchContext';
 import SlaStatusBadge, { getTicketSlaDueDate, getTicketSlaStatus } from '@/components/sla/SlaStatusBadge';
 import { AssignModal } from '@/components/CSModals';
+import { DepartmentQueueSwitch } from '@/components/DepartmentQueueTab';
 import CustomerTicketDetailModal from '@/components/CustomerTicketDetailModal';
 import {
   getCSIncomingTickets,
@@ -415,6 +416,9 @@ export default function ITManagerTickets() {
         }
       />
 
+      {/* Spec 0051 (AC-6): department managers also get their Department queue. */}
+      <DepartmentQueueSwitch allLabel="All Tickets">
+      <>
       {/* Filter Toolbar Controls */}
       <div className="bg-card rounded-xl border border-border p-4 shadow-xs space-y-3">
         <div className="flex flex-wrap items-center gap-3">
@@ -634,6 +638,9 @@ export default function ITManagerTickets() {
           </div>
         )}
       </div>
+
+      </>
+      </DepartmentQueueSwitch>
 
       {/* Assignment Modal (Supports assigning to IT staff or self) */}
       {assignModalTicket && (

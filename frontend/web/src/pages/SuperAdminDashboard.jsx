@@ -108,7 +108,8 @@ export default function SuperAdminDashboard() {
       const data = await triggerEtlSync({ full_sync: fullSync, branch_id: 'all' });
       if (data?.status === 'success') {
         setSyncStatusMsg(`ETL Complete! Processed ${data.records_processed ?? 'all'} records (${data.duration_ms ?? 0}ms).`);
-        loadData();
+        // The sync runs in analytics-service and clears only its own caches, so reload fresh (spec 0050 AC-5).
+        loadData({ forceRefresh: true });
       } else {
         setSyncStatusMsg(`ETL: ${data?.message || data?.error || 'Triggered'}`);
       }
@@ -152,7 +153,10 @@ export default function SuperAdminDashboard() {
 
   // Loads real figures from the ticket service. A failed request marks every section unavailable
   // but keeps the last good data on screen.
-  const loadData = useCallback(async () => {
+  // Pass { forceRefresh: true } to bypass the server cache. Also used as a click handler, so the argument
+  // may be a click event; only an explicit forceRefresh: true counts.
+  const loadData = useCallback(async (options) => {
+    const forceRefresh = options?.forceRefresh === true;
     if (selectedPeriod === 'Custom Range') {
       if (!customStart || !customEnd) return;
       if (!isDateRangeValid(customStart, customEnd)) {
@@ -168,6 +172,8 @@ export default function SuperAdminDashboard() {
         params.date_from = customStart;
         params.date_to = customEnd;
       }
+      // force_refresh is the only spelling SuperAdminDashboardController reads.
+      if (forceRefresh) params.force_refresh = true;
       const api = await getSystemDashboard(params);
       setDashboardData(adaptSystemDashboard(api, selectedPeriod));
       setSectionErrors({ kpis: null, branchComparison: null, activity: null, charts: null });

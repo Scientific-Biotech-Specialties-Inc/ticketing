@@ -1,0 +1,171 @@
+name: 'Laravel Tests'
+
+# Microservice test matrix. Required status check before merging (see
+# .claude/rules/70-commits-pull-requests.md). Each service runs its own PHPUnit suite.
+#
+# Database isolation: services whose phpunit.xml forces a MySQL test database
+# (ticketing_system_test, analytics_service_test) get a throwaway MySQL service
+# container that only lives for the job, so no shared or dev database is ever
+# touched. The other services force sqlite :memory: in their phpunit.xml.
+# Redis is mocked in the test suites; messaging-service gets a throwaway MongoDB.
+#
+# employee-service is not in the matrix yet: it has no phpunit.xml and no tests.
+# Add it here once it does.
+
+on:
+  push:
+    branches: [ "main", "dev", "staging" ]
+  pull_request:
+    branches: [ "main", "dev", "staging" ]
+
+concurrency:
+  group: laravel-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  phpunit:
+    name: 'Laravel tests (${{ matrix.service }})'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: ticket-service
+            dir: services/ticket-service
+          - service: analytics-service
+            dir: services/analytics-service
+          - service: customer-service
+            dir: services/customer-service
+          - service: ai-service
+            dir: services/AI-service
+          - service: attachment-service
+            dir: services/attachment-service
+          - service: configuration-service
+            dir: services/configuration-service
+          - service: messaging-service
+            dir: services/messaging-service
+          - service: notification-service
+            dir: services/notification-service
+
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      # messaging-service talks to MongoDB (MONGODB_URI defaults to 127.0.0.1:27017).
+      mongo:
+        image: mongo:7.0.14
+        ports:
+          - 27017:27017
+
+    env:
+      # Connection details only. DB_CONNECTION and DB_DATABASE are deliberately
+      # not set here, so each phpunit.xml decides which isolated database it uses.
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_USERNAME: root
+      DB_PASSWORD: root
+
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP 8.2
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, pdo, pdo_mysql, pdo_sqlite, sqlite3, zip, pcntl, bcmath, intl, redis, mongodb
+          coverage: none
+          tools: composer:v2
+
+      # Same layout the deploy workflow builds into images. ticket-service's
+      # "Reporting" suite reads packages/ticketing-reporting/tests from here.
+      # Copies every shared package that exists in the repo root packages/ folder.
+      - name: Copy shared packages into service
+        run: |
+          rm -rf packages
+          mkdir -p packages
+          for pkg in "$GITHUB_WORKSPACE"/packages/*/; do
+            cp -r "$pkg" "packages/$(basename "$pkg")"
+          done
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ matrix.service }}-${{ hashFiles(format('{0}/composer.lock', matrix.dir)) }}
+          restore-keys: composer-${{ matrix.service }}-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare application environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate --force
+
+      # Passport and the shared JWT middleware need RSA keys on disk. Real keys are
+      # gitignored, so CI generates a throwaway pair that only exists for this job.
+      - name: Generate throwaway OAuth keys
+        run: |
+          # Not every service commits a storage/ folder (messaging-service has none).
+          mkdir -p storage
+          if [ ! -f storage/oauth-private.key ]; then
+            openssl genrsa -out storage/oauth-private.key 2048
+            openssl rsa -in storage/oauth-private.key -pubout -out storage/oauth-public.key
+            chmod 600 storage/oauth-private.key storage/oauth-public.key
+          fi
+          [ -f storage/auth-module-public.key ] || cp storage/oauth-public.key storage/auth-module-public.key
+
+      - name: Create isolated MySQL test databases
+        run: |
+          mysql -h 127.0.0.1 -uroot -proot -e "CREATE DATABASE IF NOT EXISTS ticketing_system_test; CREATE DATABASE IF NOT EXISTS analytics_service_test;"
+
+      # Suites that force a MySQL test database expect it to be migrated already
+      # (locally that database persists between runs). Migrate it here, pointing
+      # explicitly at the test database named in phpunit.xml.
+      #
+      # All services share one schema, and migrations carry foreign keys across
+      # owners (machines -> clients, branch_ticket_forecasts -> branches, and
+      # refresh_tokens -> employees in the other direction). Migrating one service
+      # alone fails, so this replays every schema owner's migrations in a single
+      # run. Laravel orders them by timestamp across all paths, as they were applied
+      # to the shared database.
+      - name: Migrate MySQL test database
+        run: |
+          conn=$(grep -oP 'name="DB_CONNECTION" value="\K[^"]+' phpunit.xml | head -1)
+          db=$(grep -oP 'name="DB_DATABASE" value="\K[^"]+' phpunit.xml | head -1)
+          if [ "$conn" = "mysql" ]; then
+            case "$db" in *_test) ;; *) echo "Refusing to migrate non-test database '$db'"; exit 1 ;; esac
+            paths=""
+            for owner in customer-service employee-service ticket-service analytics-service notification-service; do
+              paths="$paths --path=$GITHUB_WORKSPACE/services/$owner/database/migrations"
+            done
+            DB_CONNECTION=mysql DB_DATABASE="$db" php artisan migrate --force --realpath $paths
+            if [ -f database/seeders/TicketReferenceSeeder.php ]; then
+              DB_CONNECTION=mysql DB_DATABASE="$db" php artisan db:seed --class=TicketReferenceSeeder --force
+            fi
+          else
+            echo "phpunit.xml uses $conn; nothing to migrate."
+          fi
+
+      - name: Run PHPUnit
+        run: vendor/bin/phpunit

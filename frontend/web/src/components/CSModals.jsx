@@ -55,7 +55,11 @@ import {
   updateTicket,
   respondReassignment,
   recordProofView,
+  getAssignableDepartments,
+  routeTicketToDepartment,
+  departmentRoutingErrorMessage,
 } from '@/services/ticketService';
+import { AssignModeToggle, DepartmentRoutePicker } from './DepartmentRoutePicker';
 import { getTicketMessages } from '@/services/messagingService';
 import {
   TicketDetailModalShell,
@@ -2477,7 +2481,7 @@ export function TicketSummary({ ticket: ticketProp, employees = [], onClose, onE
 /* ─────────────────────────────────────────────
    ASSIGN MODAL
 ───────────────────────────────────────────── */
-export function AssignModal({ ticket, employees, departments, priorityOptions, onClose, onSave, onCloseTicket, excludeEmployeeIds = [], lockedDepartment = '' }) {
+export function AssignModal({ ticket, employees, departments, priorityOptions, onClose, onSave, onCloseTicket, onRouted, excludeEmployeeIds = [], lockedDepartment = '' }) {
   // A department manager (Service or IT) only sees and picks staff from their own department.
   const lockedDept = String(lockedDepartment || '').trim();
   // Employees who must not be offered (e.g. a manager reassigning never sees themself).
@@ -2522,6 +2526,41 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
   const [loadingEligibility, setLoadingEligibility] = useState(false);
   const [eligibilityError, setEligibilityError] = useState(null);
   const [activeTab, setActiveTab] = useState('eligible'); // 'eligible' | 'managers'
+
+  // Spec 0051 (AC-3): CS routes to members or to one department, never both. Managers working
+  // inside their own department (lockedDept) never see the department option.
+  const [assignMode, setAssignMode] = useState('members');
+  const [routeDepartments, setRouteDepartments] = useState([]);
+  const [routeDepartmentsLoading, setRouteDepartmentsLoading] = useState(!lockedDept);
+  const [routeDepartmentsError, setRouteDepartmentsError] = useState('');
+  const [departmentRoutingAvailable, setDepartmentRoutingAvailable] = useState(false);
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState(null);
+  const [routeNote, setRouteNote] = useState('');
+
+  const loadRouteDepartments = useCallback(async () => {
+    if (lockedDept) return;
+    setRouteDepartmentsLoading(true);
+    setRouteDepartmentsError('');
+    try {
+      const list = await getAssignableDepartments();
+      setRouteDepartments(Array.isArray(list) ? list : []);
+      setDepartmentRoutingAvailable(true);
+    } catch (err) {
+      if (err?.response?.status === 403) {
+        // Not a routing role: keep the modal members only.
+        setDepartmentRoutingAvailable(false);
+      } else {
+        setDepartmentRoutingAvailable(true);
+        setRouteDepartmentsError(departmentRoutingErrorMessage(err, 'Failed to load departments.'));
+      }
+    } finally {
+      setRouteDepartmentsLoading(false);
+    }
+  }, [lockedDept]);
+
+  useEffect(() => {
+    loadRouteDepartments();
+  }, [loadRouteDepartments]);
 
   useLockBodyScroll(!!ticket);
 
@@ -2714,6 +2753,46 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
     }
   };
 
+  const handleRouteDepartment = async () => {
+    if (isSaving) return;
+    setSaveError('');
+    setValidationError('');
+    if (!selectedDepartmentId) {
+      setValidationError('Pick a department to route this ticket to.');
+      return;
+    }
+
+    const priorityIds = { Low: 1, Medium: 2, High: 3, Critical: 4 };
+    setIsSaving(true);
+    try {
+      const result = await routeTicketToDepartment({
+        ticketId: ticket.ticket_ID || Number(String(ticket.id || '').replace(/\D/g, '')),
+        departmentId: selectedDepartmentId,
+        priorityId: priorityIds[priority],
+        note: routeNote.trim(),
+      });
+      await onRouted?.(result);
+      onClose();
+    } catch (err) {
+      setSaveError(departmentRoutingErrorMessage(err, 'Failed to route the ticket.'));
+      // A department may have just lost its manager or been switched off: refresh the list.
+      const code = err?.response?.data?.code;
+      if (code === 'DEPARTMENT_NOT_ROUTABLE' || code === 'DEPARTMENT_HAS_NO_MANAGER') {
+        setSelectedDepartmentId(null);
+        loadRouteDepartments();
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const changeAssignMode = (mode) => {
+    setAssignMode(mode);
+    setValidationError('');
+    setSaveError('');
+  };
+
+  const isDepartmentMode = departmentRoutingAvailable && assignMode === 'department';
   const currentRule = eligibilityData?.rule || null;
   const ticketBranch = ticket?.branch || ticket?.branch_name || 'Main Branch';
 
@@ -2806,6 +2885,28 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
               );
             })()}
 
+            {departmentRoutingAvailable && (
+              <div className="mb-4 flex items-center justify-between gap-4">
+                <span className="text-xs font-medium text-slate-dark">Assign to</span>
+                <AssignModeToggle value={assignMode} onChange={changeAssignMode} disabled={isSaving} />
+              </div>
+            )}
+
+            {isDepartmentMode && (
+              <DepartmentRoutePicker
+                departments={routeDepartments}
+                loading={routeDepartmentsLoading}
+                error={routeDepartmentsError}
+                selectedId={selectedDepartmentId}
+                onSelect={(id) => { setSelectedDepartmentId(id); setValidationError(''); }}
+                note={routeNote}
+                onNoteChange={setRouteNote}
+                onRetry={loadRouteDepartments}
+                disabled={isSaving}
+              />
+            )}
+
+            {!isDepartmentMode && (<>
             {/* Category Selector */}
             <div className="mb-4">
               <div className="flex items-center justify-between mb-1.5">
@@ -2872,6 +2973,8 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
               )}
             </div>
 
+            </>)}
+
             {/* Priority */}
             <div className="mb-4">
               <label className="block text-xs font-medium text-slate-dark mb-2">
@@ -2892,6 +2995,7 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
               </div>
             </div>
 
+            {!isDepartmentMode && (<>
             {/* Candidate Tabs: Eligible vs Ineligible vs Escalation Managers */}
             <div className="mb-3">
               <div className="flex items-center justify-between border-b border-border pb-1">
@@ -3178,6 +3282,8 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
               )}
             </div>
 
+            </>)}
+
             {/* Validation & Save Error Alerts */}
             {validationError && (
               <p className="mt-2 text-xs font-semibold text-destructive flex items-center gap-1.5 bg-destructive/10 p-2.5 rounded-lg border border-destructive/20 mb-3">
@@ -3366,14 +3472,17 @@ export function AssignModal({ ticket, employees, departments, priorityOptions, o
             <Button
               type="button"
               variant="default"
-              onClick={handleAcceptClick}
-              disabled={isSaving || isClosing}
+              onClick={isDepartmentMode ? handleRouteDepartment : handleAcceptClick}
+              disabled={isSaving || isClosing || (isDepartmentMode && !selectedDepartmentId)}
+              data-testid="assign-submit"
             >
               {isSaving ? (
                 <span className="flex items-center gap-1.5">
                   <Loader2 className="w-4 h-4 animate-spin" /> Saving...
                 </span>
-              ) : (ticket.status === 'Pending Assignment' || ticket.reassignmentStatus === 'Approved') ? 'Save Changes' : 'Assign Ticket'}
+              ) : isDepartmentMode
+                ? 'Route to Department'
+                : (ticket.status === 'Pending Assignment' || ticket.reassignmentStatus === 'Approved') ? 'Save Changes' : 'Assign Ticket'}
             </Button>
           </div>
 

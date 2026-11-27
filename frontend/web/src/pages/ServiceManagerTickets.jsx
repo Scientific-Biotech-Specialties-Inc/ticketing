@@ -20,6 +20,7 @@ import Pagination from '@/components/Pagination';
 import { useAuth } from '@/context/AuthContext';
 import SlaStatusBadge, { getTicketSlaDueDate, getTicketSlaStatus } from '@/components/sla/SlaStatusBadge';
 import { AssignModal } from '@/components/CSModals';
+import { DepartmentQueueSwitch } from '@/components/DepartmentQueueTab';
 import CustomerTicketDetailModal from '@/components/CustomerTicketDetailModal';
 import {
   getManagerTickets,
@@ -262,6 +263,9 @@ export default function ServiceManagerTickets() {
         }
       />
 
+      {/* Spec 0051 (AC-6): department managers also get their Department queue. */}
+      <DepartmentQueueSwitch allLabel="All Tickets">
+      <>
       {/* Filter Toolbar Controls */}
       <div className="bg-card rounded-xl border border-border p-4 shadow-xs space-y-3">
         <div className="flex flex-wrap items-center gap-3">
@@ -475,6 +479,9 @@ export default function ServiceManagerTickets() {
           </div>
         )}
       </div>
+
+      </>
+      </DepartmentQueueSwitch>
 
       {/* Assignment Modal */}
       {assignModalTicket && (

@@ -8,6 +8,11 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Skipped when notification-service (the table's owner) already created the column.
+        if (Schema::hasColumn('notifications', 'data')) {
+            return;
+        }
+
         Schema::table('notifications', function (Blueprint $table) {
             $table->json('data')->nullable()->after('message');
         });

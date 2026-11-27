@@ -14,8 +14,10 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
+use App\Http\Controllers\EtlSyncController;
 use App\Http\Controllers\FeedbackController;
 use App\Http\Controllers\PredictiveAnalyticsController;
+use App\Http\Controllers\PredictiveInsightsController;
 
 Route::middleware('auth:api')->get('/user', function (Request $request) {
     return $request->user();
@@ -30,6 +32,10 @@ Route::middleware('auth.subsystem')->group(function () {
     Route::delete('/feedback/ticket/{ticketId}', [FeedbackController::class, 'deleteByTicket']);
     Route::get('/csat-stats', [FeedbackController::class, 'csatStats']);
     Route::get('/predictive-metrics', [PredictiveAnalyticsController::class, 'getPredictiveMetrics']);
+
+    // Spec 0050: reporting moved from ticket-service. Registered once each (no alias forms).
+    Route::get('/insights/predictive', [PredictiveInsightsController::class, 'show'])->middleware('no-cache');
+    Route::post('/etl/sync', [EtlSyncController::class, 'sync'])->middleware('no-cache');
 
     // Prefix routes matching direct service /api/analytics requests
     Route::prefix('analytics')->group(function () {

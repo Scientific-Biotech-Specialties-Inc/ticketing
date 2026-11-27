@@ -644,8 +644,14 @@ class EmployeeDirectoryController extends Controller
         $rows = DB::table('departments')
             ->when(!$request->boolean('include_inactive'), fn ($q) => $q->where('is_active', true))
             ->orderBy('name')
-            ->get(['id', 'name', 'code', 'is_active'])
-            ->map(fn ($d) => ['id' => (int) $d->id, 'name' => $d->name, 'code' => $d->code, 'is_active' => (bool) $d->is_active])
+            ->get(['id', 'name', 'code', 'is_active', 'accepts_tickets'])
+            ->map(fn ($d) => [
+                'id' => (int) $d->id,
+                'name' => $d->name,
+                'code' => $d->code,
+                'is_active' => (bool) $d->is_active,
+                'accepts_tickets' => (bool) $d->accepts_tickets,
+            ])
             ->values();
 
         return response()->json([

@@ -68,6 +68,30 @@ describe('SuperAdminDashboard (spec 0028 AC-8 to AC-11)', () => {
     expect(screen.getByText('No Data')).toBeInTheDocument();
   });
 
+  it('reloads the system dashboard with force_refresh after a successful ETL sync (spec 0050 AC-5)', async () => {
+    ticketService.getSystemDashboard.mockResolvedValue(apiPayload);
+    ticketService.triggerEtlSync.mockResolvedValue({ status: 'success', records_processed: 12, duration_ms: 40 });
+    render(<SuperAdminDashboard />);
+    await waitFor(() => expect(ticketService.getSystemDashboard).toHaveBeenCalledWith({ preset: 'Last 7 Days' }));
+
+    fireEvent.click(screen.getByText('Run Incremental ETL'));
+
+    await waitFor(() => expect(ticketService.triggerEtlSync).toHaveBeenCalledWith({ full_sync: false, branch_id: 'all' }));
+    await waitFor(() => expect(ticketService.getSystemDashboard).toHaveBeenLastCalledWith({ preset: 'Last 7 Days', force_refresh: true }));
+    expect(screen.getByText(/Processed 12 records/)).toBeInTheDocument();
+  });
+
+  it('a manual refresh or Retry never forces a server refresh', async () => {
+    ticketService.getSystemDashboard.mockRejectedValue(new Error('Network Error'));
+    render(<SuperAdminDashboard />);
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Retry' }).length).toBeGreaterThanOrEqual(1));
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Retry' })[0]);
+
+    await waitFor(() => expect(ticketService.getSystemDashboard).toHaveBeenCalledTimes(2));
+    expect(ticketService.getSystemDashboard).toHaveBeenLastCalledWith({ preset: 'Last 7 Days' });
+  });
+
   it('requests the selected period from the server', async () => {
     ticketService.getSystemDashboard.mockResolvedValue(apiPayload);
     render(<SuperAdminDashboard />);

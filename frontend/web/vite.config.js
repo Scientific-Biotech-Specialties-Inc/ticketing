@@ -58,6 +58,12 @@ export default defineConfig({
         secure: false,
         rewrite: (path) => path.replace(/^\/api\/ticketing\/messaging/, '/api')
       },
+      '/api/ticketing/notification': {
+        target: process.env.VITE_NOTIFICATION_SERVICE_URL || 'http://127.0.0.1:8003',
+        changeOrigin: true,
+        secure: false,
+        rewrite: (path) => path.replace(/^\/api\/ticketing\/notification/, '/api')
+      },
       '/api/ticketing/analytics': {
         target: process.env.VITE_ANALYTICS_SERVICE_URL || 'http://127.0.0.1:8004',
         changeOrigin: true,

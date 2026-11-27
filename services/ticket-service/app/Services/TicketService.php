@@ -148,6 +148,7 @@ class TicketService
 
         $assignments = DB::table('ticket_assignments')
             ->where('ticket_ID', $ticketId)
+            ->where('assignment_status', '!=', 'department_closed')
             ->get();
 
         $assignedIds = $assignments->pluck('employee_ID')->map(fn($id) => (int)$id)->all();
@@ -824,6 +825,7 @@ class TicketService
             $assignment = DB::table('ticket_assignments')
                 ->where('ticket_ID', $ticketId)
                 ->where('employee_ID', $user->emp_id)
+                ->where('assignment_status', '!=', 'department_closed')
                 ->first();
         }
         $accepted = $assignment && $assignment->assignment_status === 'accepted';
@@ -863,12 +865,15 @@ class TicketService
             }
         }
         $actualDenyReason = $deniedReassign ? ($deniedReassign->deny_reason ?: $latestDenyAuditReason) : null;
+        // Latest request state (pending, denied, approved, superseded) so open modals can replace stale local state.
+        $reassignmentStatus = $latestReassign ? ucfirst((string) $latestReassign->status) : null;
 
         // Privacy: reassignment requests, reasons and denials are internal handling and must never reach a customer.
         if ($isCustomer) {
             $pendingReassign = null;
             $deniedReassign = null;
             $actualDenyReason = null;
+            $reassignmentStatus = null;
         }
 
         $auditLogs = DB::table('ticket_audit_logs as tal')
@@ -1363,6 +1368,8 @@ class TicketService
         $assignedEmployees = DB::table('ticket_assignments as ta')
             ->join('employees as e', 'e.emp_id', '=', 'ta.employee_ID')
             ->where('ta.ticket_ID', $ticketId)
+            // Spec 0051: closed department manager rows are history, not assignees.
+            ->where('ta.assignment_status', '!=', 'department_closed')
             ->select(
                 'e.emp_id as id',
                 DB::raw("CONCAT(e.first_name, ' ', e.last_name) as name"),
@@ -1502,7 +1509,7 @@ class TicketService
             'status_history' => $statusHistory,
             'ticket_type' => $ticket->ticket_type ?? 'External',
             'is_internal' => (bool)$ticket->is_internal,
-            'requested_by' => $ticket->requested_by,
+            'requested_by' => $ticket->requested_by !== null ? (int) $ticket->requested_by : null,
             'last_reminder_sent_at' => $ticket->last_reminder_sent_at ? Carbon::parse($ticket->last_reminder_sent_at)->toIso8601String() : null,
             'worklogs' => DB::table('work_logs')->where('ticket_id', $ticketId)->orderBy('log_date', 'desc')->orderBy('created_at', 'desc')->get(),
             // Spec 0043 (AC-20): the reclassify modal lists only this customer's registered machines.
@@ -1774,6 +1781,7 @@ class TicketService
                 }
                 $hasAssignment = DB::table('ticket_assignments')
                     ->where('ticket_ID', $ticketId)
+                    ->where('assignment_status', '!=', 'department_closed')
                     ->exists();
                 if (!$hasAssignment) {
                     return ['status' => 422, 'data' => ['message' => 'Cannot resolve ticket: No employees are assigned.']];
@@ -2241,16 +2249,6 @@ class TicketService
                     $ticketId,
                     $customerData
                 );
-
-                if ($ticket->requested_by) {
-                    $this->notificationService->notifyRecipient(
-                        $ticket->requested_by,
-                        'employee',
-                        'Ticket Updated',
-                        "Your requested ticket {$ticketRefFields} {$detailText}.",
-                        $ticketId
-                    );
-                }
 
                 $catName = DB::table('problem_categories')->where('problem_category_ID', $ticket->problem_category_ID)->value('category_name') ?? '';
                 $prioName = DB::table('ticket_priorities')->where('priority_ID', $ticket->priority_ID ?? 1)->value('priority_name') ?? '';
@@ -2809,6 +2807,7 @@ class TicketService
         if (!$previousAssignedTo) {
             $previousAssignedTo = DB::table('ticket_assignments')
                 ->where('ticket_ID', $ticketId)
+                ->where('assignment_status', '!=', 'department_closed')
                 ->orderByDesc('assignment_ID')
                 ->value('employee_ID');
         }

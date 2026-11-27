@@ -11,6 +11,10 @@
         <testsuite name="Feature">
             <directory>tests/Feature</directory>
         </testsuite>
+        <!-- Shared reporting package (spec 0050), mounted at packages/ticketing-reporting inside the container. -->
+        <testsuite name="Reporting">
+            <directory>packages/ticketing-reporting/tests/Unit</directory>
+        </testsuite>
     </testsuites>
     <source>
         <include>

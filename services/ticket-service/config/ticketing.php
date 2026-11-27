@@ -11,7 +11,7 @@
 | Values are compared case insensitively after trimming.
 |
 | Left unset (the default), the list is the active departments the
-| superadmin manages in the `departments` table (App\Support\TechnicalDepartments).
+| superadmin manages in the `departments` table (Ticketing\Reporting\TechnicalDepartments).
 | Set TICKETING_TECHNICAL_DEPARTMENTS (comma separated) only to force a fixed
 | list, for example "Service,IT,Field Support".
 |
@@ -40,4 +40,6 @@ return [
         ],
         'min_judged_periods' => 3,
     ],
+
+    // Notification retention moved to notification-service (config/notifications.php).
 ];

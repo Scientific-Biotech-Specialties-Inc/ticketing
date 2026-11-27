@@ -498,21 +498,6 @@ class TicketController extends Controller
         return app(TicketDashboardController::class)->csIncoming($request);
     }
 
-    public function getNotifications(Request $request)
-    {
-        return app(TicketNotificationController::class)->getNotifications($request);
-    }
-
-    public function markNotificationsRead(Request $request)
-    {
-        return app(TicketNotificationController::class)->markNotificationsRead($request);
-    }
-
-    public function markNotificationRead(Request $request, int $id)
-    {
-        return app(TicketNotificationController::class)->markNotificationRead($request, $id);
-    }
-
     public function getSuperAdminConfig(Request $request)
     {
         return app(SuperAdminConfigController::class)->getSuperAdminConfig($request);

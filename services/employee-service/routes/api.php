@@ -6,6 +6,7 @@ use App\Http\Controllers\EmployeeAssignmentController;
 use App\Http\Controllers\EmployeeReassignmentController;
 use App\Http\Controllers\WorkLogController;
 use App\Http\Controllers\DepartmentController;
+use App\Http\Controllers\DepartmentRoutingController;
 use App\Http\Controllers\TicketingAccessController;
 
 /*
@@ -59,6 +60,14 @@ Route::middleware(['auth.subsystem'])->group(function () {
     Route::get('/ticketing-access/employees', [TicketingAccessController::class, 'employees']);
     Route::post('/ticketing-access/employees/bulk-designate', [TicketingAccessController::class, 'bulkDesignate']);
     Route::put('/ticketing-access/employees/{empId}', [TicketingAccessController::class, 'updateEmployee'])->whereNumber('empId');
+
+    // Spec 0051: department routing with manager triage (roles checked in the service)
+    Route::get('/assignable-departments', [DepartmentRoutingController::class, 'assignableDepartments']);
+    Route::post('/tickets/{ticketId}/assign-department', [DepartmentRoutingController::class, 'assignDepartment'])->whereNumber('ticketId');
+    Route::get('/department-queue', [DepartmentRoutingController::class, 'queue']);
+    Route::post('/tickets/{ticketId}/department-claim', [DepartmentRoutingController::class, 'claim'])->whereNumber('ticketId');
+    Route::post('/tickets/{ticketId}/department-delegate', [DepartmentRoutingController::class, 'delegate'])->whereNumber('ticketId');
+    Route::post('/tickets/{ticketId}/department-return', [DepartmentRoutingController::class, 'returnToCs'])->whereNumber('ticketId');
 
     // Spec 0043: department codes (superadmin only, checked in the controller)
     Route::get('/departments/code-suggestion', [DepartmentController::class, 'suggestCode']);

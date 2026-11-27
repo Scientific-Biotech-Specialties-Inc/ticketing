@@ -4,7 +4,6 @@ namespace App\Services;
 
 use App\Events\TicketChanged;
 use App\Mail\TicketNotificationMail;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -12,21 +11,6 @@ use Illuminate\Support\Facades\Mail;
 
 class TicketNotificationService
 {
-    /**
-     * Get user ID and user type (client or employee) from the incoming request.
-     */
-    public function getRecipientInfo(Request $request): array
-    {
-        $user = $request->user();
-        if (!$user) {
-            return [null, null];
-        }
-        if ($user instanceof \App\Models\Client) {
-            return [$user->id, 'client'];
-        }
-        return [$user->emp_id, 'employee'];
-    }
-
     /**
      * Maps subject/title to an alert type key for channel lookup.
      */
@@ -145,13 +129,18 @@ class TicketNotificationService
             }
         }
 
+        // notifications.type is generated from data->type, so every row carries one: a caller's
+        // specific event type wins, otherwise the alert key this notification was routed under.
+        $data = $data ?? [];
+        $data['type'] = $data['type'] ?? $key;
+
         DB::table('notifications')->insert([
             'recipient_id'   => $recipientId,
             'recipient_type' => $recipientType,
             'title'          => $title,
             'message'        => $message,
             'ticket_id'      => $ticketId,
-            'data'           => $data ? json_encode($data) : null,
+            'data'           => json_encode($data),
             'is_read'        => false,
             'created_at'     => now(),
             'updated_at'     => now(),
@@ -195,6 +184,7 @@ class TicketNotificationService
             if ($token === 'contextual_assigned' && $ticketId) {
                 $assignedIds = DB::table('ticket_assignments')
                     ->where('ticket_ID', $ticketId)
+                    ->where('assignment_status', '!=', 'department_closed')
                     ->pluck('employee_ID')
                     ->map(fn($id) => (int) $id)
                     ->all();
@@ -431,13 +421,17 @@ class TicketNotificationService
      */
     public function notifyCustomer(int $customerId, string $title, string $message, ?int $ticketId = null, ?array $data = null, ?string $alertKey = null): void
     {
-        $this->notifyRecipient($customerId, 'client', $title, $message, $ticketId, $data, $alertKey);
+        $ticket = $ticketId
+            ? DB::table('tickets')->where('ticket_ID', $ticketId)->first(['requested_by', 'is_internal'])
+            : null;
 
-        if ($ticketId) {
-            $ticket = DB::table('tickets')->where('ticket_ID', $ticketId)->first(['requested_by']);
-            if ($ticket && $ticket->requested_by) {
-                $this->notifyRecipient((int)$ticket->requested_by, 'employee', $title, $message, $ticketId, $data, $alertKey);
-            }
+        // Internal tickets store a placeholder client in created_by; the real requester is requested_by.
+        if (!$ticket || empty($ticket->is_internal)) {
+            $this->notifyRecipient($customerId, 'client', $title, $message, $ticketId, $data, $alertKey);
+        }
+
+        if ($ticket && $ticket->requested_by) {
+            $this->notifyRecipient((int)$ticket->requested_by, 'employee', $title, $message, $ticketId, $data, $alertKey);
         }
     }
 
@@ -589,6 +583,15 @@ class TicketNotificationService
         ?string $eventKey = null,
         array $extraData = []
     ): void {
+        // Internal tickets: email the employee who filed it, never the placeholder client in created_by.
+        $internal = DB::table('tickets')->where('ticket_ID', $ticketId)->first(['is_internal', 'requested_by']);
+        if ($internal && !empty($internal->is_internal)) {
+            if (!empty($internal->requested_by)) {
+                $this->sendTicketEmail((int) $internal->requested_by, $subject, $message, $ticketId, $ticketTitle, $category, $priority, $eventKey, $extraData);
+            }
+            return;
+        }
+
         $client = DB::table('clients')->where('id', $customerId)->first();
         if (!$client || !$client->email) {
             return;
@@ -721,6 +724,7 @@ class TicketNotificationService
         if ($ticketId > 0) {
             $assignedEmpIds = DB::table('ticket_assignments')
                 ->where('ticket_ID', $ticketId)
+                ->where('assignment_status', '!=', 'department_closed')
                 ->pluck('employee_ID')
                 ->map(fn($id) => (int)$id)
                 ->all();

@@ -1,11 +1,23 @@
 import axios from 'axios';
 import axiosInstance from '@/api/axiosInstance';
-import { TICKET_API_URL, EMPLOYEE_API_URL, AUTH_ENDPOINTS, AI_API_URL } from '@/config/api.config';
+import { TICKET_API_URL, EMPLOYEE_API_URL, AUTH_ENDPOINTS, AI_API_URL, NOTIFICATION_API_URL, ANALYTICS_API_URL } from '@/config/api.config';
 import tokenStore from '@/auth/tokenStore';
 import { refreshAccessToken } from '@/auth/refreshSession';
 
 const ticketClient = axios.create({
   baseURL: TICKET_API_URL,
+  withCredentials: true,
+  headers: {
+    'X-Requested-With': 'XMLHttpRequest',
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+  },
+});
+
+// Spec 0050: reporting endpoints (predictive insights, ETL sync, and later performance and reports) live in
+// analytics-service. Same headers and the same token, refresh and error handling as ticketClient.
+const analyticsClient = axios.create({
+  baseURL: ANALYTICS_API_URL,
   withCredentials: true,
   headers: {
     'X-Requested-With': 'XMLHttpRequest',
@@ -31,42 +43,48 @@ const getStoredClientId = () => {
   return null;
 };
 
-ticketClient.interceptors.request.use((config) => {
-  const token = tokenStore.getToken();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  // Spec 0034: identity comes only from the verified token. No X-Client-Id or X-User-Id headers.
-  return config;
-});
-
-ticketClient.interceptors.response.use(
-  (response) => response,
-  async (error) => {
-    const originalRequest = error.config;
-    if (
-      error.response?.status === 401 &&
-      originalRequest &&
-      !originalRequest._retry
-    ) {
-      originalRequest._retry = true;
-      const refreshed = await refreshAccessToken();
-      const currentToken = tokenStore.getToken();
-      if (refreshed && currentToken) {
-        originalRequest.headers.Authorization = `Bearer ${currentToken}`;
-        return ticketClient(originalRequest);
-      }
-
-      tokenStore.clearToken();
-      sessionStorage.removeItem('user');
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('auth:unauthorized'));
-      }
+/** Bearer token on every request; on a 401, refresh once and retry, else sign out (shared by ticketClient and analyticsClient). */
+const attachTicketInterceptors = (client) => {
+  client.interceptors.request.use((config) => {
+    const token = tokenStore.getToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
+    // Spec 0034: identity comes only from the verified token. No X-Client-Id or X-User-Id headers.
+    return config;
+  });
 
-    return Promise.reject(error);
-  }
-);
+  client.interceptors.response.use(
+    (response) => response,
+    async (error) => {
+      const originalRequest = error.config;
+      if (
+        error.response?.status === 401 &&
+        originalRequest &&
+        !originalRequest._retry
+      ) {
+        originalRequest._retry = true;
+        const refreshed = await refreshAccessToken();
+        const currentToken = tokenStore.getToken();
+        if (refreshed && currentToken) {
+          originalRequest.headers.Authorization = `Bearer ${currentToken}`;
+          return client(originalRequest);
+        }
+
+        tokenStore.clearToken();
+        sessionStorage.removeItem('user');
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('auth:unauthorized'));
+        }
+      }
+
+      return Promise.reject(error);
+    }
+  );
+};
+
+attachTicketInterceptors(ticketClient);
+attachTicketInterceptors(analyticsClient);
 
 const employeeClient = axios.create({
   baseURL: EMPLOYEE_API_URL || '/api/ticketing/employee',
@@ -101,6 +119,53 @@ employeeClient.interceptors.response.use(
       if (refreshed && currentToken) {
         originalRequest.headers.Authorization = `Bearer ${currentToken}`;
         return employeeClient(originalRequest);
+      }
+
+      tokenStore.clearToken();
+      sessionStorage.removeItem('user');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('auth:unauthorized'));
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
+
+// Notification bell API (notification-service owns the notifications table and its read routes).
+const notificationClient = axios.create({
+  baseURL: NOTIFICATION_API_URL || '/api/ticketing/notification',
+  withCredentials: true,
+  headers: {
+    'X-Requested-With': 'XMLHttpRequest',
+    'Accept': 'application/json',
+    'Content-Type': 'application/json',
+  },
+});
+
+notificationClient.interceptors.request.use((config) => {
+  const token = tokenStore.getToken();
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+notificationClient.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+    if (
+      error.response?.status === 401 &&
+      originalRequest &&
+      !originalRequest._retry
+    ) {
+      originalRequest._retry = true;
+      const refreshed = await refreshAccessToken();
+      const currentToken = tokenStore.getToken();
+      if (refreshed && currentToken) {
+        originalRequest.headers.Authorization = `Bearer ${currentToken}`;
+        return notificationClient(originalRequest);
       }
 
       tokenStore.clearToken();
@@ -817,6 +882,101 @@ export const assignTicketToEmployees = async ({ ticketId, employeeIds, assignedB
   return response.data;
 };
 
+// ─── Spec 0043: department codes (superadmin; employee-service owns `departments`) ───
+
+/** Every department with its code, active state and accepts_tickets switch (spec 0051). */
+export const getDepartmentsWithCodes = async () => {
+  const response = await employeeClient.get('/departments', { params: { include_inactive: 1 } });
+  return response.data?.departments ?? [];
+};
+
+/** Server suggested code for a department name (initials, first 3 letters, number suffix if taken). */
+export const suggestDepartmentCode = async (name, excludeId = null) => {
+  const params = { name };
+  if (excludeId) params.exclude_id = excludeId;
+  const response = await employeeClient.get('/departments/code-suggestion', { params });
+  return response.data?.code ?? '';
+};
+
+export const createDepartment = async ({ name, code, description }) => {
+  const response = await employeeClient.post('/departments', { name, code: code || undefined, description: description || undefined });
+  clearDepartmentsCache();
+  return response.data?.department;
+};
+
+/** PUT /departments/{id}: any of name, code, description, is_active, accepts_tickets. */
+export const updateDepartment = async (id, fields) => {
+  const response = await employeeClient.put(`/departments/${id}`, fields);
+  clearDepartmentsCache();
+  return response.data?.department;
+};
+
+// Spec 0051: department routing with manager triage.
+const departmentRoutingDone = () => {
+  clearIncomingTicketsCache();
+  clearCSDashboardCache();
+  clearEmployeeTicketsCache();
+  notifyCsTicketRefresh();
+};
+
+/** Active departments CS may route to, with manager_count and routable flags. */
+export const getAssignableDepartments = async () => {
+  const response = await employeeClient.get('/assignable-departments');
+  return response.data?.departments ?? [];
+};
+
+export const routeTicketToDepartment = async ({ ticketId, departmentId, priorityId, note } = {}) => {
+  const payload = { department_id: departmentId };
+  if (priorityId !== undefined && priorityId !== null) payload.priority_ID = priorityId;
+  if (note) payload.note = note;
+  const response = await employeeClient.post(`/tickets/${ticketId}/assign-department`, payload);
+  departmentRoutingDone();
+  return response.data;
+};
+
+/** Tickets waiting in the signed in manager's Department queue. */
+export const getDepartmentQueue = async ({ page = 1, perPage = 25 } = {}) => {
+  const response = await employeeClient.get('/department-queue', { params: { page, per_page: perPage } });
+  return response.data;
+};
+
+export const claimDepartmentTicket = async (ticketId) => {
+  const response = await employeeClient.post(`/tickets/${ticketId}/department-claim`);
+  departmentRoutingDone();
+  return response.data;
+};
+
+export const delegateDepartmentTicket = async ({ ticketId, employeeIds, overrideReason } = {}) => {
+  const payload = { employee_ids: employeeIds };
+  if (overrideReason) payload.override_reason = overrideReason;
+  const response = await employeeClient.post(`/tickets/${ticketId}/department-delegate`, payload);
+  departmentRoutingDone();
+  return response.data;
+};
+
+export const returnDepartmentTicket = async ({ ticketId, reason } = {}) => {
+  const response = await employeeClient.post(`/tickets/${ticketId}/department-return`, { reason });
+  departmentRoutingDone();
+  return response.data;
+};
+
+/** Friendly text for the department routing error codes (spec 0051, AC-5 and AC-10). */
+export const departmentRoutingErrorMessage = (err, fallback = 'Something went wrong. Please try again.') => {
+  const data = err?.response?.data || {};
+  const messages = {
+    DEPARTMENT_NOT_ROUTABLE: 'This department no longer accepts routed tickets. Pick another one.',
+    DEPARTMENT_HAS_NO_MANAGER: 'This department has no active manager right now. Pick another one.',
+    NEEDS_CLASSIFICATION: 'Classify this ticket before you route it.',
+    INVALID_TICKET_TRANSITION: 'This ticket cannot be routed from its current status.',
+    DEPARTMENT_ALREADY_CLAIMED: 'Another manager already acted on this ticket.',
+    ROUTE_MODE_CONFLICT: 'Choose members or a department, not both.',
+    OVERRIDE_REASON_REQUIRED: 'Someone you picked is outside the category track. Add an override reason.',
+    SELF_DELEGATION: 'To work this ticket yourself, use Accept instead.',
+  };
+  if (err?.response?.status === 403) return data.message || 'You are not allowed to do this.';
+  return messages[data.code] || data.message || fallback;
+};
+
 export const acceptTicket = async ({ ticketId, employeeIds, assignedByEmail, priorityId } = {}) => {
   const normalizedId = ticketId || Number(String(ticketId || '').replace(/\D/g, ''));
   const payload = {};
@@ -1395,17 +1555,17 @@ export const saveWorkLog = async (payload) => {
 };
 
 export const getNotifications = async () => {
-  const response = await ticketClient.get('/notifications');
+  const response = await notificationClient.get('/notifications');
   return response.data;
 };
 
 export const markNotificationsRead = async () => {
-  const response = await ticketClient.patch('/notifications/read-all');
+  const response = await notificationClient.patch('/notifications/read-all');
   return response.data;
 };
 
 export const markNotificationRead = async (id) => {
-  const response = await ticketClient.patch(`/notifications/${id}/read`);
+  const response = await notificationClient.patch(`/notifications/${id}/read`);
   return response.data;
 };
 
@@ -1826,13 +1986,13 @@ export const getSecurityIncidentDetail = async (incidentId) => {
 // request instead of each hitting the server. The entry is dropped when the request ends, so nothing is cached.
 const reportRequestsInFlight = new Map();
 
-const getSharedReport = (path, params = {}) => {
-  const key = `${path}?${JSON.stringify(Object.keys(params).sort().map((k) => [k, params[k]]))}`;
+const getSharedReport = (path, params = {}, client = ticketClient) => {
+  const key = `${client.defaults.baseURL}${path}?${JSON.stringify(Object.keys(params).sort().map((k) => [k, params[k]]))}`;
   if (reportRequestsInFlight.has(key)) {
     return reportRequestsInFlight.get(key);
   }
 
-  const request = ticketClient
+  const request = client
     .get(path, { params })
     .then((response) => response.data)
     .finally(() => reportRequestsInFlight.delete(key));
@@ -1887,7 +2047,8 @@ export const getAdminDepartmentPerformance = async (params = {}) => {
   return response.data;
 };
 
-export const getAdminPredictiveInsights = (params = {}) => getSharedReport('/admin-reports/predictive-insights', params);
+// Spec 0050 AC-3: served by analytics-service now, same JSON as the old ticket-service endpoint.
+export const getAdminPredictiveInsights = (params = {}) => getSharedReport('/insights/predictive', params, analyticsClient);
 
 export const getTicketTimeline = async (ticketId, params = {}) => {
   const response = await ticketClient.get(`/tickets/${ticketId}/timeline`, { params });
@@ -1899,8 +2060,10 @@ export const getSystemDashboard = async (params = {}) => {
   return response.data;
 };
 
+// Spec 0050 AC-4: analytics-service runs the sync and clears only its own caches, so callers reload their
+// dashboard with its force refresh option afterwards (AC-5).
 export const triggerEtlSync = async (payload = {}) => {
-  const response = await ticketClient.post('/etl/trigger', payload);
+  const response = await analyticsClient.post('/etl/sync', payload);
   return response.data;
 };
 

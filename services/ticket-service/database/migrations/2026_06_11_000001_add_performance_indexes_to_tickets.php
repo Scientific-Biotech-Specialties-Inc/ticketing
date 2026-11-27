@@ -14,9 +14,23 @@ return new class extends Migration
             $table->index('created_at', 'idx_tickets_created_at');
         });
 
-        Schema::table('notifications', function (Blueprint $table) {
-            $table->index(['recipient_id', 'recipient_type', 'is_read'], 'idx_notifications_recipient_unread');
-        });
+        // Skipped when notification-service (the table's owner) already created the index.
+        if (!$this->hasNotificationIndex('idx_notifications_recipient_unread')) {
+            Schema::table('notifications', function (Blueprint $table) {
+                $table->index(['recipient_id', 'recipient_type', 'is_read'], 'idx_notifications_recipient_unread');
+            });
+        }
+    }
+
+    private function hasNotificationIndex(string $name): bool
+    {
+        foreach (Schema::getIndexes('notifications') as $index) {
+            if (($index['name'] ?? null) === $name) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function down(): void

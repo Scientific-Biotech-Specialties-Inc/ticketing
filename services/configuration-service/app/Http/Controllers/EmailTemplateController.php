@@ -156,6 +156,10 @@ class EmailTemplateController extends Controller
                 'subject' => 'Ticket #{ticket_number} Has Been Assigned to an Agent',
                 'body'    => '<p>Dear {customer_name},</p><p>Your ticket <strong>#{ticket_number}</strong> has been assigned to one of our support agents who will be handling your request.</p><p><strong>Assigned Agent:</strong> {agent_name}<br><strong>Subject:</strong> {ticket_subject}</p><p>You will be notified of any updates.</p><p>Best regards,<br>{from_name}</p>',
             ],
+            'ticket_department_routed' => [
+                'subject' => 'Ticket #{ticket_number} Was Routed to {department_name}',
+                'body'    => '<p>Dear {agent_name},</p><p>Ticket <strong>#{ticket_number}</strong> was routed to the <strong>{department_name}</strong> department by {routed_by}. Please accept it, assign it to people in your department, or return it to Customer Service.</p><p><strong>Subject:</strong> {ticket_subject}<br><strong>Category:</strong> {ticket_category}<br><strong>Priority:</strong> {ticket_priority}</p><p>Open your Department queue to act on it.</p><p>Best regards,<br>{from_name}</p>',
+            ],
             'ticket_status_changed' => [
                 'subject' => 'Ticket #{ticket_number} Status Updated to {ticket_status}',
                 'body'    => '<p>Dear {customer_name},</p><p>The status of your ticket <strong>#{ticket_number}</strong> has been updated.</p><p><strong>Previous Status:</strong> {previous_status}<br><strong>New Status:</strong> {ticket_status}<br><strong>Subject:</strong> {ticket_subject}</p><p>Please log in to the portal to view the full details.</p><p>Best regards,<br>{from_name}</p>',

@@ -10,7 +10,7 @@ This repository is an enterprise-grade, microservice-based IT service desk and t
   - `services/AI-service` (Port 8005): Google Gemini 2.0 Flash automated support assistant, conversation persistence, ticket triage, and fallback ticket escalation.
   - `services/customer-service` (Port 8001): Customer identity, authentication, client profiles, and user management.
   - `services/ticket-service` (Port 8002): Core ticket lifecycle, SLA monitoring, status state machines, and priority management.
-  - `services/notification-service` (Port 8003): Real-time Reverb WebSocket broadcasting and transactional email alerts.
+  - `services/notification-service` (Port 8003): Real-time Reverb WebSocket broadcasting and transactional email alerts. Owns the `notifications` table (schema, bell read API, retention purge); other services still insert rows directly.
   - `services/analytics-service` (Port 8004): CSAT ratings, performance metrics, and reporting.
   - `services/attachment-service` (Port 8006): Attachment storage with mandatory ClamAV antivirus daemon inspection.
   - `services/messaging-service` (Port 8007): Real-time ticket chat messaging backed by MongoDB 7.
@@ -52,7 +52,7 @@ AI assistants operating within this repository are configured with specialized r
 
 1. **Strictly No Mermaid Diagrams**: All documentation must use markdown tables, ASCII diagrams, or structured text. Never generate Mermaid syntax.
 2. **Strictly No Ollama**: AI fallback must degrade directly to manual ticket creation (`escalate: true`). Do not reintroduce local Ollama fallbacks.
-3. **No Direct Database Coupling**: Microservices communicate exclusively through REST APIs or event broadcasts. Do not query another microservice's database tables directly.
+3. **No Direct Database Coupling**: Microservices communicate through REST APIs or event broadcasts. Never write another service's tables; read only aggregate reads are allowed where the ownership matrix says so (spec 0026; analytics-service reporting per spec 0050, enforced by its read only guard test).
 4. **Client-Side RSA Encryption**: Passwords and sensitive credentials must be encrypted using `frontend/web/src/utils/rsa.js` before network transmission and decrypted with `DecryptRsaPayload` middleware.
 5. **Mandatory Antivirus Scanning**: File uploads in `attachment-service` must pass ClamAV daemon verification before being saved to storage.
 6. **Non-Blocking Cache Invalidation**: Always use Redis `SCAN` chunking for ticket cache invalidation; never issue blocking `KEYS *`.
